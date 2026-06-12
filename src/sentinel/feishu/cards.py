@@ -317,20 +317,30 @@ def build_daily_report_card(
 
 # ---- 诊断卡 / 日报 AI 总结卡(Phase 3) ----
 
+_DIAG_FIELD_MAX = 500  # 诊断字段来自模型输出,直接进卡片:钳制长度防超限报错/刷屏
+_DIAG_LIST_MAX = 5
+
+
+def _clip(value, limit: int = _DIAG_FIELD_MAX) -> str:
+    text = str(value)
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
 
 def build_diagnosis_card(event: EventRecord, diagnosis: dict, *, now_str: str) -> dict:
     """诊断结论卡(Phase 3):蓝色信息卡,字段缺失只省略不报错。"""
     rule_name = RULE_NAMES.get(event.rule, event.rule)
     lines = [f"**事件 #{event.id}**　{event.detail}"]
     if diagnosis.get("summary"):
-        lines.append(f"**现象**：{diagnosis['summary']}")
+        lines.append(f"**现象**：{_clip(diagnosis['summary'])}")
     if diagnosis.get("root_cause"):
-        lines.append(f"**推测根因**：{diagnosis['root_cause']}")
+        lines.append(f"**推测根因**：{_clip(diagnosis['root_cause'])}")
     evidence = diagnosis.get("evidence") or []
     if evidence:
-        lines.append("**证据**：\n" + "\n".join(f"- {e}" for e in evidence))
+        lines.append(
+            "**证据**：\n" + "\n".join(f"- {_clip(e, 300)}" for e in evidence[:_DIAG_LIST_MAX])
+        )
     if diagnosis.get("confidence"):
-        lines.append(f"**置信度**：{diagnosis['confidence']}")
+        lines.append(f"**置信度**：{_clip(diagnosis['confidence'], 32)}")
     elements: list[dict] = [{"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(lines)}}]
     commands = diagnosis.get("suggested_commands") or []
     if commands:
@@ -341,7 +351,7 @@ def build_diagnosis_card(event: EventRecord, diagnosis: dict, *, now_str: str) -
                 "text": {
                     "tag": "lark_md",
                     "content": "**建议命令（须人工确认执行）**：\n"
-                    + "\n".join(f"`{c}`" for c in commands),
+                    + "\n".join(f"`{_clip(c, 200)}`" for c in commands[:_DIAG_LIST_MAX]),
                 },
             }
         )

@@ -9,25 +9,25 @@
 - **URL(实测从 Kuma 容器内可达)**:`http://172.17.0.1:8765/health`
 - 健康响应:`{"status":"ok"}`(HTTP 200)
 
-> 172.17.0.1 是 docker0 默认网桥网关(=宿主机),一般稳定不变。若 docker 默认网段被改,或想用更稳的容器名 URL,可把 Kuma 挂到 sentinel 所在的 docker 网络后改用 `http://dev-ops-sentinel:8000/health`(需改 Kuma compose,非必须)。
+> 172.17.0.1 是 docker0 默认网桥网关(=宿主机),一般稳定不变。若 docker 默认网段被改,或想用更稳的容器名 URL,可把 Kuma 挂到 sentinel 所在的 docker 网络后改用 `http://watchmend:8000/health`(需改 Kuma compose,非必须)。
 
 ## 配置步骤(Kuma Web UI,零代码)
 
 1. 打开 Kuma → **Add New Monitor**
 2. **Monitor Type**:`HTTP(s) - Keyword`
-3. **Friendly Name**:`dev-ops-sentinel 哨兵`
+3. **Friendly Name**:`watchmend 哨兵`
 4. **URL**:`http://172.17.0.1:8765/health`
 5. **Keyword**:`"status":"ok"`(响应含此串才算 UP;比纯查 2xx 更严)
 6. **Heartbeat Interval**:`60` 秒(与哨兵轮询同频)
 7. **Retries**:`3`(连续 3 次失败才判 Down,吸收隧道瞬态抖动)
 8. **Notifications**:勾选已配好的飞书渠道(发基础设施告警群的那个)
-   - 哨兵死了 → Kuma 推 `UptimeKuma Alert: [Down] dev-ops-sentinel 哨兵` 到基础设施群
+   - 哨兵死了 → Kuma 推 `UptimeKuma Alert: [Down] watchmend 哨兵` 到基础设施群
    - 该群机器人是**关键词 `UptimeKuma`** 模式,Kuma 告警标题自带该词,放行
 9. **Save** → 列表里应立刻显示该监控为绿色 UP(因为哨兵正常)
 
 ## 验证
 
-- 保存后 Kuma 该条显示 **UP / 绿**;手动 `docker stop dev-ops-sentinel` 几分钟,Kuma 应转 Down 并往基础设施群发 `[Down]`;`docker start` 后恢复发 `[Up]`。(验证完记得把哨兵起回来。)
+- 保存后 Kuma 该条显示 **UP / 绿**;手动 `docker stop watchmend` 几分钟,Kuma 应转 Down 并往基础设施群发 `[Down]`;`docker start` 后恢复发 `[Up]`。(验证完记得把哨兵起回来。)
 
 ## 两条腿合在一起
 

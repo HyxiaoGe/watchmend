@@ -261,3 +261,24 @@ def test_demux_docker_logs_frames_and_raw():
     assert _demux_docker_logs(framed) == "hello\nworld\n"
     # TTY 模式裸流原样退回
     assert _demux_docker_logs(b"plain text log") == "plain text log"
+
+
+async def test_docker_inspect_redacts_env(monkeypatch):
+    # Config.Env 是密钥重灾区:发给外部 LLM 端点前只留变量名
+    settings = _settings(
+        monkeypatch,
+        LLM_BASE_URL="http://llm.test/v1",
+        LLM_MODEL="m",
+        SENTINEL_DOCKER_SOCKET="/tmp/x.sock",
+    )
+    payload = {"Name": "/api", "Config": {"Env": ["DB_PASSWORD=hunter2", "MODE=prod"]}}
+    async with httpx.AsyncClient() as client:
+        driver = LLMDriver(client, settings)
+        with respx.mock:
+            respx.get("http://docker/containers/api/json").mock(
+                return_value=httpx.Response(200, json=payload)
+            )
+            out = await driver._docker_inspect("api")
+        await driver.aclose()
+    assert "hunter2" not in out and "prod" not in out
+    assert "DB_PASSWORD=<redacted>" in out and "MODE=<redacted>" in out

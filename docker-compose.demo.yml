@@ -8,6 +8,8 @@
 # 看告警卡:docker compose -f docker-compose.demo.yml stop demo-app,约 15 分钟后出卡;
 # 心跳卡/体检日报每天 09:00(北京时间)发,当天 09:00 已过则启动 1 分钟内补发心跳。
 # 说明:demo 未接日志采集器,Loki 为空属正常——log_scan 层空跑只演示接线,不产日志告警。
+# 可选:在 .env 同时填 LLM_BASE_URL/LLM_API_KEY/LLM_MODEL 可体验事件诊断卡与日报 AI 总结
+# (demo 栈没挂 docker socket,SENTINEL_DOCKER_SOCKET 保持留空)。
 services:
   sentinel:
     build: .

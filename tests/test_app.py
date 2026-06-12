@@ -549,3 +549,26 @@ async def test_open_scan_failed_event_not_falsely_recovered_after_restart(tmp_pa
     assert [e.rule for e in store.get_open_events()] == ["scan_failed_prometheus"]
     await client.aclose()
     store.close()
+
+
+async def test_build_jobs_warns_llm_half_config(tmp_path, monkeypatch, caplog):
+    # 只填 LLM_BASE_URL 不填 LLM_MODEL(或反过来)= 静默不启用,至少要响一声
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("LLM_BASE_URL", "http://llm.test/v1")
+
+    from sentinel.app import build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    with caplog.at_level("WARNING", logger="sentinel"):
+        jobs = build_jobs(Settings(_env_file=None), client, store)
+    assert any("LLM_MODEL" in r.message for r in caplog.records)
+    assert "diagnosis" not in [n for n, _, _ in jobs]
+    await client.aclose()
+    store.close()

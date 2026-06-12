@@ -68,3 +68,20 @@ def test_summary_card():
     assert card["card"]["header"]["template"] == "green"
     assert "AI 总结" in card["card"]["header"]["title"]["content"]
     assert "今日整体平稳。" in str(card["card"]["elements"])
+
+
+def test_diagnosis_card_clips_model_output():
+    # 模型输出直接进卡片:超长字段钳制、列表截前 5 条,防飞书卡片超限报错/刷屏
+    diagnosis = {
+        "summary": "长" * 600,
+        "root_cause": "因" * 600,
+        "evidence": [f"证据{i}-" + "x" * 400 for i in range(10)],
+        "suggested_commands": ["cmd-" + "y" * 300 for _ in range(10)],
+        "confidence": "h" * 100,
+    }
+    card = build_diagnosis_card(_event(), diagnosis, now_str="t")
+    body = str(card["card"]["elements"])
+    assert "长" * 600 not in body and "长" * 400 in body  # 截断但保留前缀
+    assert "证据9" not in body and "证据4" in body  # 只留前 5 条
+    assert body.count("cmd-") == 5
+    assert len(body) < 6000
