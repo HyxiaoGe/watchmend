@@ -1,81 +1,127 @@
-# dev-ops-sentinel
+# WatchMend
 
-dev 服务器哨兵：外部状态页监控 + 内部服务巡检 + LLM 智能诊断，异常推飞书富卡片。
+> 盯着你的服务器,出事先查明白,再来叫你。
 
-- 外部状态页：轮询 Anthropic/OpenAI/GitHub/Cloudflare/Google Cloud，状态翻转推卡
-- 内部巡检（Phase 1-2）：16 服务探针、指标/日志扫描、确定性规则引擎、events 事件机、
-  09:00 体检日报。设计稿 `docs/superpowers/specs/2026-06-11-internal-patrol-bot-design.md`
-- 智能诊断（Phase 3）：事件自动根因诊断 + 日报 AI 总结，见下节
+[English](README.en.md) · MIT License · Python 3.12+ · 单容器 · SQLite
 
-## 运行
+WatchMend 是一个面向个人服务器 / homelab / 小团队的轻量监控哨兵:
+**确定性规则负责发现问题,LLM(可选)只负责解释问题**。异常以飞书富卡片推送,
+附带自动根因诊断;一切按配置优雅降级——最小可跑面 = Docker + 一个飞书 webhook。
+
+```
+┌────────────────────────── watchmend 容器(256MB)──────────────────────────┐
+│  外部状态页轮询(Anthropic/OpenAI/GitHub/Cloudflare/GCP)──┐                │
+│  HTTP 探针(你的服务清单)─────────────────────────────────┤                │
+│  指标规则(PromQL:磁盘/内存/swap/容器重启/OOM/中间件)─────┼─► 规则引擎     │
+│  日志规则(LogQL:错误日志相对七日基线激增)────────────────┤  事件/冷却/恢复│
+│  每日 hygiene(备份新鲜度/磁盘填满预测/证书临期)──────────┘       │        │
+│                                                                  ▼        │
+│  LLM 诊断(可选):pending 事件 → tool 循环自主调查 ──────► 飞书卡片        │
+│  工具全只读:prom_query / loki_logs / docker ps·logs·inspect              │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+## 5 分钟 demo
+
+自带 prometheus / loki / cadvisor / node-exporter 和一个示例服务,零外部依赖:
+
+```bash
+git clone https://github.com/HyxiaoGe/watchmend && cd watchmend
+make demo          # 首次会生成 .env 并停下来,填一个飞书群机器人 webhook 后再跑一次
+```
+
+起来后干掉示例服务看告警卡:
+
+```bash
+docker compose -f docker-compose.demo.yml stop demo-app   # ~15 分钟后收到事件卡
+docker compose -f docker-compose.demo.yml start demo-app  # 之后会收到 ✅ 恢复卡
+```
+
+## 正式部署
+
+```bash
+cp .env.example .env                      # 按注释填:webhook 必填,其余按需
+cp services.example.yaml services.yaml    # 改成你自己的服务探针清单
+make up                                   # 或 docker compose up -d --build
+```
+
+接入点全部可选,留空即关,各层独立:
+
+| 配置 | 启用的能力 | 留空时 |
+|---|---|---|
+| `FEISHU_VENDOR_WEBHOOK` | 告警/日报卡片(**唯一必填**) | — |
+| `services.yaml` | 内部服务 HTTP 探针 + 延迟基线 | 只监控外部状态页 |
+| `SENTINEL_PROMETHEUS_URL` | 磁盘/内存/容器重启等指标规则 | 指标层关闭 |
+| `SENTINEL_LOKI_URL` | 错误日志激增检测 | 日志层关闭 |
+| `SENTINEL_MIDDLEWARE_METRICS` | pg/redis 等 exporter up 兜底 | 跳过该检查 |
+| `SENTINEL_CERT_DOMAINS` | 公网证书临期检查 | 跳过该检查 |
+| 备份目录挂载 | pg_dump 备份新鲜度检查 | 跳过该检查 |
+| `LLM_BASE_URL` + `LLM_MODEL` | 事件根因诊断 + 日报 AI 总结 | LLM 层关闭 |
+
+全部 40+ 配置项(阈值、冷却、播报粒度…)见 [.env.example](.env.example),每项带注释。
+
+## LLM 诊断(可选)
+
+任何 OpenAI-compatible 端点都能用(OpenAI / DeepSeek / Moonshot / Ollama / vLLM / LiteLLM…):
+
+```bash
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_API_KEY=sk-...
+LLM_MODEL=deepseek-chat
+```
+
+事件命中后,模型在容器内用只读工具自主调查(查 PromQL、捞日志、看容器状态),
+产出结构化诊断卡:现象 / 推测根因 / 证据 / 建议命令 / 置信度。
+
+安全边界(设计立场,不是事后补丁):
+
+- **要不要叫醒你由确定性规则决定**,模型只解释,不参与告警判定
+- 工具全只读;`docker` 工具需显式挂载 socket 才启用(默认关),
+  `docker inspect` 输出先遮蔽环境变量值再喂给模型
+- 工具返回的日志内容被声明为不可信数据,防日志注入操纵结论
+- 建议命令只是给人看的,永远不会被自动执行
+
+## 设计哲学
+
+- **不评估 ≠ 恢复**:某层数据源故障或被关闭时,它覆盖的存量告警绝不会被
+  误判为"已恢复"发绿卡——宁可保持未决,不发假恢复
+- **告警有冷却、有恢复卡、有每日体检日报**:同一事件 6 小时内不重复轰炸;
+  恢复时明确告知持续时长
+- **基线相对值优先**:延迟和错误日志都对比七日同时段基线,
+  绝对阈值只做兜底,少误报
+- **巡检自身也被监控**:数据源连续失败会升级成"巡检失败"卡,
+  哨兵不会安静地失明
+
+## 进阶
+
+- **宿主机 agent 编排**(`host/`):不用容器内直连,改由你自己的 agent runner
+  (任何 CLI)经 HTTP 编排 API 拉取 pending 事件做诊断,还可扩展白名单恢复脚本
+  (denylist + 人工审批)。与容器内直连**二选一**。
+- **反向监控**:`/health` 端点可挂到 Uptime Kuma 等,看护哨兵本身,见 [docs/](docs/)。
+
+## FAQ
+
+**为什么通知只有飞书?** 项目从作者自用长出来,飞书卡片生态最完整。
+通知渠道抽象(Telegram / Slack / Discord / 通用 webhook)在 roadmap 首位,欢迎 PR。
+
+**和 Uptime Kuma / Gatus 什么区别?** 它们是探针 + 状态页;WatchMend 的重心是
+规则引擎 + 事件机(冷却/恢复/基线)+ LLM 根因诊断,并把你已有的
+Prometheus / Loki 当数据源,不重复造采集层。
+
+**和 Alertmanager 什么区别?** 不是替代品。如果你已有完整 observability 栈和
+告警规则体系,可能不需要它;WatchMend 服务的是"一台服务器跑十几个容器,
+想要开箱即用的监控 + 看得懂的诊断"的场景。
+
+**LLM 会不会乱动我的服务器?** 见上文安全边界:全只读、socket 默认关、
+建议命令不自动执行。完全不配 LLM 也能用,确定性巡检不依赖它。
+
+## 开发
+
 ```bash
 uv sync --dev
-cp .env.example .env   # 填飞书 webhook;部署须设 SENTINEL_DIAG_TOKEN 随机值
-docker compose up -d   # 或 uvicorn sentinel.app:app
+make check        # ruff + pytest + 泄漏检查
 ```
 
-门禁：`uv run pytest -q && uv run ruff check . && uv run ruff format .`
+## License
 
-## Phase 3 智能诊断（拉取链路）
-
-```
-确定性规则命中 → events 表 (diagnosis_status=pending)
-                      │
-openclaw cron (每 5m, 无模型零成本) → 宿主机 diag_orchestrator.py
-                      │  GET /events/pending
-                      │  逐事件(≤3) 起隔离会话 openclaw agent --agent sentinel-diag
-                      │     工具: loki-mcp(日志) + ops-mcp(指标/容器/系统, 硬只读)
-                      │     模型: litellm-proxy → moonshot/kimi-k2.5
-                      │  POST /events/{id}/diagnosis (X-Sentinel-Token)
-                      ▼
-            sentinel 落库 + 发蓝色诊断卡(根因/证据/建议命令/置信度)
-
-daily: 09:00 模板日报(sentinel 自发) → 09:05 openclaw cron → daily_summary.py
-       GET /report/daily-data → 一次 agent 会话 → POST /report/summary → 绿色总结卡
-```
-
-### 编排 API（host-published 127.0.0.1:8765，仅宿主机可达）
-
-| 端点 | 鉴权 | 用途 |
-|---|---|---|
-| GET /events/pending | 无 | 待诊断事件列表 |
-| POST /events/{id}/diagnosis | X-Sentinel-Token | 诊断回写(done/failed/skipped)，done 时发卡 |
-| GET /report/daily-data | 无 | 日报聚合数据 |
-| POST /report/summary | X-Sentinel-Token | 发 AI 总结卡 |
-
-### 宿主机部署（dev:~/sentinel-host/）
-
-```bash
-# 三件套 + venv(dev 无 uv)
-python3 -m venv ~/sentinel-host/.venv
-~/sentinel-host/.venv/bin/pip install "httpx>=0.27,<0.29" "mcp>=1.4,<2"
-scp host/{ops_mcp,diag_orchestrator,daily_summary}.py dev:~/sentinel-host/
-# .env: SENTINEL_DIAG_TOKEN=<与容器侧一致>, chmod 600
-```
-
-### sentinel-diag agent 约束（三层工具面）
-
-- 层 1 自由只读：`profile: "minimal"` + alsoAllow 12 个 MCP 查询工具
-  （loki 5 + ops 7）——tool policy 层结构性只读；sentinel-diag 已彻底拆除 exec，
-  升级为工具面物理只读（无 exec 仍能诊断）
-- 层 2 审批后恢复执行：**已上线**——飞书群 @bot 触发容器重启，由专用
-  **sentinel-remediate** agent 经包装脚本 `sentinel-restart.sh` 执行（denylist +
-  只 restart 非禁止运行容器），每次 exec 经飞书审批把关，未审批/拒绝一律不执行
-  （fail-closed）。⚠️ allow-always 白名单粒度=二进制路径：恢复命令须先封装为包装脚本
-  再放行（已落地），勿直接放行 docker 等多功能二进制
-- 层 3 永远禁止：`security: "allowlist"` 空白名单 + askFallback deny 默认全拒
-  + prompt 禁令（`tools.exec` 无命令级 deny 黑名单配置位）
-
-### 排障入口
-
-```bash
-openclaw cron list                          # 两任务: sentinel-diag-poll / sentinel-daily-summary
-openclaw cron runs --id <job-id>            # 运行记录
-journalctl --user -u openclaw-gateway       # 网关日志(审批/工具策略/会话)
-docker logs dev-ops-sentinel                # API 访问与发卡日志
-sqlite3 data/sentinel.db 'select id,rule,diagnosis_status from events'
-ssh dev '~/sentinel-host/.venv/bin/python ~/sentinel-host/diag_orchestrator.py'  # 手动补诊
-```
-
-诊断失败有 DB 留痕（diagnosis_status=failed + diagnosis.raw）；OpenClaw 整体不可用时
-事件卡照发，diagnosis 滞留 pending，恢复后下个 5m 周期自动补诊。
+[MIT](LICENSE)
