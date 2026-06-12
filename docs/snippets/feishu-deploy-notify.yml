@@ -1,0 +1,23 @@
+# 追加到各仓 deploy workflow 部署 job 的最后一步。
+# 依赖:secret FEISHU_INFRA_WEBHOOK(基础设施告警群机器人 webhook URL)。
+# 该群机器人 = 关键词模式(关键词 UptimeKuma,不签名)→ 文案末尾 [UptimeKuma keyword] 脚注用于过校验。
+# 硬化点:continue-on-error + 空 webhook 守卫 → 未配 secret 或通知失败时绝不影响部署 job 结果。
+      - name: 通知飞书(部署结果)
+        if: always()
+        continue-on-error: true
+        env:
+          FEISHU_INFRA_WEBHOOK: ${{ secrets.FEISHU_INFRA_WEBHOOK }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [ -z "$FEISHU_INFRA_WEBHOOK" ]; then
+            echo "FEISHU_INFRA_WEBHOOK 未配置,跳过飞书通知"
+            exit 0
+          fi
+          if [ "$JOB_STATUS" = "success" ]; then EMOJI="✅"; else EMOJI="❌"; fi
+          export TEXT="${EMOJI} 部署 ${{ github.repository }} @ ${{ github.ref_name }} (${GITHUB_SHA:0:7}) = ${JOB_STATUS}
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          [UptimeKuma keyword]"
+          PAYLOAD="$(python3 -c 'import json,os; print(json.dumps({"msg_type":"text","content":{"text":os.environ["TEXT"]}}))')"
+          curl -s -X POST "$FEISHU_INFRA_WEBHOOK" \
+            -H 'Content-Type: application/json' \
+            -d "$PAYLOAD"

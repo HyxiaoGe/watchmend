@@ -1,0 +1,8 @@
+{
+  "page": {"id": "tymt9n04zgry", "name": "Claude", "url": "https://status.claude.com"},
+  "status": {"indicator": "none", "description": "All Systems Operational"},
+  "components": [
+    {"id": "rwppv331jlwc", "name": "claude.ai", "status": "operational", "group": false, "group_id": null}
+  ],
+  "incidents": []
+}

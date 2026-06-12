@@ -1,0 +1,40 @@
+[project]
+name = "dev-ops-sentinel"
+version = "0.1.0"
+description = "Dev-ops Feishu monitor: external dependency status-page sentinel"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic-settings>=2.4",
+    "pyyaml>=6.0.3",
+]
+
+[dependency-groups]
+dev = [
+    "mcp>=1.4,<2",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "respx>=0.21",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sentinel"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests", "."]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

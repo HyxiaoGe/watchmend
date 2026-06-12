@@ -1,0 +1,21 @@
+# 内部探针清单(示例):经反代(Host 头)或容器名直连。显式维护,不自动发现。
+# ⚠️ 这些条目只是格式示例——请按你自己的服务改写,否则探针全红。
+# url 与 host+path 二选一;expect_status/timeout 可逐项覆盖 defaults。
+defaults:
+  timeout: 5.0
+  expect_status: 200
+
+# 经反代探测时的入口(反代容器名或网关地址);全部用 url 直连时本项不生效
+nginx_base: http://nginx-proxy
+
+services:
+  - name: webapp
+    host: webapp.internal.example
+    path: /health
+  - name: grafana
+    host: grafana.internal.example
+    path: /api/health
+  - name: prometheus
+    url: http://prometheus:9090/-/healthy
+  - name: loki
+    url: http://loki:3100/ready

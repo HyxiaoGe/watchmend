@@ -1,0 +1,9 @@
+{
+  "page": {"id": "yh6f0r4529hb", "name": "Cloudflare", "url": "http://www.cloudflarestatus.com"},
+  "status": {"indicator": "minor", "description": "Minor Service Outage"},
+  "components": [
+    {"id": "77867vxkttgw", "name": "Asia", "status": "partial_outage", "group": true, "group_id": null},
+    {"id": "57ctn3f2qsyj", "name": "Amsterdam, Netherlands - (AMS)", "status": "under_maintenance", "group": false, "group_id": "zqxhg7y54vy8"}
+  ],
+  "incidents": []
+}

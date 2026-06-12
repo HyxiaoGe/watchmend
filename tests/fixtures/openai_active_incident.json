@@ -1,0 +1,19 @@
+{
+  "page": {"id": "01JMDK9XYNY6RXSED6SDWW50WY", "name": "OpenAI", "url": "https://status.openai.com/"},
+  "status": {"indicator": "minor", "description": "Partial Outage"},
+  "components": [
+    {"id": "01KMP3KP5MGE23B80K1EK4S8PV", "name": "API", "status": "operational"}
+  ],
+  "incidents": [
+    {
+      "id": "01KTBZDS20E3PZ53DH2SCKXN49",
+      "name": "Some users may experience issues accessing OpenAI accounts",
+      "status": "monitoring", "impact": "minor", "shortlink": null,
+      "created_at": "2026-06-05T13:26:40Z", "updated_at": "2026-06-05T21:19:17Z",
+      "incident_updates": [
+        {"id": "01KTCTF5M321F3AQZTVKJ52D5V", "status": "monitoring"},
+        {"id": "01KT9OLDER13Z6Q0AAAAAAAAAA", "status": "investigating"}
+      ]
+    }
+  ]
+}

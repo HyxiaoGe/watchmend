@@ -1,0 +1,41 @@
+[
+  {
+    "id": "CLOSED01",
+    "begin": "2026-02-27T12:37:00+00:00",
+    "end": "2026-02-27T14:35:00+00:00",
+    "modified": "2026-03-09T05:25:43+00:00",
+    "external_desc": "Vertex AI Gemini API increased error rates (resolved).",
+    "severity": "low",
+    "status_impact": "SERVICE_INFORMATION",
+    "uri": "incidents/CLOSED01",
+    "affected_products": [{"title": "Vertex Gemini API", "id": "Z0FZJAMvEB4j3NbCJs6B"}],
+    "most_recent_update": {"when": "2026-03-09T05:25:43+00:00", "status": "AVAILABLE"}
+  },
+  {
+    "id": "OPEN01",
+    "begin": "2026-06-06T10:00:00+00:00",
+    "end": null,
+    "modified": "2026-06-06T10:30:00+00:00",
+    "external_desc": "Vertex Gemini API elevated latency, multiple regions.",
+    "severity": "high",
+    "status_impact": "SERVICE_OUTAGE",
+    "uri": "incidents/OPEN01",
+    "affected_products": [
+      {"title": "Vertex Gemini API", "id": "Z0FZJAMvEB4j3NbCJs6B"},
+      {"title": "Vertex Imagen API", "id": "IMAGENID000000000000"}
+    ],
+    "most_recent_update": {"when": "2026-06-06T10:30:00+00:00", "status": "SERVICE_OUTAGE"}
+  },
+  {
+    "id": "OPEN_OTHER",
+    "begin": "2026-06-06T09:00:00+00:00",
+    "end": null,
+    "modified": "2026-06-06T09:10:00+00:00",
+    "external_desc": "BigQuery slow queries (not in our watchlist).",
+    "severity": "medium",
+    "status_impact": "SERVICE_DISRUPTION",
+    "uri": "incidents/OPEN_OTHER",
+    "affected_products": [{"title": "BigQuery", "id": "BIGQUERYID0000000000"}],
+    "most_recent_update": {"when": "2026-06-06T09:10:00+00:00", "status": "SERVICE_DISRUPTION"}
+  }
+]
