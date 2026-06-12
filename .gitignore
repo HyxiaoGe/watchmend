@@ -6,4 +6,7 @@ __pycache__/
 *.db
 .env
 data/
+demo/data/
+backups/
+services.yaml
 scripts/leak_patterns.local

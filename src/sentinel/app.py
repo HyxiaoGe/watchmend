@@ -50,6 +50,18 @@ def _local_tz(settings: Settings) -> timezone:
     return timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
 
 
+def _load_targets_or_disable(path: str):
+    """services 文件缺失 ≠ 致命错误:回退 vendor-only 模式(只监控外部状态页),
+    内部探针层整体不启用。文件存在但格式坏仍然抛出(显式配置错误要响亮失败)。"""
+    try:
+        return load_targets(path)
+    except FileNotFoundError:
+        logger.warning(
+            "services file %s missing: internal probing disabled (vendor-only mode)", path
+        )
+        return []
+
+
 def build_jobs(
     settings: Settings, client: httpx.AsyncClient, store: Store
 ) -> list[tuple[str, float, Tick]]:
@@ -63,7 +75,7 @@ def build_jobs(
         client, settings.patrol_webhook, secret=settings.patrol_sign_secret
     )
     state = PollState()
-    targets = load_targets(settings.sentinel_services_file)
+    targets = _load_targets_or_disable(settings.sentinel_services_file)
     service_names = [t.name for t in targets]
     prom = PromClient(client, settings.sentinel_prometheus_url)
     loki = LokiClient(client, settings.sentinel_loki_url)
@@ -212,13 +224,19 @@ def build_jobs(
             retention_days=settings.sentinel_probe_retention_days,
         )
 
-    return [
-        ("statuspage", settings.sentinel_poll_interval, statuspage_tick),
-        ("internal_probe", settings.sentinel_probe_interval, probe_tick),
-        ("daily_report", _REPORT_CHECK_INTERVAL, report_tick),
-        ("metrics_scan", settings.sentinel_scan_interval, metrics_tick),
-        ("log_scan", settings.sentinel_scan_interval, logs_tick),
+    # 分层装配:services 文件缺失→无内部探针;prometheus/loki URL 留空→对应扫描关闭。
+    # 最小模式(只填飞书 webhook)也能干净起来,不产生数据源故障噪音。
+    jobs: list[tuple[str, float, Tick]] = [
+        ("statuspage", settings.sentinel_poll_interval, statuspage_tick)
     ]
+    if targets:
+        jobs.append(("internal_probe", settings.sentinel_probe_interval, probe_tick))
+    jobs.append(("daily_report", _REPORT_CHECK_INTERVAL, report_tick))
+    if settings.sentinel_prometheus_url:
+        jobs.append(("metrics_scan", settings.sentinel_scan_interval, metrics_tick))
+    if settings.sentinel_loki_url:
+        jobs.append(("log_scan", settings.sentinel_scan_interval, logs_tick))
+    return jobs
 
 
 @contextlib.asynccontextmanager
@@ -242,7 +260,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         client, settings.patrol_webhook, secret=settings.patrol_sign_secret
     )
     # load_targets 在此与 build_jobs 各调一次(读同一 yaml,幂等),可接受
-    app.state.services = [t.name for t in load_targets(settings.sentinel_services_file)]
+    app.state.services = [t.name for t in _load_targets_or_disable(settings.sentinel_services_file)]
     logger.info("sentinel started, jobs=%s", [name for name, _, _ in jobs])
     tasks = [asyncio.create_task(_job_loop(name, interval, tick)) for name, interval, tick in jobs]
     try:

@@ -1,0 +1,66 @@
+# WatchMend 全栈 demo:一条命令体验完整链路(探针 + 指标/日志扫描 + 飞书卡片)。
+# 自带 prometheus/loki/node-exporter/cadvisor 和一个被监控的示例服务,零外部依赖。
+#
+#   cp .env.example .env   # 只需填 FEISHU_VENDOR_WEBHOOK(建个测试群机器人,30 秒)
+#   docker compose -f docker-compose.demo.yml up -d --build
+#
+# 起来后:curl http://127.0.0.1:8765/health;1-2 分钟内收到第一张飞书卡;
+# 试试 docker compose -f docker-compose.demo.yml stop demo-app,等 15 分钟看告警卡。
+services:
+  sentinel:
+    build: .
+    image: watchmend:demo
+    restart: unless-stopped
+    mem_limit: 256m
+    env_file: .env
+    environment:
+      SENTINEL_DB_PATH: /data/sentinel.db
+      SENTINEL_PROMETHEUS_URL: http://prometheus:9090
+      SENTINEL_LOKI_URL: http://loki:3100
+    volumes:
+      - ./demo/data:/data
+      - ./demo/services.demo.yaml:/app/services.yaml:ro
+    ports:
+      - "127.0.0.1:8765:8000"
+    depends_on:
+      - prometheus
+      - loki
+      - demo-app
+    networks: [demo]
+
+  # 被监控的示例服务:探针每 5 分钟打它的 /
+  demo-app:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    networks: [demo]
+
+  prometheus:
+    image: prom/prometheus:v3.4.1
+    restart: unless-stopped
+    volumes:
+      - ./demo/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks: [demo]
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    restart: unless-stopped
+    networks: [demo]
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks: [demo]
+
+  loki:
+    image: grafana/loki:3.5.0
+    restart: unless-stopped
+    networks: [demo]
+
+networks:
+  demo:

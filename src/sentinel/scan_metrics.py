@@ -18,10 +18,16 @@ _MEM_QUERY = (
 _SWAP_QUERY = (
     "(node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes) / node_memory_SwapTotal_bytes"
 )
-# 设计 §4:探针层故意不探 postgres/redis,由这里的 pg_up/redis_up 兜底(minio 已豁免:
-# loopback-bound 且计划下线)。不带 ==0 过滤:空结果要当数据源故障,值为 0 才是真挂。
-_MIDDLEWARE_QUERY = '{__name__=~"pg_up|redis_up"}'
-_MIDDLEWARE_SUBJECTS = {"pg_up": "postgres", "redis_up": "redis"}
+
+
+# 存储中间件兜底:探针层故意不探数据库类服务,由 exporter 的 up 指标(如 pg_up/redis_up)
+# 兜底,清单经 SENTINEL_MIDDLEWARE_METRICS 配置(空=跳过本检查)。
+# 不带 ==0 过滤:空结果要当数据源故障,值为 0 才是真挂。
+def _middleware_query(metrics: list[str]) -> str:
+    pattern = "|".join(metrics)
+    return f'{{__name__=~"{pattern}"}}'
+
+
 # cAdvisor 的 container_start_time_seconds 是创建时间,docker restart 后不变,changes() 抓不到;
 # cgroup 重建会让 CPU 计数器归零,用 resets() 检测原地重启(已 live 验证)。
 # 容器重建(CI 部署)产生新序列 resets=0 → 故意不报,避免每次部署都出卡。
@@ -98,26 +104,29 @@ async def run_metrics_scan(prom: PromClient, settings: Settings) -> list[Finding
                 )
             )
 
-    middleware_rows = await _mandatory(prom, _MIDDLEWARE_QUERY, "middleware up")
-    seen_metrics = {labels.get("__name__") for labels, _ in middleware_rows}
-    missing = _MIDDLEWARE_SUBJECTS.keys() - seen_metrics
-    if missing:
-        # pg/redis exporter 是独立容器:单个静默时查询仍非空,必须按 metric 校验覆盖
-        raise RuntimeError(f"middleware metrics missing: {sorted(missing)} (exporter down?)")
-    for labels, value in middleware_rows:
-        metric = labels.get("__name__", "?")
-        if value == 0:
-            subject = _MIDDLEWARE_SUBJECTS.get(metric, metric)
-            findings.append(
-                Finding(
-                    rule="middleware_down",
-                    subject=subject,
-                    severity="critical",
-                    detail=f"存储中间件 {subject} 健康指标 {metric}=0",
-                    payload={"metric": metric},
-                    needs_diagnosis=True,
+    middleware_subjects = settings.middleware_subjects
+    if middleware_subjects:
+        query = _middleware_query(sorted(middleware_subjects))
+        middleware_rows = await _mandatory(prom, query, "middleware up")
+        seen_metrics = {labels.get("__name__") for labels, _ in middleware_rows}
+        missing = middleware_subjects.keys() - seen_metrics
+        if missing:
+            # 各 exporter 是独立容器:单个静默时查询仍非空,必须按 metric 校验覆盖
+            raise RuntimeError(f"middleware metrics missing: {sorted(missing)} (exporter down?)")
+        for labels, value in middleware_rows:
+            metric = labels.get("__name__", "?")
+            if value == 0:
+                subject = middleware_subjects.get(metric, metric)
+                findings.append(
+                    Finding(
+                        rule="middleware_down",
+                        subject=subject,
+                        severity="critical",
+                        detail=f"存储中间件 {subject} 健康指标 {metric}=0",
+                        payload={"metric": metric},
+                        needs_diagnosis=True,
+                    )
                 )
-            )
 
     restarted: dict[str, tuple[str, float]] = {}
     for labels, value in await prom.query(_RESTART_QUERY):

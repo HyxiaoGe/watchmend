@@ -47,10 +47,15 @@ def test_backup_stale_fires(tmp_path):
     assert "pg_20260608" in findings[0].detail  # 报最新的那个
 
 
-def test_backup_missing_dir_fires(tmp_path):
-    findings = check_backup(str(tmp_path / "nope"), 36, now_ts=NOW)
-    assert findings[0].rule == "backup_stale"
-    assert "缺失或为空" in findings[0].detail
+def test_backup_missing_dir_skips_as_disabled(tmp_path):
+    # 开箱即用:没挂备份目录的部署视为未启用,返回 None 而非误报 critical
+    assert check_backup(str(tmp_path / "nope"), 36, now_ts=NOW) is None
+
+
+def test_backup_empty_dir_skips_as_disabled(tmp_path):
+    d = tmp_path / "pg"
+    d.mkdir()
+    assert check_backup(str(d), 36, now_ts=NOW) is None
 
 
 async def test_cert_expiring_fires(monkeypatch):
@@ -94,8 +99,9 @@ async def test_run_hygiene_forecast_failure_drops_rule_from_scope(settings, monk
             findings, evaluated, hold = await run_hygiene(
                 PromClient(client, "http://prom.test"), settings, now_ts=NOW
             )
-    assert evaluated == {"backup_stale", "cert_expiry"}  # forecast 失败被剔除
-    assert [f.rule for f in findings] == ["backup_stale"]  # 备份目录不存在 → 命中
+    # forecast 失败被剔除;备份目录不存在=未启用,backup_stale 同样不进 scope
+    assert evaluated == {"cert_expiry"}
+    assert findings == []
 
 
 async def test_run_hygiene_all_green(settings, monkeypatch, tmp_path):
@@ -129,10 +135,30 @@ async def test_run_hygiene_all_green(settings, monkeypatch, tmp_path):
     assert hold == set()
 
 
-def test_backup_zero_byte_file_not_counted(tmp_path):
+def test_backup_zero_byte_file_still_fires(tmp_path):
+    # 目录里有文件但全是 0 字节=备份产物坏了:与"未启用"(空目录)不同,必须告警
     d = tmp_path / "pg"
     d.mkdir()
     (d / "pg_fail.sql.gz").write_bytes(b"")
     os.utime(d / "pg_fail.sql.gz", (NOW - 3600, NOW - 3600))
     findings = check_backup(str(d), 36, now_ts=NOW)
-    assert "缺失或为空" in findings[0].detail
+    assert findings[0].severity == "critical"
+    assert "无有效备份" in findings[0].detail
+
+
+async def test_run_hygiene_prometheus_disabled_skips_forecast(monkeypatch, tmp_path):
+    # SENTINEL_PROMETHEUS_URL 留空=指标层未接入:forecast 不评估也不报错
+    import sentinel.scan_hygiene as sh
+
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_CERT_DOMAINS", "a.test")
+    monkeypatch.setenv("SENTINEL_BACKUP_DIR", str(tmp_path / "nope"))
+    from sentinel.config import Settings
+
+    settings = Settings(_env_file=None)
+    monkeypatch.setattr(sh, "_cert_expiry_ts", lambda domain: NOW + 60 * 86400)
+    async with httpx.AsyncClient() as client:
+        findings, evaluated, hold = await run_hygiene(PromClient(client, ""), settings, now_ts=NOW)
+    assert findings == []
+    assert evaluated == {"cert_expiry"}

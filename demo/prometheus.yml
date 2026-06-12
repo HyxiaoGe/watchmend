@@ -1,0 +1,14 @@
+# demo 栈 Prometheus 抓取配置:自身 + node-exporter(磁盘/swap) + cadvisor(容器内存/重启)
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]

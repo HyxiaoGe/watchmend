@@ -8,8 +8,9 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock ./
 RUN uv export --frozen --no-dev --no-emit-project -o requirements.txt \
     && uv pip install --system --no-cache -r requirements.txt
+# services.yaml 不进镜像:探针清单是部署配置,运行时经 volume 挂载
+# (缺失时自动降级 vendor-only 模式,只监控外部状态页)
 COPY src ./src
-COPY services.yaml ./services.yaml
 RUN uv pip install --system --no-cache --no-deps .
 
 VOLUME ["/data"]

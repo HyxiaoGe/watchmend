@@ -16,26 +16,33 @@ logger = logging.getLogger("sentinel")
 _FORECAST_QUERY = 'predict_linear(node_filesystem_avail_bytes{{mountpoint="/"}}[7d], {days}*86400)'
 
 
-def check_backup(backup_dir: str, max_age_hours: int, *, now_ts: int) -> list[Finding]:
-    """备份新鲜度:目录最新文件 mtime 超龄,或目录缺失/为空,即告警。"""
+def check_backup(backup_dir: str, max_age_hours: int, *, now_ts: int) -> list[Finding] | None:
+    """备份新鲜度:目录最新文件 mtime 超龄即告警。
+    返回 None=目录缺失或完全为空 → 视为未启用备份监控(开箱即用:没挂备份目录的部署
+    不应收到误报);目录里有文件但全是 0 字节/stat 失败 → 备份产物坏了,照常告警。"""
     path = Path(backup_dir)
+    if not backup_dir or not path.is_dir():
+        return None
+    seen_any = False
     entries: list[tuple[float, Path]] = []
-    if path.is_dir():
-        # pg_dump 平铺写入本目录,不递归;轮转删除竞态下单文件 stat 失败忽略;0 字节=失败产物
-        for p in path.glob("*"):
-            try:
-                st = p.stat()
-            except OSError:
-                continue
-            if p.is_file() and st.st_size > 0:
-                entries.append((st.st_mtime, p))
+    # pg_dump 平铺写入本目录,不递归;轮转删除竞态下单文件 stat 失败忽略;0 字节=失败产物
+    for p in path.glob("*"):
+        seen_any = True
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        if p.is_file() and st.st_size > 0:
+            entries.append((st.st_mtime, p))
+    if not seen_any:
+        return None
     if not entries:
         return [
             Finding(
                 rule="backup_stale",
                 subject=path.name,
                 severity="critical",
-                detail=f"备份目录 {backup_dir} 缺失或为空",
+                detail=f"备份目录 {backup_dir} 有文件但无有效备份(全部 0 字节或不可读)",
             )
         ]
     mtime, newest = max(entries, key=lambda e: e[0])
@@ -121,19 +128,28 @@ async def run_hygiene(
     findings: list[Finding] = []
     evaluated: set[str] = set()
     try:
-        findings += check_backup(
+        backup_findings = check_backup(
             settings.sentinel_backup_dir,
             settings.sentinel_backup_max_age_hours,
             now_ts=now_ts,
         )
-        evaluated.add("backup_stale")
+        if backup_findings is None:
+            # 未启用≠已评估:不进 evaluated,open 的 backup_stale 事件不会被假恢复
+            logger.warning(
+                "backup dir %s 缺失或为空,跳过备份检查(视为未启用)",
+                settings.sentinel_backup_dir,
+            )
+        else:
+            findings += backup_findings
+            evaluated.add("backup_stale")
     except Exception:
         logger.exception("backup check failed")
-    try:
-        findings += await check_disk_forecast(prom, settings)
-        evaluated.add("disk_forecast")
-    except Exception:
-        logger.exception("disk forecast check failed")
+    if settings.sentinel_prometheus_url:  # URL 留空=指标层未接入,forecast 不评估
+        try:
+            findings += await check_disk_forecast(prom, settings)
+            evaluated.add("disk_forecast")
+        except Exception:
+            logger.exception("disk forecast check failed")
     cert_findings, hold = await check_certs(
         settings.cert_domains_list, settings.sentinel_cert_min_days, now_ts=now_ts
     )

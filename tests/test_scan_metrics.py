@@ -11,9 +11,14 @@ from sentinel.scan_metrics import run_metrics_scan
 @pytest.fixture
 def settings(monkeypatch):
     monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_MIDDLEWARE_METRICS", "pg_up:postgres,redis_up:redis")
     from sentinel.config import Settings
 
     return Settings(_env_file=None)
+
+
+# 配置了 pg_up/redis_up 时的中间件查询(动态拼接,与旧硬编码常量等价)
+_MW_QUERY = scan_metrics._middleware_query(["pg_up", "redis_up"])
 
 
 def _vector(items):
@@ -31,7 +36,7 @@ _HEALTHY = {
     scan_metrics._DISK_QUERY: [({}, 0.3)],
     scan_metrics._MEM_QUERY: [({"name": "idle"}, 0.1)],
     scan_metrics._SWAP_QUERY: [({}, 0.3)],
-    scan_metrics._MIDDLEWARE_QUERY: [({"__name__": "pg_up"}, 1), ({"__name__": "redis_up"}, 1)],
+    _MW_QUERY: [({"__name__": "pg_up"}, 1), ({"__name__": "redis_up"}, 1)],
 }
 
 
@@ -112,7 +117,7 @@ async def test_middleware_down_fires_critical(settings):
     findings = await _scan(
         settings,
         {
-            scan_metrics._MIDDLEWARE_QUERY: [
+            _MW_QUERY: [
                 ({"__name__": "pg_up"}, 0),
                 ({"__name__": "redis_up"}, 1),
             ]
@@ -153,4 +158,24 @@ async def test_swap_nan_skipped(settings):
 async def test_middleware_partial_coverage_raises(settings):
     # 单个 exporter 静默:整体查询非空但缺 metric,必须当数据源故障而非"无异常"
     with pytest.raises(RuntimeError, match="redis_up"):
-        await _scan(settings, {scan_metrics._MIDDLEWARE_QUERY: [({"__name__": "pg_up"}, 1)]})
+        await _scan(settings, {_MW_QUERY: [({"__name__": "pg_up"}, 1)]})
+
+
+async def test_middleware_unconfigured_skipped(monkeypatch):
+    # 默认 SENTINEL_MIDDLEWARE_METRICS 为空:不发中间件查询、不因空结果误报数据源故障
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    from sentinel.config import Settings
+
+    default_settings = Settings(_env_file=None)
+    assert default_settings.middleware_subjects == {}
+    findings = await _scan(default_settings, {_MW_QUERY: []})  # 空结果也不该被查询到
+    assert findings == []
+
+
+def test_middleware_subjects_parsing(settings):
+    # "metric:展示名" 解析;省略展示名时用 metric 本身
+    assert settings.middleware_subjects == {"pg_up": "postgres", "redis_up": "redis"}
+    from sentinel.config import Settings
+
+    s = Settings(_env_file=None, sentinel_middleware_metrics="mysql_up, mongo_up:mongodb")
+    assert s.middleware_subjects == {"mysql_up": "mysql_up", "mongo_up": "mongodb"}

@@ -10,7 +10,10 @@ services:
       SENTINEL_DB_PATH: /data/sentinel.db
     volumes:
       - ./data:/data
-      - ${SENTINEL_BACKUP_DIR:-./backups}:/backups/postgresql:ro   # hygiene 备份新鲜度;指向你的 pg_dump 目录
+      # 探针清单:cp services.example.yaml services.yaml 后按自己的服务编辑(make up 会自动复制)
+      - ./services.yaml:/app/services.yaml:ro
+      # hygiene 备份新鲜度:指向宿主机 pg_dump 目录;目录为空=自动跳过该检查,无需关心
+      - ${SENTINEL_BACKUP_HOST_DIR:-./backups}:/backups/postgresql:ro
     ports:
       - "127.0.0.1:8765:8000"   # 本机/SSH 隧道访问；Kuma 可走容器网络
     healthcheck:

@@ -2,6 +2,7 @@
 from pathlib import Path
 
 import httpx
+import pytest
 import respx
 
 from sentinel.probe import ProbeTarget, load_targets, probe_one, run_probe_cycle
@@ -123,10 +124,11 @@ async def test_run_probe_cycle_stores_all_samples_even_with_failures(tmp_path):
     assert {s.service: s.ok for s in stored} == {"auth": True, "prometheus": False}
 
 
-def test_shipped_services_yaml_parses():
-    # 钉住仓库根目录随仓清单:烤进镜像,坏一行就是容器启动 crash-loop
+@pytest.mark.parametrize("rel", ["services.example.yaml", "demo/services.demo.yaml"])
+def test_shipped_service_lists_parse(rel):
+    # 钉住随仓示例清单:用户从它起步/demo 直接挂载,坏一行就是启动 crash-loop
     repo_root = Path(__file__).parent.parent
-    targets = load_targets(str(repo_root / "services.yaml"))
+    targets = load_targets(str(repo_root / rel))
     assert len(targets) >= 1
     names = [t.name for t in targets]
     assert len(set(names)) == len(names)  # 无重名

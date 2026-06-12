@@ -63,6 +63,76 @@ async def test_build_jobs_assembles_five_jobs(tmp_path, monkeypatch):
     store.close()
 
 
+async def test_build_jobs_minimal_mode_vendor_only(tmp_path, monkeypatch):
+    # 最小模式:只填飞书 webhook——services 文件缺失 + prometheus/loki 留空,
+    # 只剩外部状态页轮询与日报门控,不产生任何数据源故障噪音
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+
+    from sentinel.app import build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    settings = Settings(_env_file=None)
+    client = httpx.AsyncClient()
+    store = Store(settings.sentinel_db_path)
+    jobs = build_jobs(settings, client, store)
+    assert [name for name, _, _ in jobs] == ["statuspage", "daily_report"]
+    await client.aclose()
+    store.close()
+
+
+async def test_build_jobs_partial_datasources(tmp_path, monkeypatch):
+    # 只接 prometheus 不接 loki:metrics_scan 在、log_scan 不在
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    yaml_path = tmp_path / "services.yaml"
+    yaml_path.write_text(
+        "services:\n  - name: auth\n    host: auth.dev.local\n    path: /health\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(yaml_path))
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+
+    from sentinel.app import build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    settings = Settings(_env_file=None)
+    client = httpx.AsyncClient()
+    store = Store(settings.sentinel_db_path)
+    jobs = build_jobs(settings, client, store)
+    assert [name for name, _, _ in jobs] == [
+        "statuspage",
+        "internal_probe",
+        "daily_report",
+        "metrics_scan",
+    ]
+    await client.aclose()
+    store.close()
+
+
+def test_load_targets_or_disable_missing_file_returns_empty(tmp_path):
+    from sentinel.app import _load_targets_or_disable
+
+    assert _load_targets_or_disable(str(tmp_path / "nope.yaml")) == []
+
+
+def test_load_targets_or_disable_bad_yaml_still_raises(tmp_path):
+    # 文件存在但内容坏=显式配置错误,必须响亮失败而非静默降级
+    import pytest
+
+    from sentinel.app import _load_targets_or_disable
+
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("defaults: {}\n", encoding="utf-8")  # 缺 services 键
+    with pytest.raises(KeyError):
+        _load_targets_or_disable(str(bad))
+
+
 async def test_probe_and_report_ticks_execute(tmp_path, monkeypatch):
     # 冒烟:真实跑一次 probe_tick 和 report_tick,钉住闭包内的 kwargs 接线
     # (_job_loop 吞所有异常,接线打错只会在生产里无限 crash-loop 而 /health 仍绿)

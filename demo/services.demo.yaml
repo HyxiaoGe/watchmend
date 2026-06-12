@@ -1,0 +1,12 @@
+# demo 栈探针清单:全部容器名直连(同一 compose 网络)
+defaults:
+  timeout: 5.0
+  expect_status: 200
+
+services:
+  - name: demo-app
+    url: http://demo-app/
+  - name: prometheus
+    url: http://prometheus:9090/-/healthy
+  - name: loki
+    url: http://loki:3100/ready

@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     sentinel_disk_forecast_days: int = 14
     sentinel_container_mem_pct: float = 90.0
     sentinel_swap_pct: float = 80.0
+    # 存储中间件兜底 up 指标:CSV "metric:展示名",如 "pg_up:postgres,redis_up:redis";
+    # 空=跳过 middleware_down 检查(没部署对应 exporter 时的安全默认)
+    sentinel_middleware_metrics: str = ""
     sentinel_backup_dir: str = "/backups/postgresql"
     # 28h:备份 03:00/检查 09:00,正常龄 6h,漏一天 30h → 次晨即告警(设计稿 36h 会漏单日失败)
     sentinel_backup_max_age_hours: int = 28
@@ -68,3 +71,15 @@ class Settings(BaseSettings):
     @property
     def cert_domains_list(self) -> list[str]:
         return [d.strip() for d in self.sentinel_cert_domains.split(",") if d.strip()]
+
+    @property
+    def middleware_subjects(self) -> dict[str, str]:
+        """解析 sentinel_middleware_metrics → {metric: 展示名};省略展示名时用 metric 本身。"""
+        out: dict[str, str] = {}
+        for part in self.sentinel_middleware_metrics.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            metric, _, subject = part.partition(":")
+            out[metric.strip()] = subject.strip() or metric.strip()
+        return out

@@ -71,6 +71,7 @@ def test_phase2_defaults(monkeypatch):
     assert s.sentinel_backup_max_age_hours == 28
     assert s.sentinel_cert_min_days == 14
     assert s.sentinel_cert_domains == ""  # 默认空=跳过证书检查,部署者自填
+    assert s.sentinel_middleware_metrics == ""  # 默认空=跳过中间件检查,部署者自填
 
 
 def test_cert_domains_list_parses_csv(monkeypatch):
