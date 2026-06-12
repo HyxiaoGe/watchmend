@@ -117,7 +117,7 @@ def build_heartbeat_card(snapshots: list[Snapshot], *, now_str: str, interval: i
     else:
         title = "🔴 外部依赖巡检 · 存在异常"
         template = _RED
-    footer = f"🤖 dev-ops-sentinel · 每日心跳 · {now_str}"
+    footer = f"🤖 WatchMend · 每日心跳 · {now_str}"
 
     return {
         "msg_type": "interactive",
@@ -159,7 +159,7 @@ def _patrol_card(title: str, template: str, body: str, *, kind: str, now_str: st
                     "elements": [
                         {
                             "tag": "plain_text",
-                            "content": f"🤖 dev-ops-sentinel · {kind} · {now_str}",
+                            "content": f"🤖 WatchMend · {kind} · {now_str}",
                         }
                     ],
                 },
@@ -288,7 +288,7 @@ def build_daily_report_card(
     total_probes = sum(s.total for s in stats)
     failed = sum(s.total - s.ok_count for s in stats)
     summary = f"{full}/{len(stats)} 服务全勤　·　总探针 {total_probes} 次　·　失败 {failed} 次"
-    footer = f"🤖 dev-ops-sentinel · 内部体检日报 · {now_str}"
+    footer = f"🤖 WatchMend · 内部体检日报 · {now_str}"
 
     return {
         "msg_type": "interactive",
@@ -383,9 +383,7 @@ def build_summary_card(text: str, *, date_str: str, now_str: str) -> dict:
                 {"tag": "div", "text": {"tag": "lark_md", "content": text}},
                 {
                     "tag": "note",
-                    "elements": [
-                        {"tag": "plain_text", "content": f"🤖 dev-ops-sentinel · {now_str}"}
-                    ],
+                    "elements": [{"tag": "plain_text", "content": f"🤖 WatchMend · {now_str}"}],
                 },
             ],
         },

@@ -6,7 +6,7 @@ set -euo pipefail
 
 # DENY:重启会主动有害或自毁的容器(防火墙/自动更新器/全栈反代/哨兵自身)。
 # 部署者按自己环境覆盖:SENTINEL_RESTART_DENY="my-firewall my-proxy ..."(空格分隔)
-read -ra DENY <<< "${SENTINEL_RESTART_DENY:-watchtower nginx-proxy dev-ops-sentinel}"
+read -ra DENY <<< "${SENTINEL_RESTART_DENY:-watchtower nginx-proxy watchmend}"
 
 die() { echo "sentinel-restart: $1" >&2; exit "${2:-1}"; }
 

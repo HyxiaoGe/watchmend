@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -14,16 +16,18 @@ from fastapi import FastAPI
 from sentinel.api import register_routes
 from sentinel.config import Settings
 from sentinel.engine import apply_findings
+from sentinel.feishu.cards import build_diagnosis_card, build_summary_card
 from sentinel.feishu.client import FeishuClient
 from sentinel.fetcher import Fetcher
 from sentinel.findings import LOG_RULES, METRICS_RULES, PROBE_RULES, Finding
+from sentinel.llm_driver import LLMDriver
 from sentinel.logql import LokiClient
 from sentinel.poller import PollState, run_cycle, run_heartbeat
 from sentinel.probe import load_targets, run_probe_cycle
 from sentinel.probe_rules import evaluate_probe_rules
 from sentinel.promql import PromClient
 from sentinel.registry import build_adapters
-from sentinel.report import report_due, run_daily_report
+from sentinel.report import build_daily_stats, report_due, run_daily_report
 from sentinel.scan_hygiene import run_hygiene
 from sentinel.scan_logs import run_log_scan
 from sentinel.scan_metrics import run_metrics_scan
@@ -35,6 +39,8 @@ logger = logging.getLogger("sentinel")
 Tick = Callable[[], Awaitable[None]]
 
 _REPORT_CHECK_INTERVAL = 60  # 日报门控轮询间隔(秒):到点才真正发
+_DIAG_MAX_PER_TICK = 3  # 单轮最多诊断事件数,防事件风暴时 LLM 调用失控
+_DIAG_ATTEMPTS = 2  # 同一事件最多尝试次数,之后落 failed(可经 API 人工重置)
 
 
 async def _job_loop(name: str, interval: float, tick: Tick) -> None:
@@ -90,6 +96,7 @@ def build_jobs(
     service_names = [t.name for t in targets]
     prom = PromClient(client, settings.sentinel_prometheus_url)
     loki = LokiClient(client, settings.sentinel_loki_url)
+    driver = LLMDriver(client, settings)
     cooldown_seconds = settings.sentinel_cooldown_hours * 3600
     scan_fails = {"metrics": 0, "logs": 0}  # 数据源连续失败计数(进程内,重启清零)
     if settings.sentinel_middleware_metrics and not settings.sentinel_prometheus_url:
@@ -216,6 +223,40 @@ def build_jobs(
             cooldown_seconds=cooldown_seconds,
         )
 
+    async def diag_tick() -> None:
+        # 容器内直连诊断:与宿主机 openclaw 编排(host/ 三件套)二选一,
+        # 同抢 pending 队列,两条路径都开会重复诊断
+        for event in store.get_pending_diagnosis_events()[:_DIAG_MAX_PER_TICK]:
+            _, now_str, _ = _now()
+            diagnosis, raw = None, ""
+            for attempt in range(1, _DIAG_ATTEMPTS + 1):
+                try:
+                    diagnosis, raw = await driver.diagnose(event)
+                except Exception as exc:
+                    logger.exception("diagnose event %d attempt %d", event.id, attempt)
+                    raw = f"llm error: {exc}"
+                    continue
+                if diagnosis:
+                    break
+            if diagnosis:
+                store.set_diagnosis(
+                    event.id,
+                    status="done",
+                    diagnosis_json=json.dumps(diagnosis, ensure_ascii=False),
+                )
+                try:  # 卡片尽力而为:诊断已落库,发卡失败不回滚
+                    card = build_diagnosis_card(event, diagnosis, now_str=now_str)
+                    await patrol_feishu.send(card)
+                except Exception:
+                    logger.exception("diagnosis card send failed (event %d)", event.id)
+            else:
+                store.set_diagnosis(
+                    event.id,
+                    status="failed",
+                    diagnosis_json=json.dumps({"raw": raw[:2000]}, ensure_ascii=False),
+                )
+                logger.warning("event %d diagnosis failed after %d attempts", event.id, attempt)
+
     async def report_tick() -> None:
         now_ts, now_str, now_local = _now()
         if not report_due(store, now_local, settings.sentinel_report_hour):
@@ -235,7 +276,7 @@ def build_jobs(
             )
         except Exception:
             logger.exception("hygiene failed")
-        await run_daily_report(
+        sent = await run_daily_report(
             store=store,
             feishu=patrol_feishu,
             services=service_names,
@@ -243,6 +284,22 @@ def build_jobs(
             hour=settings.sentinel_report_hour,
             retention_days=settings.sentinel_probe_retention_days,
         )
+        if sent and driver.enabled:
+            try:  # AI 总结跟在日报后面,失败只损失总结不影响日报本身
+                date_str = now_local.date().isoformat()
+                stats = build_daily_stats(store, service_names, now_ts=now_ts, date_str=date_str)
+                data = {
+                    "date": date_str,
+                    "services": [asdict(s) for s in stats],
+                    "open_events": [asdict(e) for e in store.get_open_events()],
+                    "resolved_24h": store.count_resolved_since(now_ts - 24 * 3600),
+                }
+                text = await driver.summarize(data)
+                if text:
+                    card = build_summary_card(text[:1000], date_str=date_str, now_str=now_str)
+                    await patrol_feishu.send(card)
+            except Exception:
+                logger.exception("daily AI summary failed")
 
     # 分层装配:services 文件缺失→无内部探针;prometheus/loki URL 留空→对应扫描关闭。
     # 最小模式(只填飞书 webhook)也能干净起来,不产生数据源故障噪音。
@@ -256,6 +313,8 @@ def build_jobs(
         jobs.append(("metrics_scan", settings.sentinel_scan_interval, metrics_tick))
     if settings.sentinel_loki_url:
         jobs.append(("log_scan", settings.sentinel_scan_interval, logs_tick))
+    if driver.enabled:
+        jobs.append(("diagnosis", settings.sentinel_diag_interval, diag_tick))
     return jobs
 
 
@@ -295,7 +354,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store.close()
 
 
-app = FastAPI(title="dev-ops-sentinel", lifespan=lifespan)
+app = FastAPI(title="WatchMend", lifespan=lifespan)
 
 register_routes(app)
 

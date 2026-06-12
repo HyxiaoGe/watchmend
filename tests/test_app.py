@@ -335,6 +335,111 @@ async def test_middleware_unconfigured_keeps_open_event(tmp_path, monkeypatch):
     store.close()
 
 
+async def test_build_jobs_diagnosis_job_when_llm_configured(tmp_path, monkeypatch):
+    # LLM 直连层条件装配:配了 base_url+model 才有 diagnosis job
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("LLM_BASE_URL", "http://llm.test/v1")
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+
+    from sentinel.app import build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    jobs = build_jobs(Settings(_env_file=None), client, store)
+    assert [name for name, _, _ in jobs] == ["statuspage", "daily_report", "diagnosis"]
+    await client.aclose()
+    store.close()
+
+
+async def test_diag_tick_done_and_failed_paths(tmp_path, monkeypatch):
+    # 端到端:pending 事件被容器内 driver 诊断——成功路径落 done+发卡,
+    # 解析不出 json 的路径两次尝试后落 failed 且不发卡
+    import json
+
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("LLM_BASE_URL", "http://llm.test/v1")
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+
+    from sentinel.app import build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    eid = store.insert_event(
+        ts=1700000000,
+        rule="mem_pressure",
+        subject="api",
+        severity="warning",
+        status="open",
+        detail="容器 api 内存高",
+        payload_json="{}",
+        diagnosis_status="pending",
+        cooldown_until=0,
+    )
+    jobs = {n: t for n, _, t in build_jobs(Settings(_env_file=None), client, store)}
+
+    diag = {"summary": "内存高", "root_cause": "泄漏", "confidence": "low"}
+    final = "```json\n" + json.dumps(diag, ensure_ascii=False) + "\n```"
+    with respx.mock:
+        respx.post("http://llm.test/v1/chat/completions").mock(
+            return_value=httpx.Response(
+                200, json={"choices": [{"message": {"role": "assistant", "content": final}}]}
+            )
+        )
+        webhook = respx.post("https://open.feishu.cn/hook/T").mock(
+            return_value=httpx.Response(200, json={"code": 0})
+        )
+        await jobs["diagnosis"]()
+    event = store.get_event(eid)
+    assert event.diagnosis_status == "done"
+    assert json.loads(event.diagnosis_json)["root_cause"] == "泄漏"
+    assert webhook.call_count == 1
+    body = json.loads(webhook.calls.last.request.content)
+    assert "诊断" in body["card"]["header"]["title"]["content"]
+
+    # failed 路径:模型不给 json → 两次尝试 → failed,原文留底,不发卡
+    eid2 = store.insert_event(
+        ts=1700000100,
+        rule="mem_pressure",
+        subject="db",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="pending",
+        cooldown_until=0,
+    )
+    with respx.mock:
+        llm = respx.post("http://llm.test/v1/chat/completions").mock(
+            return_value=httpx.Response(
+                200,
+                json={"choices": [{"message": {"role": "assistant", "content": "说不清"}}]},
+            )
+        )
+        webhook = respx.post("https://open.feishu.cn/hook/T").mock(
+            return_value=httpx.Response(200, json={"code": 0})
+        )
+        await jobs["diagnosis"]()
+    event2 = store.get_event(eid2)
+    assert event2.diagnosis_status == "failed"
+    assert "说不清" in json.loads(event2.diagnosis_json)["raw"]
+    assert llm.call_count == 2  # 两次尝试
+    assert webhook.call_count == 0
+    await client.aclose()
+    store.close()
+
+
 async def test_build_jobs_warns_middleware_without_prometheus(tmp_path, monkeypatch, caplog):
     # 半配置矛盾:配了中间件指标却关了 prometheus,兜底覆盖静默丢失——至少要响一声
     monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")

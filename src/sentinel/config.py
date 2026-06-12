@@ -54,6 +54,18 @@ class Settings(BaseSettings):
     # Phase 3 编排 API 写端点鉴权 token;空=不鉴权(仅容器网内可达时可接受)
     sentinel_diag_token: str = ""
 
+    # LLM 直连(OpenAI-compatible):base_url 留空=LLM 诊断/总结层整体关闭,
+    # 确定性巡检与告警不受影响。兼容 openai/deepseek/ollama/vllm 等任何同协议端点。
+    llm_base_url: str = ""
+    llm_api_key: str = ""
+    llm_model: str = ""
+    llm_timeout_seconds: int = 120
+    llm_max_tool_rounds: int = 8  # 单次诊断的工具调用轮数上限,防失控烧 token
+    sentinel_diag_interval: int = 120  # pending 事件诊断轮询周期(秒)
+    # docker 只读诊断工具(ps/logs/inspect):填 socket 路径启用(compose 需挂载同路径),
+    # 空=不启用。挂 socket 等于给容器宿主机级权限,默认关、按需打开。
+    sentinel_docker_socket: str = ""
+
     @property
     def providers_list(self) -> list[str]:
         return [p.strip() for p in self.sentinel_providers.split(",") if p.strip()]
