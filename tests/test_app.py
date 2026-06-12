@@ -272,6 +272,91 @@ async def test_metrics_scan_consecutive_failures_escalate_to_card(tmp_path, monk
     store.close()
 
 
+def test_load_targets_or_disable_directory_returns_empty(tmp_path):
+    # compose 短语法 bind mount 在宿主机文件缺失时会自动造同名目录挂进来:
+    # 必须与"文件缺失"同义降级 vendor-only,而非 IsADirectoryError 打成启动 crash-loop
+    from sentinel.app import _load_targets_or_disable
+
+    mount_dir = tmp_path / "services.yaml"
+    mount_dir.mkdir()
+    assert _load_targets_or_disable(str(mount_dir)) == []
+
+
+async def test_middleware_unconfigured_keeps_open_event(tmp_path, monkeypatch):
+    # 曾配置 SENTINEL_MIDDLEWARE_METRICS 产生 open 事件,之后清空配置重启:
+    # middleware 检查被跳过,scope 必须剔除 middleware_down——不评估≠恢复,
+    # 不能给仍可能挂着的中间件发"已恢复"假绿卡
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+
+    from sentinel.app import build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+
+    def pg_down_handler(request):
+        q = request.url.params["query"]
+        if "resets" in q or "oom" in q:
+            return httpx.Response(200, json=_vector([]))
+        if "pg_up" in q:
+            return httpx.Response(200, json=_vector([({"__name__": "pg_up"}, 0)]))
+        return httpx.Response(200, json=_vector([({}, 0.3)]))
+
+    monkeypatch.setenv("SENTINEL_MIDDLEWARE_METRICS", "pg_up:postgres")
+    jobs = {n: t for n, _, t in build_jobs(Settings(_env_file=None), client, store)}
+    with respx.mock:
+        respx.get("http://prometheus:9090/api/v1/query").mock(side_effect=pg_down_handler)
+        respx.post("https://open.feishu.cn/hook/T").mock(
+            return_value=httpx.Response(200, json={"code": 0})
+        )
+        await jobs["metrics_scan"]()
+    assert [(e.rule, e.subject) for e in store.get_open_events()] == [
+        ("middleware_down", "postgres")
+    ]
+
+    # 清空 CSV 重建闭包(模拟改 .env 重启),prom 全健康:事件必须保持 open,零发卡
+    monkeypatch.setenv("SENTINEL_MIDDLEWARE_METRICS", "")
+    jobs = {n: t for n, _, t in build_jobs(Settings(_env_file=None), client, store)}
+    with respx.mock:
+        respx.get("http://prometheus:9090/api/v1/query").mock(side_effect=_healthy_prom_handler)
+        webhook = respx.post("https://open.feishu.cn/hook/T").mock(
+            return_value=httpx.Response(200, json={"code": 0})
+        )
+        await jobs["metrics_scan"]()
+    assert webhook.call_count == 0  # 没有假恢复卡
+    assert [(e.rule, e.subject) for e in store.get_open_events()] == [
+        ("middleware_down", "postgres")
+    ]
+    await client.aclose()
+    store.close()
+
+
+async def test_build_jobs_warns_middleware_without_prometheus(tmp_path, monkeypatch, caplog):
+    # 半配置矛盾:配了中间件指标却关了 prometheus,兜底覆盖静默丢失——至少要响一声
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("SENTINEL_MIDDLEWARE_METRICS", "pg_up:postgres")
+
+    from sentinel.app import build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    with caplog.at_level("WARNING", logger="sentinel"):
+        build_jobs(Settings(_env_file=None), client, store)
+    assert any("SENTINEL_MIDDLEWARE_METRICS" in r.message for r in caplog.records)
+    await client.aclose()
+    store.close()
+
+
 async def test_log_scan_consecutive_failures_escalate_to_card(tmp_path, monkeypatch):
     # logs_tick 与 metrics_tick 是对称复制体:此测试钉住 loki 侧升级路径不被单边改坏
     monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")

@@ -150,9 +150,12 @@ async def run_hygiene(
             evaluated.add("disk_forecast")
         except Exception:
             logger.exception("disk forecast check failed")
-    cert_findings, hold = await check_certs(
-        settings.cert_domains_list, settings.sentinel_cert_min_days, now_ts=now_ts
-    )
-    findings += cert_findings
-    evaluated.add("cert_expiry")
+    hold: set[tuple[str, str]] = set()
+    if settings.cert_domains_list:
+        cert_findings, hold = await check_certs(
+            settings.cert_domains_list, settings.sentinel_cert_min_days, now_ts=now_ts
+        )
+        findings += cert_findings
+        evaluated.add("cert_expiry")
+    # 域名列表空=证书检查未启用(开箱默认):同 backup,不进 evaluated,不评估≠恢复
     return findings, evaluated, hold

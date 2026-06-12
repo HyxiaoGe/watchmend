@@ -6,6 +6,7 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI
@@ -53,6 +54,16 @@ def _local_tz(settings: Settings) -> timezone:
 def _load_targets_or_disable(path: str):
     """services 文件缺失 ≠ 致命错误:回退 vendor-only 模式(只监控外部状态页),
     内部探针层整体不启用。文件存在但格式坏仍然抛出(显式配置错误要响亮失败)。"""
+    if Path(path).is_dir():
+        # compose 短语法 bind mount 在宿主机文件缺失时会自动造一个同名目录挂进来,
+        # 容器内看到的是空目录而非 ENOENT——与"文件缺失"同义,同样降级,
+        # 不能放 IsADirectoryError 逃出去把启动打成 crash-loop
+        logger.warning(
+            "services path %s is a directory (host file missing?): "
+            "internal probing disabled (vendor-only mode)",
+            path,
+        )
+        return []
     try:
         return load_targets(path)
     except FileNotFoundError:
@@ -81,6 +92,11 @@ def build_jobs(
     loki = LokiClient(client, settings.sentinel_loki_url)
     cooldown_seconds = settings.sentinel_cooldown_hours * 3600
     scan_fails = {"metrics": 0, "logs": 0}  # 数据源连续失败计数(进程内,重启清零)
+    if settings.sentinel_middleware_metrics and not settings.sentinel_prometheus_url:
+        logger.warning(
+            "SENTINEL_MIDDLEWARE_METRICS 已配置但 SENTINEL_PROMETHEUS_URL 为空,"
+            "中间件兜底检查不会运行"
+        )
     logger.info(
         "jobs built: providers=%s probes=%d",
         [a.provider for a in adapters],
@@ -142,6 +158,10 @@ def build_jobs(
             findings = await run_metrics_scan(prom, settings)
             scan_fails["metrics"] = 0
             scope |= METRICS_RULES | {"scan_failed_prometheus"}
+            if not settings.middleware_subjects:
+                # CSV 空=middleware 检查整体被跳过:不评估≠恢复,
+                # 不能让残留的 open middleware_down 事件被本轮假恢复
+                scope.discard("middleware_down")
         except Exception:
             scan_fails["metrics"] += 1
             logger.exception("metrics scan failed (consecutive=%d)", scan_fails["metrics"])

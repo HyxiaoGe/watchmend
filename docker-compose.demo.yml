@@ -4,8 +4,10 @@
 #   cp .env.example .env   # 只需填 FEISHU_VENDOR_WEBHOOK(建个测试群机器人,30 秒)
 #   docker compose -f docker-compose.demo.yml up -d --build
 #
-# 起来后:curl http://127.0.0.1:8765/health;1-2 分钟内收到第一张飞书卡;
-# 试试 docker compose -f docker-compose.demo.yml stop demo-app,等 15 分钟看告警卡。
+# 起来后:curl http://127.0.0.1:8765/health 验活;
+# 看告警卡:docker compose -f docker-compose.demo.yml stop demo-app,约 15 分钟后出卡;
+# 心跳卡/体检日报每天 09:00(北京时间)发,当天 09:00 已过则启动 1 分钟内补发心跳。
+# 说明:demo 未接日志采集器,Loki 为空属正常——log_scan 层空跑只演示接线,不产日志告警。
 services:
   sentinel:
     build: .
@@ -44,6 +46,12 @@ services:
   node-exporter:
     image: prom/node-exporter:v1.9.1
     restart: unless-stopped
+    # 必须挂宿主根:容器自身的 / 是 overlay,被 node-exporter 默认 fs-types 排除,
+    # 不挂的话 node_filesystem_*{mountpoint="/"} 为空 → 磁盘查询被误判 exporter 静默
+    command:
+      - "--path.rootfs=/rootfs"
+    volumes:
+      - /:/rootfs:ro,rslave
     networks: [demo]
 
   cadvisor:

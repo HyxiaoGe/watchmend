@@ -162,3 +162,20 @@ async def test_run_hygiene_prometheus_disabled_skips_forecast(monkeypatch, tmp_p
         findings, evaluated, hold = await run_hygiene(PromClient(client, ""), settings, now_ts=NOW)
     assert findings == []
     assert evaluated == {"cert_expiry"}
+
+
+async def test_run_hygiene_cert_domains_empty_not_evaluated(monkeypatch, tmp_path):
+    # SENTINEL_CERT_DOMAINS 留空(开箱默认)=证书检查未启用:cert_expiry 不进 evaluated,
+    # 否则清空域名列表的下一轮 hygiene 会把 open 的证书事件假恢复(不评估≠恢复)
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_CERT_DOMAINS", "")
+    monkeypatch.setenv("SENTINEL_BACKUP_DIR", str(tmp_path / "nope"))
+    from sentinel.config import Settings
+
+    settings = Settings(_env_file=None)
+    async with httpx.AsyncClient() as client:
+        findings, evaluated, hold = await run_hygiene(PromClient(client, ""), settings, now_ts=NOW)
+    assert findings == []
+    assert evaluated == set()  # 全最小模式:一项都没评估,scope 为空,任何 open 事件都不动
+    assert hold == set()

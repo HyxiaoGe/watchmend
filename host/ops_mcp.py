@@ -18,8 +18,24 @@ import subprocess
 import time
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
+
+
+# 与 diag_orchestrator._load_env 同形;本脚本是 PEP723 独立脚本(依赖只有 mcp),
+# import diag_orchestrator 会连带 httpx 依赖打破隔离,故内联一份
+def _load_env(path: Path) -> None:
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, _, v = line.partition("=")
+            os.environ.setdefault(k.strip(), v.strip())
+
+
+_load_env(Path(__file__).resolve().parent / ".env")
 
 mcp = FastMCP("ops")
 
