@@ -14,6 +14,9 @@ from sentinel.promql import PromClient
 logger = logging.getLogger("sentinel")
 
 _FORECAST_QUERY = 'predict_linear(node_filesystem_avail_bytes{{mountpoint="/"}}[7d], {days}*86400)'
+# 历史门槛探测:24h 前有没有样本。新装机首日 predict_linear 只见装机/拉镜像的写盘
+# 斜率,必然外推成"即将写满"——历史不足时跳过预测,防开箱误报
+_HISTORY_PROBE_QUERY = 'node_filesystem_avail_bytes{mountpoint="/"} offset 24h'
 
 
 def check_backup(backup_dir: str, max_age_hours: int, *, now_ts: int) -> list[Finding] | None:
@@ -60,9 +63,12 @@ def check_backup(backup_dir: str, max_age_hours: int, *, now_ts: int) -> list[Fi
     return []
 
 
-async def check_disk_forecast(prom: PromClient, settings: Settings) -> list[Finding]:
+async def check_disk_forecast(prom: PromClient, settings: Settings) -> list[Finding] | None:
     """线性外推:预计 N 天内可用空间归零则告警。空结果=node-exporter 静默,
-    当数据源故障抛出(run_hygiene 会把 disk_forecast 剔出 scope,不评估≠恢复)。"""
+    当数据源故障抛出(run_hygiene 会把 disk_forecast 剔出 scope,不评估≠恢复)。
+    返回 None=指标历史不足 24h(新装机/TSDB 新建)→ 视为未评估,同 backup 模式。"""
+    if not await prom.query(_HISTORY_PROBE_QUERY):
+        return None
     query = _FORECAST_QUERY.format(days=settings.sentinel_disk_forecast_days)
     rows = await prom.query(query)
     if not rows:
@@ -146,8 +152,13 @@ async def run_hygiene(
         logger.exception("backup check failed")
     if settings.sentinel_prometheus_url:  # URL 留空=指标层未接入,forecast 不评估
         try:
-            findings += await check_disk_forecast(prom, settings)
-            evaluated.add("disk_forecast")
+            forecast_findings = await check_disk_forecast(prom, settings)
+            if forecast_findings is None:
+                # 历史不足≠已评估:不进 evaluated,open 的 disk_forecast 事件不被假恢复
+                logger.info("磁盘指标历史不足 24h,跳过填满预测(新装机首日属正常)")
+            else:
+                findings += forecast_findings
+                evaluated.add("disk_forecast")
         except Exception:
             logger.exception("disk forecast check failed")
     hold: set[tuple[str, str]] = set()

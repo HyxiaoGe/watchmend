@@ -135,6 +135,53 @@ async def test_run_hygiene_all_green(settings, monkeypatch, tmp_path):
     assert hold == set()
 
 
+async def test_run_hygiene_forecast_insufficient_history_not_evaluated(settings, monkeypatch):
+    # 新装机:24h 前无样本 → 跳过预测且不进 evaluated。即便 predict_linear 已被
+    # 装机写盘斜率带成负值(必"写满"),守卫也要拦住这张开箱误报卡
+    import sentinel.scan_hygiene as sh
+
+    monkeypatch.setattr(sh, "_cert_expiry_ts", lambda domain: NOW + 60 * 86400)
+    empty = {"status": "success", "data": {"resultType": "vector", "result": []}}
+    doomed = {
+        "status": "success",
+        "data": {"resultType": "vector", "result": [{"metric": {}, "value": [0, "-1e12"]}]},
+    }
+
+    def route(request):
+        q = request.url.params["query"]
+        return httpx.Response(200, json=empty if "offset" in q else doomed)
+
+    with respx.mock:
+        respx.get("http://prom.test/api/v1/query").mock(side_effect=route)
+        async with httpx.AsyncClient() as client:
+            findings, evaluated, hold = await run_hygiene(
+                PromClient(client, "http://prom.test"), settings, now_ts=NOW
+            )
+    assert findings == []
+    assert "disk_forecast" not in evaluated
+
+
+async def test_run_hygiene_forecast_fires_with_history(settings, monkeypatch):
+    # 历史充足且外推为负 → 正常告警(守卫只拦新装机,不拦真问题)
+    import sentinel.scan_hygiene as sh
+
+    monkeypatch.setattr(sh, "_cert_expiry_ts", lambda domain: NOW + 60 * 86400)
+    doomed = {
+        "status": "success",
+        "data": {"resultType": "vector", "result": [{"metric": {}, "value": [0, "-1e12"]}]},
+    }
+    with respx.mock:
+        respx.get("http://prom.test/api/v1/query").mock(
+            return_value=httpx.Response(200, json=doomed)
+        )
+        async with httpx.AsyncClient() as client:
+            findings, evaluated, hold = await run_hygiene(
+                PromClient(client, "http://prom.test"), settings, now_ts=NOW
+            )
+    assert [(f.rule, f.subject) for f in findings] == [("disk_forecast", "/")]
+    assert "disk_forecast" in evaluated
+
+
 def test_backup_zero_byte_file_still_fires(tmp_path):
     # 目录里有文件但全是 0 字节=备份产物坏了:与"未启用"(空目录)不同,必须告警
     d = tmp_path / "pg"

@@ -57,7 +57,7 @@ services:
     networks: [demo]
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: gcr.io/cadvisor/cadvisor:v0.55.1  # v0.55+:Docker 29(API 1.44 起)旧版 docker factory 注册失败,容器指标全空
     restart: unless-stopped
     privileged: true
     volumes:
