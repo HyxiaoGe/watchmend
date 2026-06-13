@@ -29,9 +29,10 @@ def test_tcp_endpoint_rewrites_to_http_not_fed_raw():
     assert "tcp://" not in str(dc._client.base_url)
 
 
-def test_https_endpoint_rewrites_to_http():
-    dc = DockerClient("https://h:2376")
-    assert str(dc._client.base_url) == "http://h:2376"
+def test_https_endpoint_rejected_no_tls():
+    # 本类无 TLS transport:https 不能静默降级成 http(否则明文外泄),必须明确拒绝
+    with pytest.raises(ValueError, match="https docker endpoint is not supported"):
+        DockerClient("https://h:2376")
 
 
 def test_unknown_scheme_raises_value_error():

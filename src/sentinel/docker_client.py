@@ -2,7 +2,8 @@
 
 LLMDriver 的诊断工具与 scan_docker 的检测层共用一份连接。只暴露只读 GET;
 inspect 走白名单提取(密钥/宿主路径整段丢弃)后才进 payload/发 LLM。
-端点 tcp:// 必须转 http:// 才能喂 httpx(否则 UnsupportedProtocol)。
+端点 tcp:// 必须转 http:// 才能喂 httpx(否则 UnsupportedProtocol);https:// 无 TLS
+transport,明确拒绝而非静默降级 http(避免"自以为加密"的明文连接)。
 """
 
 from __future__ import annotations
@@ -59,9 +60,16 @@ class DockerClient:
         if scheme == "unix":
             transport: httpx.AsyncHTTPTransport | None = httpx.AsyncHTTPTransport(uds=rest)
             base_url = "http://docker"  # UDS 下 host 仅占位
-        elif scheme in ("tcp", "http", "https"):
+        elif scheme in ("tcp", "http"):
             transport = None
             base_url = f"http://{rest}"  # tcp://proxy:2375 → http://proxy:2375
+        elif scheme == "https":
+            # 本类无 TLS transport:静默降级成 http 会把"以为加密"的连接明文发出,
+            # 比直接拒绝更危险。明确拒绝;要 TLS 请在前面放反代,或用 tcp:// 连本地 proxy。
+            raise ValueError(
+                "https docker endpoint is not supported (no TLS transport configured); "
+                "use tcp:// or http://"
+            )
         else:
             raise ValueError(f"unsupported docker endpoint: {endpoint!r}")
         self._client = httpx.AsyncClient(transport=transport, base_url=base_url, timeout=timeout)
