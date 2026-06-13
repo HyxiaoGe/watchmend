@@ -40,7 +40,7 @@ docker compose -f docker-compose.demo.yml start demo-app  # 之后会收到 ✅ 
 ## 正式部署
 
 ```bash
-cp .env.example .env                      # 按注释填:webhook 必填,其余按需
+cp .env.example .env                      # 按注释填:至少一个通知渠道,其余按需
 cp services.example.yaml services.yaml    # 改成你自己的服务探针清单
 make up                                   # 或 docker compose up -d --build
 ```
@@ -49,7 +49,10 @@ make up                                   # 或 docker compose up -d --build
 
 | 配置 | 启用的能力 | 留空时 |
 |---|---|---|
-| `FEISHU_VENDOR_WEBHOOK` | 告警/日报卡片(**唯一必填**) | — |
+| `FEISHU_VENDOR_WEBHOOK` | 告警/日报飞书卡片 | 该渠道关闭 |
+| `SENTINEL_TELEGRAM_BOT_TOKEN` + `SENTINEL_TELEGRAM_CHAT_ID` | Telegram 推送(两者都填才启用) | 该渠道关闭 |
+| `SENTINEL_NTFY_URL`(可选 `SENTINEL_NTFY_TOKEN`) | ntfy 推送,完整 topic URL | 该渠道关闭 |
+| `SENTINEL_WEBHOOK_URL`(可选 `SENTINEL_WEBHOOK_TOKEN`) | 通用 webhook,结构化 JSON | 该渠道关闭 |
 | `services.yaml` | 内部服务 HTTP 探针 + 延迟基线 | 只监控外部状态页 |
 | `SENTINEL_PROMETHEUS_URL` | 磁盘/内存/容器重启等指标规则 | 指标层关闭 |
 | `SENTINEL_LOKI_URL` | 错误日志激增检测 | 日志层关闭 |
@@ -63,6 +66,8 @@ make up                                   # 或 docker compose up -d --build
 > `docker-socket-proxy` 边车(`CONTAINERS=1`、POST 默认拒、专用 `internal` 网),
 > 本容器**永不挂裸 socket**。要整层关闭:清空 `SENTINEL_DOCKER_HOST` 并注释掉 compose
 > 里的 `docker-proxy` service 及 sentinel 的 `depends_on`/`docker_proxy` 网络(文件内有注释)。
+
+> **通知渠道为广播模型**:配置的所有渠道同时收到每条告警/日报/诊断,失败相互隔离(任一渠道挂不影响其余)。**至少配置一个渠道**(飞书 `FEISHU_VENDOR_WEBHOOK` 或上述任一)即可启动;`FEISHU_VENDOR_WEBHOOK` 不再强制必填,海外自托管可只配 Telegram/ntfy/webhook。
 
 全部 40+ 配置项(阈值、冷却、播报粒度…)见 [.env.example](.env.example),每项带注释。
 
