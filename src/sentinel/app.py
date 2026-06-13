@@ -458,8 +458,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await docker.aclose()
         raise
     # Phase 3 API 依赖注入:编排脚本经宿主机 127.0.0.1:8765 调用。
-    # patrol_feishu 与 build_jobs 闭包内实例是两份(节流互不感知):诊断卡/总结卡
-    # 频次极低(<10/月+1/天),叠加突破飞书频控的风险可忽略,不为此重构 build_jobs。
+    # 此处 patrol_broadcaster 与 build_jobs 闭包内的是两份(各自的飞书渠道节流互不感知):
+    # 诊断卡/总结卡频次极低(<10/月+1/天),叠加突破飞书频控的风险可忽略,不为此重构 build_jobs。
     app.state.settings = settings
     app.state.store = store
     app.state.patrol_broadcaster = _broadcaster_for(
