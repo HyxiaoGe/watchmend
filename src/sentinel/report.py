@@ -5,8 +5,8 @@ import logging
 import math
 from datetime import datetime
 
-from sentinel.feishu.cards import build_daily_report_card
 from sentinel.models import ProbeSample, ServiceDayStats
+from sentinel.notify.build import report_notification
 from sentinel.poller import should_send_heartbeat
 from sentinel.store import Store
 
@@ -60,28 +60,31 @@ def build_daily_stats(
 async def run_daily_report(
     *,
     store: Store,
-    feishu,
+    broadcaster,
     services: list[str],
     now_local: datetime,
     hour: int,
     retention_days: int,
 ) -> bool:
-    """到点发体检日报。send-then-commit:发送成功才记 meta/落 probe_daily/清理过期样本,
-    失败抛出由 Job 循环记日志,下一分钟门控重试。返回是否已发送。"""
+    """到点发体检日报。send-then-commit:≥1 渠道成功才记 meta/落 probe_daily/清理过期样本;
+    全渠道失败则不 commit、返回 False,下一分钟门控重试。返回是否已发送。"""
     last = store.get_meta(_REPORT_KEY)
     if not should_send_heartbeat(now_local, last, hour):  # 纯日期门控,与心跳同一语义
         return False
     date_str = now_local.date().isoformat()
     now_ts = int(now_local.timestamp())
     stats = build_daily_stats(store, services, now_ts=now_ts, date_str=date_str)
-    card = build_daily_report_card(
+    n = report_notification(
         stats,
         date_str=date_str,
         now_str=now_local.strftime("%Y-%m-%d %H:%M:%S"),
+        now_ts=now_ts,
         open_events=store.get_open_events(),
         resolved_24h=store.count_resolved_since(now_ts - WINDOW_SECONDS),
     )
-    await feishu.send(card)
+    if await broadcaster.send(n) < 1:
+        logger.warning("daily report not delivered to any channel; retrying next minute")
+        return False
     store.set_meta(_REPORT_KEY, date_str)
     for st in stats:
         store.upsert_probe_daily(

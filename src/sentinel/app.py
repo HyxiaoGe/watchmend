@@ -398,7 +398,7 @@ def build_jobs(
             logger.exception("hygiene failed")
         sent = await run_daily_report(
             store=store,
-            feishu=patrol_feishu,
+            broadcaster=patrol_broadcaster,
             services=service_names,
             now_local=now_local,
             hour=settings.sentinel_report_hour,
