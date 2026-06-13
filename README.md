@@ -79,7 +79,7 @@ LLM_MODEL=deepseek-chat
 | 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-4` | |
 | Ollama(本地) | `http://localhost:11434/v1` | `qwen3` | key 随便填;选支持 tool calling 的模型 |
 | vLLM(自建) | `http://<host>:8000/v1` | 你部署的模型 | 启动需加 `--enable-auto-tool-choice` 和 `--tool-call-parser` |
-| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` | `gemini-2.5-flash` | 兼容层 tool calling 支持有限,多工具诊断可能不稳 |
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` | `gemini-2.5-flash` | 兼容层 tool calling 受限;且有地域限制,部分地区(如中国大陆)直连报 `User location is not supported`,需经支持地域的网关 |
 | Anthropic Claude | `https://api.anthropic.com/v1/` | `claude-opus-4-8` | 官方定位兼容层为测试用,`strict` 不生效 |
 | LiteLLM 网关 | `http://<host>:4000` | 你在 LiteLLM 配的别名 | 统一代理多家,本地可免 key |
 

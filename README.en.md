@@ -84,7 +84,7 @@ LLM_MODEL=deepseek-chat
 | Zhipu GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-4` | |
 | Ollama (local) | `http://localhost:11434/v1` | `qwen3` | any key value; pick a tool-calling-capable model |
 | vLLM (self-hosted) | `http://<host>:8000/v1` | your served model | start with `--enable-auto-tool-choice` and `--tool-call-parser` |
-| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` | `gemini-2.5-flash` | compat-layer tool calling is limited; multi-tool diagnosis may be flaky |
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` | `gemini-2.5-flash` | compat-layer tool calling is limited; also geo-restricted — some regions get `User location is not supported`, route via a supported-region gateway |
 | Anthropic Claude | `https://api.anthropic.com/v1/` | `claude-opus-4-8` | compat layer is officially test-only; `strict` is ignored |
 | LiteLLM gateway | `http://<host>:4000` | your configured alias | proxies many providers; key optional when local |
 
