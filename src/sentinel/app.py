@@ -142,8 +142,11 @@ def build_jobs(
             "SENTINEL_TELEGRAM_BOT_TOKEN+SENTINEL_TELEGRAM_CHAT_ID / "
             "SENTINEL_NTFY_URL / SENTINEL_WEBHOOK_URL"
         )
-    vendor_feishu = FeishuClient(
-        client, settings.feishu_vendor_webhook, secret=settings.feishu_vendor_sign_secret
+    vendor_broadcaster = _broadcaster_for(
+        settings,
+        client,
+        webhook=settings.feishu_vendor_webhook,
+        secret=settings.feishu_vendor_sign_secret,
     )
     patrol_feishu = FeishuClient(
         client, settings.patrol_webhook, secret=settings.patrol_sign_secret
@@ -188,7 +191,7 @@ def build_jobs(
             adapters,
             fetcher=fetcher,
             store=store,
-            feishu=vendor_feishu,
+            broadcaster=vendor_broadcaster,
             state=state,
             verbosity=settings.sentinel_incident_verbosity,
             fail_threshold=settings.sentinel_fail_threshold,
@@ -198,7 +201,7 @@ def build_jobs(
                 await run_heartbeat(
                     settings.providers_list,
                     store=store,
-                    feishu=vendor_feishu,
+                    broadcaster=vendor_broadcaster,
                     now_local=datetime.now(_local_tz(settings)),
                     hour=settings.sentinel_heartbeat_hour,
                     interval=settings.sentinel_poll_interval,
