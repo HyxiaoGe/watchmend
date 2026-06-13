@@ -800,7 +800,53 @@ async def test_docker_tick_emit_oom_follows_prom_disabled(tmp_path, monkeypatch)
             return_value=httpx.Response(200, json={"code": 0})
         )
         await jobs["docker_scan"]()
-    assert seen["emit_oom"] is False  # prom 开 → docker 不重复发 OOM(交由 prom)
+    assert seen["emit_oom"] is False  # prom 开 + metrics 健康 → docker 不重复发 OOM(交由 prom)
+    await client.aclose()
+    store.close()
+
+
+async def test_docker_tick_emit_oom_failopen_when_metrics_unhealthy(tmp_path, monkeypatch):
+    # fail-open:prom 已配但 metrics 巡检在失败(cAdvisor/prom 挂)→ docker 接管 OOM,
+    # 不因 prom URL 在场就静默丢弃 OOMKilled(宁可重不可漏)
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("SENTINEL_DOCKER_HOST", "tcp://docker-proxy:2375")
+
+    import sentinel.app as app_mod
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    jobs = {
+        n: t
+        for n, _, t in app_mod.build_jobs(
+            Settings(_env_file=None), client, store, docker=_FakeDocker()
+        )
+    }
+
+    async def metrics_boom(prom, settings):
+        raise RuntimeError("prometheus unreachable")
+
+    monkeypatch.setattr(app_mod, "run_metrics_scan", metrics_boom)
+
+    seen = {}
+
+    async def scan_capture(docker, settings, *, now_ts, emit_oom):
+        seen["emit_oom"] = emit_oom
+        return [], set()
+
+    monkeypatch.setattr(app_mod, "run_docker_scan", scan_capture)
+    with respx.mock:
+        respx.post("https://open.feishu.cn/hook/T").mock(
+            return_value=httpx.Response(200, json={"code": 0})
+        )
+        await jobs["metrics_scan"]()  # 一次失败 → scan_fails["metrics"] = 1(未达阈值,不发卡)
+        await jobs["docker_scan"]()
+    assert seen["emit_oom"] is True  # metrics 不健康 → docker 接管 OOM
     await client.aclose()
     store.close()
 

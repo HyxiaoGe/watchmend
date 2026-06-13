@@ -111,8 +111,8 @@ def build_jobs(
     loki = LokiClient(client, settings.sentinel_loki_url)
     driver = LLMDriver(client, settings, docker)
     cooldown_seconds = settings.sentinel_cooldown_hours * 3600
-    # _prom_enabled 决定 docker 层是否发 OOM 卡:prom 在则交给 prom 的 container_restart(OOM)规则,
-    # docker 层只观测不重复发(emit_oom = not _prom_enabled),避免同一 OOM 双卡。
+    # _prom_enabled:Prometheus 接入是否启用。docker 层是否发 OOM 卡由它 + metrics
+    # 巡检健康度共同决定(emit_oom 在 docker_tick 内计算),既去重又不漏报,见该闭包注释。
     _prom_enabled = bool(settings.sentinel_prometheus_url)
     scan_fails = {"metrics": 0, "logs": 0, "docker": 0}  # 数据源连续失败计数(进程内,重启清零)
     if settings.sentinel_docker_socket and not settings.sentinel_docker_host:
@@ -254,9 +254,15 @@ def build_jobs(
         # hold:open 的容器事件,本轮 active 列表里已不见其 subject(容器消失/被过滤)
         # → 跳过恢复判定,不发假绿卡;只有 subject 重新进 active 且本轮无 finding 才判恢复。
         hold: set[tuple[str, str]] = set()
+        # OOM 去重 + fail-open:prom 在且上一轮 metrics 巡检成功(cAdvisor 在抓)时,
+        # OOM 交给 prom 的 container_restart(OOM)规则,docker 层不重复发;一旦 metrics 巡检
+        # 失败,docker 立刻接管 OOM(宁可重不可漏)。scan_fails["metrics"] 是粗信号——任何
+        # metrics 失败(含 node-exporter/瞬时抖动)都会让 docker 接管,极端下可能与 prom 出一次
+        # 瞬时双卡(两类不同点卡,自消解),这是刻意偏向"不漏 OOM"的取舍。
+        emit_oom = not (_prom_enabled and scan_fails["metrics"] == 0)
         try:
             findings, active = await run_docker_scan(
-                docker, settings, now_ts=now_ts, emit_oom=not _prom_enabled
+                docker, settings, now_ts=now_ts, emit_oom=emit_oom
             )
             scan_fails["docker"] = 0
             scope |= DOCKER_RULES | {"scan_failed_docker"}
