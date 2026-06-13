@@ -66,13 +66,32 @@ All 40+ settings (thresholds, cooldowns, verbosity…) are documented inline in
 
 ## LLM diagnosis (optional)
 
-Any OpenAI-compatible endpoint works (OpenAI / DeepSeek / Moonshot / Ollama / vLLM / LiteLLM…):
+**Not locked to one platform.** WatchMend speaks the standard OpenAI
+`chat/completions` + function-calling protocol, so any service exposing an
+OpenAI-compatible endpoint is plug-and-play — change three `.env` lines, zero code:
 
 ```bash
-LLM_BASE_URL=https://api.deepseek.com/v1
-LLM_API_KEY=sk-...
+LLM_BASE_URL=https://api.deepseek.com/v1   # see table below for each platform
+LLM_API_KEY=sk-...                          # any value for local endpoints
 LLM_MODEL=deepseek-chat
 ```
+
+| Platform | `LLM_BASE_URL` | `LLM_MODEL` (example) | Notes |
+|---|---|---|---|
+| OpenAI | `https://api.openai.com/v1` | `gpt-5.5` | |
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` | verified by this project |
+| Moonshot / Kimi | `https://api.moonshot.cn/v1` | `kimi-k2` | international: `api.moonshot.ai/v1`; keys are region-bound |
+| Zhipu GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-4` | |
+| Ollama (local) | `http://localhost:11434/v1` | `qwen3` | any key value; pick a tool-calling-capable model |
+| vLLM (self-hosted) | `http://<host>:8000/v1` | your served model | start with `--enable-auto-tool-choice` and `--tool-call-parser` |
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` | `gemini-2.5-flash` | compat-layer tool calling is limited; multi-tool diagnosis may be flaky |
+| Anthropic Claude | `https://api.anthropic.com/v1/` | `claude-opus-4-8` | compat layer is officially test-only; `strict` is ignored |
+| LiteLLM gateway | `http://<host>:4000` | your configured alias | proxies many providers; key optional when local |
+
+> Model names are examples valid at time of writing (2026-06); check each
+> platform's latest docs. Diagnosis depends on function calling — make sure your
+> chosen model supports tool calls, otherwise the diagnosis layer degrades to a
+> single-round summary with no tools.
 
 When a rule fires, the model investigates inside the container with read-only
 tools (PromQL queries, log fetches, container state) and produces a structured

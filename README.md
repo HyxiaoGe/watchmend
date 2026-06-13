@@ -62,13 +62,29 @@ make up                                   # 或 docker compose up -d --build
 
 ## LLM 诊断(可选)
 
-任何 OpenAI-compatible 端点都能用(OpenAI / DeepSeek / Moonshot / Ollama / vLLM / LiteLLM…):
+**不锁平台。** WatchMend 走标准 OpenAI `chat/completions` + function calling 协议,
+任何提供 OpenAI 兼容端点的服务都即插即用——只改 `.env` 三行,代码零改动:
 
 ```bash
-LLM_BASE_URL=https://api.deepseek.com/v1
-LLM_API_KEY=sk-...
+LLM_BASE_URL=https://api.deepseek.com/v1   # 各平台见下表
+LLM_API_KEY=sk-...                          # 本地端点可随便填
 LLM_MODEL=deepseek-chat
 ```
+
+| 平台 | `LLM_BASE_URL` | `LLM_MODEL` 示例 | 备注 |
+|---|---|---|---|
+| OpenAI | `https://api.openai.com/v1` | `gpt-5.5` | |
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` | 本项目实测验证 |
+| Moonshot / Kimi | `https://api.moonshot.cn/v1` | `kimi-k2` | 国际站用 `api.moonshot.ai/v1`,key 分区不通用 |
+| 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-4` | |
+| Ollama(本地) | `http://localhost:11434/v1` | `qwen3` | key 随便填;选支持 tool calling 的模型 |
+| vLLM(自建) | `http://<host>:8000/v1` | 你部署的模型 | 启动需加 `--enable-auto-tool-choice` 和 `--tool-call-parser` |
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` | `gemini-2.5-flash` | 兼容层 tool calling 支持有限,多工具诊断可能不稳 |
+| Anthropic Claude | `https://api.anthropic.com/v1/` | `claude-opus-4-8` | 官方定位兼容层为测试用,`strict` 不生效 |
+| LiteLLM 网关 | `http://<host>:4000` | 你在 LiteLLM 配的别名 | 统一代理多家,本地可免 key |
+
+> 模型名为撰写时(2026-06)各平台可用示例,实际以平台最新文档为准。诊断依赖
+> function calling,选模型时务必确认其支持工具调用——不支持则诊断层退化为不调工具的单轮总结。
 
 事件命中后,模型在容器内用只读工具自主调查(查 PromQL、捞日志、看容器状态),
 产出结构化诊断卡:现象 / 推测根因 / 证据 / 建议命令 / 置信度。
