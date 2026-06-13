@@ -111,7 +111,7 @@ def build_jobs(
     loki = LokiClient(client, settings.sentinel_loki_url)
     driver = LLMDriver(client, settings, docker)
     cooldown_seconds = settings.sentinel_cooldown_hours * 3600
-    # _prom_enabled 决定 docker 层是否发 OOM 卡:prom 在则交给 prom 的 container_oom 规则,
+    # _prom_enabled 决定 docker 层是否发 OOM 卡:prom 在则交给 prom 的 container_restart(OOM)规则,
     # docker 层只观测不重复发(emit_oom = not _prom_enabled),避免同一 OOM 双卡。
     _prom_enabled = bool(settings.sentinel_prometheus_url)
     scan_fails = {"metrics": 0, "logs": 0, "docker": 0}  # 数据源连续失败计数(进程内,重启清零)
