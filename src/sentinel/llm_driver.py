@@ -16,14 +16,13 @@ import time
 import httpx
 
 from sentinel.config import Settings
+from sentinel.docker_client import DockerClient
 from sentinel.findings import EventRecord
 
 logger = logging.getLogger("sentinel")
 
 _MAX_TOOL_OUT = 8000  # 单个工具结果截断,防把上下文挤爆
 _MAX_LOG_LINES = 200
-# 不允许以 - 开头:防止名字被当成旗标/路径段注入(同 ops_mcp 的纪律)
-_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _REQUIRED_ANY = ("summary", "root_cause")
 
 _DIAG_SYSTEM = """你是这台服务器的只读运维诊断助手。一个确定性巡检规则刚命中了异常事件,\
@@ -70,23 +69,6 @@ def parse_diagnosis(text: str) -> dict | None:
     return None
 
 
-def _demux_docker_logs(raw: bytes) -> str:
-    """Engine API 日志流:TTY 关闭时是 8 字节帧头多路流,开启时是裸流。
-    帧头不合形就整体按裸流退回,不让二进制头混进给模型的文本。"""
-    out: list[bytes] = []
-    i = 0
-    try:
-        while i + 8 <= len(raw):
-            if raw[i] not in (0, 1, 2) or raw[i + 1 : i + 4] != b"\x00\x00\x00":
-                raise ValueError("not a multiplexed stream")
-            size = int.from_bytes(raw[i + 4 : i + 8], "big")
-            out.append(raw[i + 8 : i + 8 + size])
-            i += 8 + size
-        return b"".join(out).decode("utf-8", errors="replace")
-    except ValueError:
-        return raw.decode("utf-8", errors="replace")
-
-
 def _diag_user_prompt(event: EventRecord) -> str:
     return (
         "## 事件\n"
@@ -100,24 +82,16 @@ def _diag_user_prompt(event: EventRecord) -> str:
 class LLMDriver:
     """OpenAI-compatible tool 循环。enabled=False(未配 base_url/model)时所有入口直接短路。"""
 
-    def __init__(self, client: httpx.AsyncClient, settings: Settings) -> None:
+    def __init__(
+        self, client: httpx.AsyncClient, settings: Settings, docker: DockerClient | None = None
+    ) -> None:
         self._client = client
         self._settings = settings
-        self._docker: httpx.AsyncClient | None = None
-        if settings.sentinel_docker_socket:
-            self._docker = httpx.AsyncClient(
-                transport=httpx.AsyncHTTPTransport(uds=settings.sentinel_docker_socket),
-                base_url="http://docker",  # UDS 下 host 仅占位
-                timeout=15.0,
-            )
+        self._docker = docker
 
     @property
     def enabled(self) -> bool:
         return bool(self._settings.llm_base_url and self._settings.llm_model)
-
-    async def aclose(self) -> None:
-        if self._docker is not None:
-            await self._docker.aclose()
 
     # ---- 对外入口 ----
 
@@ -251,7 +225,8 @@ class LLMDriver:
             specs.append(
                 _spec(
                     "docker_inspect",
-                    "查看单个容器完整配置(网络/挂载/limits/重启策略),返回原始 JSON。",
+                    "查看单个容器状态摘要:运行/退出状态、退出码、OOM、重启次数与策略、"
+                    "健康状态、Env 变量名(值已遮蔽)。网络/挂载/宿主路径等敏感字段已剔除。",
                     {"name": {"type": "string", "description": "容器名"}},
                     ["name"],
                 )
@@ -289,44 +264,22 @@ class LLMDriver:
         return "\n".join(lines[-_MAX_LOG_LINES:]) or "(no log lines)"
 
     async def _docker_ps(self) -> str:
-        resp = await self._docker.get("/containers/json")
-        resp.raise_for_status()
-        rows = [
+        rows = await self._docker.ps(all=False)
+        out = [
             "{}\t{}\t{}".format(
                 ",".join(n.lstrip("/") for n in c.get("Names", [])),
                 c.get("Status", "?"),
                 c.get("Image", "?"),
             )
-            for c in resp.json()
+            for c in rows
         ]
-        return "\n".join(rows) or "(no running containers)"
+        return "\n".join(out) or "(no running containers)"
 
     async def _docker_logs(self, name: str, tail: int = 100) -> str:
-        _check_name(name)
-        tail = max(1, min(int(tail), 500))
-        resp = await self._docker.get(
-            f"/containers/{name}/logs",
-            params={"stdout": "true", "stderr": "true", "tail": str(tail)},
-        )
-        resp.raise_for_status()
-        return _demux_docker_logs(resp.content)
+        return await self._docker.logs(name, tail=tail)
 
     async def _docker_inspect(self, name: str) -> str:
-        _check_name(name)
-        resp = await self._docker.get(f"/containers/{name}/json")
-        resp.raise_for_status()
-        data = resp.json()
-        # Config.Env 是密钥重灾区(数据库密码/API key 全在里面):
-        # 发给外部 LLM 端点前只保留变量名,值一律遮蔽
-        env = data.get("Config", {}).get("Env")
-        if isinstance(env, list):
-            data["Config"]["Env"] = [str(e).split("=", 1)[0] + "=<redacted>" for e in env]
-        return json.dumps(data, ensure_ascii=False)
-
-
-def _check_name(name: str) -> None:
-    if not _NAME_RE.match(name):
-        raise ValueError(f"invalid container name: {name!r}")
+        return json.dumps(await self._docker.inspect_safe(name), ensure_ascii=False)
 
 
 def _spec(name: str, description: str, properties: dict, required: list[str]) -> dict:

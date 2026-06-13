@@ -45,7 +45,7 @@ cp services.example.yaml services.yaml    # 改成你自己的服务探针清单
 make up                                   # 或 docker compose up -d --build
 ```
 
-接入点全部可选,留空即关,各层独立:
+接入点大多可选、留空即关、各层独立(docker 层例外,见表末):
 
 | 配置 | 启用的能力 | 留空时 |
 |---|---|---|
@@ -57,6 +57,12 @@ make up                                   # 或 docker compose up -d --build
 | `SENTINEL_CERT_DOMAINS` | 公网证书临期检查 | 跳过该检查 |
 | 备份目录挂载 | pg_dump 备份新鲜度检查 | 跳过该检查 |
 | `LLM_BASE_URL` + `LLM_MODEL` | 事件根因诊断 + 日报 AI 总结 | LLM 层关闭 |
+| `SENTINEL_DOCKER_HOST` | 容器停止/不健康/OOM 检测 + docker 诊断工具 | docker 层关闭 † |
+
+> † 与其它层相反:docker 层**默认开启**——`docker-compose.yml` 预置了只读
+> `docker-socket-proxy` 边车(`CONTAINERS=1`、POST 默认拒、专用 `internal` 网),
+> 本容器**永不挂裸 socket**。要整层关闭:清空 `SENTINEL_DOCKER_HOST` 并注释掉 compose
+> 里的 `docker-proxy` service 及 sentinel 的 `depends_on`/`docker_proxy` 网络(文件内有注释)。
 
 全部 40+ 配置项(阈值、冷却、播报粒度…)见 [.env.example](.env.example),每项带注释。
 
@@ -92,8 +98,8 @@ LLM_MODEL=deepseek-chat
 安全边界(设计立场,不是事后补丁):
 
 - **要不要叫醒你由确定性规则决定**,模型只解释,不参与告警判定
-- 工具全只读;`docker` 工具需显式挂载 socket 才启用(默认关),
-  `docker inspect` 输出先遮蔽环境变量值再喂给模型
+- 工具全只读;`docker` 工具经只读 socket 代理访问(本容器不挂裸 socket,默认随 compose
+  的 `docker-proxy` 边车启用),`docker inspect` 输出先遮蔽环境变量值再喂给模型
 - 工具返回的日志内容被声明为不可信数据,防日志注入操纵结论
 - 建议命令只是给人看的,永远不会被自动执行
 

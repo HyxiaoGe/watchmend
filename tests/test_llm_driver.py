@@ -4,8 +4,9 @@ import json
 import httpx
 import respx
 
+from sentinel.docker_client import DockerClient
 from sentinel.findings import EventRecord
-from sentinel.llm_driver import LLMDriver, _demux_docker_logs, parse_diagnosis
+from sentinel.llm_driver import LLMDriver, parse_diagnosis
 
 LLM_URL = "http://llm.test/v1/chat/completions"
 
@@ -66,7 +67,11 @@ def test_enabled_needs_both_url_and_model(monkeypatch):
 
 async def test_diagnose_runs_tool_loop(monkeypatch):
     settings = _settings(
-        monkeypatch, LLM_BASE_URL="http://llm.test/v1", LLM_MODEL="m", LLM_API_KEY="sk-test-key"
+        monkeypatch,
+        LLM_BASE_URL="http://llm.test/v1",
+        LLM_MODEL="m",
+        LLM_API_KEY="sk-test-key",
+        SENTINEL_PROMETHEUS_URL="http://prometheus:9090",
     )
     async with httpx.AsyncClient() as client:
         driver = LLMDriver(client, settings)
@@ -108,7 +113,12 @@ async def test_diagnose_runs_tool_loop(monkeypatch):
 
 async def test_tool_failure_fed_back_not_raised(monkeypatch):
     # 工具失败(prom 500)不打断诊断:错误文本回给模型继续推理
-    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm.test/v1", LLM_MODEL="m")
+    settings = _settings(
+        monkeypatch,
+        LLM_BASE_URL="http://llm.test/v1",
+        LLM_MODEL="m",
+        SENTINEL_PROMETHEUS_URL="http://prometheus:9090",
+    )
     async with httpx.AsyncClient() as client:
         driver = LLMDriver(client, settings)
         with respx.mock:
@@ -135,7 +145,12 @@ async def test_tool_failure_fed_back_not_raised(monkeypatch):
 
 
 async def test_unknown_tool_and_bad_args(monkeypatch):
-    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm.test/v1", LLM_MODEL="m")
+    settings = _settings(
+        monkeypatch,
+        LLM_BASE_URL="http://llm.test/v1",
+        LLM_MODEL="m",
+        SENTINEL_PROMETHEUS_URL="http://prometheus:9090",
+    )
     async with httpx.AsyncClient() as client:
         driver = LLMDriver(client, settings)
         assert (await driver._run_tool("no_such", {})).startswith("unknown tool")
@@ -190,7 +205,12 @@ async def test_summarize_single_round(monkeypatch):
 
 
 async def test_loki_logs_formats_lines(monkeypatch):
-    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm.test/v1", LLM_MODEL="m")
+    settings = _settings(
+        monkeypatch,
+        LLM_BASE_URL="http://llm.test/v1",
+        LLM_MODEL="m",
+        SENTINEL_LOKI_URL="http://loki:3100",
+    )
     payload = {
         "status": "success",
         "data": {
@@ -215,27 +235,49 @@ async def test_loki_logs_formats_lines(monkeypatch):
     assert int(params["end"]) - int(params["start"]) == 10 * 60 * 1_000_000_000
 
 
-async def test_docker_tools_validate_name(monkeypatch):
-    settings = _settings(
-        monkeypatch,
-        LLM_BASE_URL="http://llm.test/v1",
-        LLM_MODEL="m",
-        SENTINEL_DOCKER_SOCKET="/tmp/no-such.sock",
-    )
-    async with httpx.AsyncClient() as client:
-        driver = LLMDriver(client, settings)
-        assert "docker_logs" in driver._handlers()
-        out = await driver._run_tool("docker_logs", {"name": "../etc/passwd"})
-        assert out.startswith("tool docker_logs failed")
-        assert "invalid container name" in out
-        await driver.aclose()
-
-
-def test_docker_tools_absent_without_socket(monkeypatch):
+def test_docker_tools_absent_without_docker(monkeypatch):
+    # docker=None → 三件套既不在 handlers 也不在 specs 里
     settings = _settings(monkeypatch, LLM_BASE_URL="http://llm.test/v1", LLM_MODEL="m")
-    driver = LLMDriver(httpx.AsyncClient(), settings)
+    driver = LLMDriver(httpx.AsyncClient(), settings, None)
     assert not any(k.startswith("docker") for k in driver._handlers())
     assert not any("docker" in s["function"]["name"] for s in driver._tool_specs())
+
+
+def test_docker_tools_present_with_docker(monkeypatch):
+    # 注入 DockerClient → 三件套在 handlers 和 specs 里都出现
+    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm.test/v1", LLM_MODEL="m")
+    driver = LLMDriver(httpx.AsyncClient(), settings, DockerClient("unix:///tmp/x.sock"))
+    handlers = driver._handlers()
+    assert {"docker_ps", "docker_logs", "docker_inspect"} <= set(handlers)
+    spec_names = {s["function"]["name"] for s in driver._tool_specs()}
+    assert {"docker_ps", "docker_logs", "docker_inspect"} <= spec_names
+
+
+async def test_docker_inspect_delegates_to_inspect_safe(monkeypatch):
+    # _docker_inspect 委托给 DockerClient.inspect_safe:白名单遮蔽密钥(Env 仅留变量名)。
+    # respx 在 httpx 传输层拦截,UDS socket 不需真实存在(同既有 docker inspect 测试套路)。
+    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm.test/v1", LLM_MODEL="m")
+    payload = {
+        "Name": "/api",
+        "Config": {"Image": "api:1", "Env": ["DB_PASSWORD=hunter2", "MODE=prod"]},
+        "HostConfig": {"Binds": ["/etc:/etc"], "RestartPolicy": {"Name": "always"}},
+        "State": {"Status": "running", "Running": True},
+        "RestartCount": 0,
+    }
+    driver = LLMDriver(httpx.AsyncClient(), settings, DockerClient("unix:///tmp/x.sock"))
+    with respx.mock:
+        respx.get("http://docker/containers/api/json").mock(
+            return_value=httpx.Response(200, json=payload)
+        )
+        out = await driver._docker_inspect("api")
+    data = json.loads(out)
+    # 白名单只保留这些键;Binds/HostConfig/Mounts 等绝不出现
+    assert data["Name"] == "/api"
+    assert data["Image"] == "api:1"
+    assert data["RestartPolicy"] == "always"
+    assert data["Env"] == ["DB_PASSWORD", "MODE"]  # 变量名,值已丢弃
+    assert "hunter2" not in out and "/etc:/etc" not in out
+    assert "HostConfig" not in data and "Binds" not in out
 
 
 def test_parse_diagnosis_fence_and_fallback():
@@ -245,40 +287,3 @@ def test_parse_diagnosis_fence_and_fallback():
     # 缺必须字段/非 json → None
     assert parse_diagnosis('{"foo": 1}') is None
     assert parse_diagnosis("没有结论") is None
-
-
-def test_demux_docker_logs_frames_and_raw():
-    line1 = b"hello\n"
-    line2 = b"world\n"
-    framed = (
-        b"\x01\x00\x00\x00"
-        + len(line1).to_bytes(4, "big")
-        + line1
-        + b"\x02\x00\x00\x00"
-        + len(line2).to_bytes(4, "big")
-        + line2
-    )
-    assert _demux_docker_logs(framed) == "hello\nworld\n"
-    # TTY 模式裸流原样退回
-    assert _demux_docker_logs(b"plain text log") == "plain text log"
-
-
-async def test_docker_inspect_redacts_env(monkeypatch):
-    # Config.Env 是密钥重灾区:发给外部 LLM 端点前只留变量名
-    settings = _settings(
-        monkeypatch,
-        LLM_BASE_URL="http://llm.test/v1",
-        LLM_MODEL="m",
-        SENTINEL_DOCKER_SOCKET="/tmp/x.sock",
-    )
-    payload = {"Name": "/api", "Config": {"Env": ["DB_PASSWORD=hunter2", "MODE=prod"]}}
-    async with httpx.AsyncClient() as client:
-        driver = LLMDriver(client, settings)
-        with respx.mock:
-            respx.get("http://docker/containers/api/json").mock(
-                return_value=httpx.Response(200, json=payload)
-            )
-            out = await driver._docker_inspect("api")
-        await driver.aclose()
-    assert "hunter2" not in out and "prod" not in out
-    assert "DB_PASSWORD=<redacted>" in out and "MODE=<redacted>" in out

@@ -15,6 +15,7 @@ NOW = int(time.time())
 @pytest.fixture
 def settings(monkeypatch, tmp_path):
     monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prom.test")
     monkeypatch.setenv("SENTINEL_BACKUP_DIR", str(tmp_path / "pg"))
     monkeypatch.setenv("SENTINEL_CERT_DOMAINS", "a.test")
     from sentinel.config import Settings

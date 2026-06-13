@@ -42,6 +42,8 @@ async def test_build_jobs_assembles_five_jobs(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(yaml_path))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "http://loki:3100")
 
     from sentinel.app import build_jobs
     from sentinel.config import Settings
@@ -95,6 +97,7 @@ async def test_build_jobs_partial_datasources(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(yaml_path))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
     monkeypatch.setenv("SENTINEL_LOKI_URL", "")
 
     from sentinel.app import build_jobs
@@ -207,6 +210,8 @@ async def test_metrics_and_log_ticks_execute(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(yaml_path))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "http://loki:3100")
 
     import httpx
     import respx
@@ -241,6 +246,7 @@ async def test_metrics_scan_consecutive_failures_escalate_to_card(tmp_path, monk
         encoding="utf-8",
     )
     monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(yaml_path))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
 
     import json
 
@@ -289,6 +295,7 @@ async def test_middleware_unconfigured_keeps_open_event(tmp_path, monkeypatch):
     monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
     monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
     monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
     monkeypatch.setenv("SENTINEL_LOKI_URL", "")
 
     from sentinel.app import build_jobs
@@ -472,6 +479,7 @@ async def test_log_scan_consecutive_failures_escalate_to_card(tmp_path, monkeypa
         encoding="utf-8",
     )
     monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(yaml_path))
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "http://loki:3100")
 
     import json
 
@@ -515,6 +523,7 @@ async def test_open_scan_failed_event_not_falsely_recovered_after_restart(tmp_pa
         encoding="utf-8",
     )
     monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(yaml_path))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
 
     import httpx
     import respx
@@ -572,3 +581,305 @@ async def test_build_jobs_warns_llm_half_config(tmp_path, monkeypatch, caplog):
     assert "diagnosis" not in [n for n, _, _ in jobs]
     await client.aclose()
     store.close()
+
+
+class _FakeDocker:
+    """build_jobs 的 docker 注入桩:只要 truthy 即触发 docker_scan 装配。
+    docker_tick 经 monkeypatch 的 run_docker_scan 取数据,ps/aclose 兜空实现。"""
+
+    async def ps(self, *, all=True) -> list:
+        return []
+
+    async def aclose(self) -> None:
+        return None
+
+
+async def test_build_jobs_appends_docker_scan_when_docker_present(tmp_path, monkeypatch):
+    # docker=<fake> + SENTINEL_DOCKER_HOST 配置 → jobs 多出 ("docker_scan", 60, tick)
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("SENTINEL_DOCKER_HOST", "tcp://docker-proxy:2375")
+
+    from sentinel.app import build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    jobs = build_jobs(Settings(_env_file=None), client, store, docker=_FakeDocker())
+    by_name = {name: interval for name, interval, _ in jobs}
+    assert "docker_scan" in by_name
+    assert by_name["docker_scan"] == 60  # sentinel_docker_scan_interval 默认值
+    await client.aclose()
+    store.close()
+
+
+async def test_build_jobs_no_docker_scan_when_docker_none(tmp_path, monkeypatch):
+    # docker=None(含旧三参调用)→ 不装 docker_scan,既有 job 列表不受影响
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+
+    from sentinel.app import build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    settings = Settings(_env_file=None)
+    assert [n for n, _, _ in build_jobs(settings, client, store, docker=None)] == [
+        "statuspage",
+        "daily_report",
+    ]
+    # 旧三参调用(无 docker)同样不装 docker_scan(docker 默认 None)
+    assert "docker_scan" not in [n for n, _, _ in build_jobs(settings, client, store)]
+    await client.aclose()
+    store.close()
+
+
+async def test_docker_tick_holds_then_recovers(tmp_path, monkeypatch):
+    # 假绿卡纪律:open 的 container_down(web)在某轮 active 不含 web 时被 hold,
+    # 不发恢复卡、事件保持 open;待 web 重新进 active 且无 finding,才发恢复卡并 resolved
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("SENTINEL_DOCKER_HOST", "tcp://docker-proxy:2375")
+
+    import sentinel.app as app_mod
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    store.insert_event(
+        ts=1000,
+        rule="container_down",
+        subject="web",
+        severity="critical",
+        status="open",
+        detail="容器 web 停止",
+        payload_json="{}",
+        diagnosis_status="pending",
+        cooldown_until=22600,
+    )
+    jobs = {
+        n: t
+        for n, _, t in app_mod.build_jobs(
+            Settings(_env_file=None), client, store, docker=_FakeDocker()
+        )
+    }
+
+    # 第 1 轮:扫描无 finding,但 active 不含 web(web 消失/被过滤)→ hold,不发恢复卡
+    async def scan_held(docker, settings, *, now_ts, emit_oom):
+        return [], {"db", "cache"}
+
+    monkeypatch.setattr(app_mod, "run_docker_scan", scan_held)
+    with respx.mock:
+        webhook = respx.post("https://open.feishu.cn/hook/T").mock(
+            return_value=httpx.Response(200, json={"code": 0})
+        )
+        await jobs["docker_scan"]()
+    assert webhook.call_count == 0  # 被 hold,无假绿卡
+    assert [(e.rule, e.subject) for e in store.get_open_events()] == [("container_down", "web")]
+
+    # 第 2 轮:active 含 web 且无 finding(容器恢复 running)→ 发恢复卡 + resolved
+    async def scan_recovered(docker, settings, *, now_ts, emit_oom):
+        return [], {"web", "db"}
+
+    monkeypatch.setattr(app_mod, "run_docker_scan", scan_recovered)
+    with respx.mock:
+        webhook = respx.post("https://open.feishu.cn/hook/T").mock(
+            return_value=httpx.Response(200, json={"code": 0})
+        )
+        await jobs["docker_scan"]()
+    assert webhook.call_count == 1
+    import json as _json
+
+    body = _json.loads(webhook.calls.last.request.content)
+    assert "已恢复" in body["card"]["header"]["title"]["content"]
+    assert store.get_open_events() == []  # web 已 resolved
+    await client.aclose()
+    store.close()
+
+
+async def test_docker_scan_consecutive_failures_escalate_and_scope_discipline(
+    tmp_path, monkeypatch
+):  # noqa: E501
+    # docker.ps 连续失败 3 次 → scan_failed_docker 升级发卡;
+    # 期间另有 open 的 container_down 事件,失败轮 scope 不含 DOCKER_RULES → 不被假恢复
+    import json
+
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("SENTINEL_DOCKER_HOST", "tcp://docker-proxy:2375")
+
+    import sentinel.app as app_mod
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    store.insert_event(
+        ts=1000,
+        rule="container_down",
+        subject="api",
+        severity="critical",
+        status="open",
+        detail="容器 api 停止",
+        payload_json="{}",
+        diagnosis_status="pending",
+        cooldown_until=22600,
+    )
+    jobs = {
+        n: t
+        for n, _, t in app_mod.build_jobs(
+            Settings(_env_file=None), client, store, docker=_FakeDocker()
+        )
+    }
+
+    async def scan_boom(docker, settings, *, now_ts, emit_oom):
+        raise RuntimeError("docker socket unreachable")
+
+    monkeypatch.setattr(app_mod, "run_docker_scan", scan_boom)
+    with respx.mock:
+        webhook = respx.post("https://open.feishu.cn/hook/T").mock(
+            return_value=httpx.Response(200, json={"code": 0})
+        )
+        for _ in range(3):
+            await jobs["docker_scan"]()  # tick 自吞 ps 异常,连续 3 次后升级发卡
+    assert webhook.call_count == 1  # 仅 scan_failed_docker 一张,container_down 未被假恢复
+    body = json.loads(webhook.calls.last.request.content)
+    assert "Docker 巡检失败" in body["card"]["header"]["title"]["content"]
+    opens = {(e.rule, e.subject) for e in store.get_open_events()}
+    assert opens == {("container_down", "api"), ("scan_failed_docker", "docker_scan")}
+    await client.aclose()
+    store.close()
+
+
+async def test_docker_tick_emit_oom_follows_prom_disabled(tmp_path, monkeypatch):
+    # _prom_enabled 决定 emit_oom:prom URL 已配 → _prom_enabled True → emit_oom=False
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("SENTINEL_DOCKER_HOST", "tcp://docker-proxy:2375")
+
+    import sentinel.app as app_mod
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    jobs = {
+        n: t
+        for n, _, t in app_mod.build_jobs(
+            Settings(_env_file=None), client, store, docker=_FakeDocker()
+        )
+    }
+
+    seen = {}
+
+    async def scan_capture(docker, settings, *, now_ts, emit_oom):
+        seen["emit_oom"] = emit_oom
+        return [], set()
+
+    monkeypatch.setattr(app_mod, "run_docker_scan", scan_capture)
+    with respx.mock:
+        respx.post("https://open.feishu.cn/hook/T").mock(
+            return_value=httpx.Response(200, json={"code": 0})
+        )
+        await jobs["docker_scan"]()
+    assert seen["emit_oom"] is False  # prom 开 + metrics 健康 → docker 不重复发 OOM(交由 prom)
+    await client.aclose()
+    store.close()
+
+
+async def test_docker_tick_emit_oom_failopen_when_metrics_unhealthy(tmp_path, monkeypatch):
+    # fail-open:prom 已配但 metrics 巡检在失败(cAdvisor/prom 挂)→ docker 接管 OOM,
+    # 不因 prom URL 在场就静默丢弃 OOMKilled(宁可重不可漏)
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("SENTINEL_DOCKER_HOST", "tcp://docker-proxy:2375")
+
+    import sentinel.app as app_mod
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    jobs = {
+        n: t
+        for n, _, t in app_mod.build_jobs(
+            Settings(_env_file=None), client, store, docker=_FakeDocker()
+        )
+    }
+
+    async def metrics_boom(prom, settings):
+        raise RuntimeError("prometheus unreachable")
+
+    monkeypatch.setattr(app_mod, "run_metrics_scan", metrics_boom)
+
+    seen = {}
+
+    async def scan_capture(docker, settings, *, now_ts, emit_oom):
+        seen["emit_oom"] = emit_oom
+        return [], set()
+
+    monkeypatch.setattr(app_mod, "run_docker_scan", scan_capture)
+    with respx.mock:
+        respx.post("https://open.feishu.cn/hook/T").mock(
+            return_value=httpx.Response(200, json={"code": 0})
+        )
+        await jobs["metrics_scan"]()  # 一次失败 → scan_fails["metrics"] = 1(未达阈值,不发卡)
+        await jobs["docker_scan"]()
+    assert seen["emit_oom"] is True  # metrics 不健康 → docker 接管 OOM
+    await client.aclose()
+    store.close()
+
+
+async def test_lifespan_constructs_and_closes_docker_client(tmp_path, monkeypatch):
+    # 唯一进入 lifespan 的测试:验证 docker_endpoint 非空时构造 DockerClient、
+    # 且 finally 中 await aclose()(否则 UDS transport fd 泄漏)。
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_DOCKER_HOST", "tcp://docker-proxy:2375")
+
+    import sentinel.app as app_mod
+
+    constructed: list[str] = []
+    closed: list[bool] = []
+
+    class _RecordingDocker:
+        def __init__(self, endpoint, **_kw):
+            constructed.append(endpoint)
+
+        async def ps(self, *, all=True):
+            return []
+
+        async def aclose(self):
+            closed.append(True)
+
+    monkeypatch.setattr(app_mod, "DockerClient", _RecordingDocker)
+    monkeypatch.setattr(app_mod, "build_jobs", lambda *a, **k: [])  # 不起任何 job 循环
+
+    app = app_mod.FastAPI()
+    async with app_mod.lifespan(app):
+        pass
+
+    assert constructed == ["tcp://docker-proxy:2375"]  # 用 docker_endpoint 构造
+    assert closed == [True]  # finally 中被 aclose

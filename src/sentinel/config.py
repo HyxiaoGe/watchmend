@@ -28,8 +28,8 @@ class Settings(BaseSettings):
     feishu_patrol_sign_secret: str | None = None
 
     # 检测与事件(Phase 2):阈值全部可配,默认值基于设计文档 §6(备份龄按相位差有意收紧)
-    sentinel_prometheus_url: str = "http://prometheus:9090"
-    sentinel_loki_url: str = "http://loki:3100"
+    sentinel_prometheus_url: str = ""  # CHANGED: 默认空=不接 prometheus(opt-in 数据源)
+    sentinel_loki_url: str = ""  # CHANGED: 默认空=不接 loki(opt-in 数据源)
     sentinel_scan_interval: int = 900  # metrics_scan / log_scan 周期(秒)
     sentinel_cooldown_hours: int = 6  # 同 (rule, subject) 事件冷却
     sentinel_scan_fail_threshold: int = 3  # 数据源连续失败 N 次才发巡检失败卡
@@ -63,9 +63,12 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = 120
     llm_max_tool_rounds: int = 8  # 单次诊断的工具调用轮数上限,防失控烧 token
     sentinel_diag_interval: int = 120  # pending 事件诊断轮询周期(秒)
-    # docker 只读诊断工具(ps/logs/inspect):填 socket 路径启用(compose 需挂载同路径),
-    # 空=不启用。挂 socket 等于给容器宿主机级权限,默认关、按需打开。
-    sentinel_docker_socket: str = ""
+    # docker 只读诊断 + 容器巡检(ps/logs/inspect):配 host 启用,空=整体不启用。
+    # 挂 socket / 连 socket-proxy 等于给容器宿主机级权限,默认关、按需打开。
+    sentinel_docker_socket: str = ""  # DEPRECATED:保留向后兼容,新部署改用 sentinel_docker_host
+    sentinel_docker_host: str = ""  # "unix:///var/run/docker.sock" | "tcp://docker-proxy:2375"
+    sentinel_docker_scan_interval: int = 60  # docker_scan 周期(秒)
+    sentinel_docker_exclude: str = ""  # 排除的容器名 CSV
 
     @property
     def providers_list(self) -> list[str]:
@@ -96,3 +99,16 @@ class Settings(BaseSettings):
             metric, _, subject = part.partition(":")
             out[metric.strip()] = subject.strip() or metric.strip()
         return out
+
+    @property
+    def docker_endpoint(self) -> str:
+        if self.sentinel_docker_host:
+            return self.sentinel_docker_host
+        if self.sentinel_docker_socket:
+            # /var/run/docker.sock → unix:///var/run/docker.sock(三斜杠)
+            return f"unix://{self.sentinel_docker_socket}"
+        return ""
+
+    @property
+    def docker_exclude_list(self) -> list[str]:
+        return [x.strip() for x in self.sentinel_docker_exclude.split(",") if x.strip()]

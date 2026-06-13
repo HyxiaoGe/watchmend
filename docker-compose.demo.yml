@@ -8,8 +8,10 @@
 # 看告警卡:docker compose -f docker-compose.demo.yml stop demo-app,约 15 分钟后出卡;
 # 心跳卡/体检日报每天 09:00(北京时间)发,当天 09:00 已过则启动 1 分钟内补发心跳。
 # 说明:demo 未接日志采集器,Loki 为空属正常——log_scan 层空跑只演示接线,不产日志告警。
-# 可选:在 .env 同时填 LLM_BASE_URL/LLM_API_KEY/LLM_MODEL 可体验事件诊断卡与日报 AI 总结
-# (demo 栈没挂 docker socket,SENTINEL_DOCKER_SOCKET 保持留空)。
+# 可选:在 .env 同时填 LLM_BASE_URL/LLM_API_KEY/LLM_MODEL 可体验事件诊断卡与日报 AI 总结。
+# demo 栈默认不开 docker 巡检(SENTINEL_DOCKER_HOST 留空)。想体验容器告警/docker 诊断:
+#   1) 取消注释下方 docker-proxy service 与 sentinel 的 docker_proxy 网络、network 定义;
+#   2) .env 设 SENTINEL_DOCKER_HOST=tcp://docker-proxy:2375 后重新 up。
 services:
   sentinel:
     build: .
@@ -21,6 +23,7 @@ services:
       SENTINEL_DB_PATH: /data/sentinel.db
       SENTINEL_PROMETHEUS_URL: http://prometheus:9090
       SENTINEL_LOKI_URL: http://loki:3100
+      SENTINEL_DOCKER_HOST: ""   # demo 默认关 docker 巡检;压过 .env 的非空默认,零噪声
     volumes:
       - ./demo/data:/data
       - ./demo/services.demo.yaml:/app/services.yaml:ro
@@ -30,7 +33,12 @@ services:
       - prometheus
       - loki
       - demo-app
+      # - docker-proxy        # 开 docker 巡检时取消注释
     networks: [demo]
+    # 开 docker 巡检:把上一行换成下面两行(demo 网 + 专用内部网)
+    # networks:
+    #   - demo
+    #   - docker_proxy
 
   # 被监控的示例服务:探针每 5 分钟打它的 /
   demo-app:
@@ -72,5 +80,26 @@ services:
     restart: unless-stopped
     networks: [demo]
 
+  # docker 巡检边车(默认关):取消本 service 注释 + sentinel 的 docker_proxy 网络
+  # + 下方 networks.docker_proxy,并在 .env 设 SENTINEL_DOCKER_HOST=tcp://docker-proxy:2375。
+  # docker-proxy:
+  #   image: tecnativa/docker-socket-proxy:0.4.2
+  #   container_name: watchmend-docker-proxy
+  #   restart: unless-stopped
+  #   mem_limit: 64m
+  #   environment:
+  #     CONTAINERS: 1
+  #     EVENTS: 0
+  #     VERSION: 0
+  #     INFO: 0
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock:ro
+  #   networks:
+  #     - docker_proxy
+
 networks:
   demo:
+  # 开 docker 巡检时取消注释(专用内部网,与 demo 网及容器邻居隔离):
+  # docker_proxy:
+  #   driver: bridge
+  #   internal: true

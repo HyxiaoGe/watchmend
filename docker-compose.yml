@@ -14,8 +14,13 @@ services:
       - ./services.yaml:/app/services.yaml:ro
       # hygiene 备份新鲜度:指向宿主机 pg_dump 目录;目录为空=自动跳过该检查,无需关心
       - ${SENTINEL_BACKUP_HOST_DIR:-./backups}:/backups/postgresql:ro
-      # LLM 诊断的 docker 只读工具(可选):取消注释并在 .env 设
-      # SENTINEL_DOCKER_SOCKET=/var/run/docker.sock(挂 socket=宿主机级权限,默认关)
+      # docker 容器巡检 + LLM 诊断的只读工具(可选,二选一):
+      #   方案 A(默认,推荐):走下方 docker-proxy 边车,.env 设
+      #     SENTINEL_DOCKER_HOST=tcp://docker-proxy:2375。本容器不挂裸 socket,
+      #     proxy 只读(POST=0)且在专用内部网,Prometheus/Loki 等邻居够不到 2375。
+      #   方案 B(老路径,不推荐):直接裸挂宿主 socket = 宿主机级 root 权限。
+      #     取消注释下一行,并在 .env 设 SENTINEL_DOCKER_HOST=unix:///var/run/docker.sock
+      #     (同时建议注释掉下方 docker-proxy service + sentinel 的 docker_proxy 网络)。
       # - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
       - "127.0.0.1:8765:8000"   # 本机/SSH 隧道访问；Kuma 可走容器网络
@@ -24,12 +29,35 @@ services:
       interval: 60s
       timeout: 5s
       retries: 3
+    # 关 docker 巡检:注释掉下方 docker-proxy service、本服务的 depends_on docker-proxy
+    # 与 docker_proxy 网络、网络定义里的 docker_proxy,并清空 .env 的 SENTINEL_DOCKER_HOST。
+    depends_on:
+      - docker-proxy          # 减少冷启动时 docker 数据源故障噪音
     # egress=出网/可达反代的网络;metrics=prometheus/loki 所在网络。
     # 在 .env 设 SENTINEL_EGRESS_NETWORK / SENTINEL_METRICS_NETWORK 指向你已有的
     # docker 网络名(docker network ls 查看);两者可以是同一个网络。
     networks:
       - egress
       - metrics
+      - docker_proxy          # 专用内部网,经此连 tcp://docker-proxy:2375
+
+  # docker socket 只读代理边车:WatchMend 容器永不挂裸 socket,只连此 proxy 的只读 TCP。
+  # 不需要 docker 巡检就整段注释掉(连同 sentinel 的 docker_proxy 网络与下方网络定义)。
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.4.2   # 跟进上游稳定版,勿停更
+    container_name: watchmend-docker-proxy
+    restart: unless-stopped
+    mem_limit: 64m
+    environment:
+      CONTAINERS: 1          # 唯一需显式开的开关:放行 /containers/*(ps/inspect/logs/stats)
+      EVENTS: 0              # 关事件流(默认放行,纵深防御显式关)
+      VERSION: 0
+      INFO: 0
+      # POST 默认 0 → 整 API 只读;EXEC/容器增删改全拒
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro   # proxy 挂真 socket,sentinel 不挂
+    networks:
+      - docker_proxy        # 仅在专用内部网,不进 metrics
 
 networks:
   egress:
@@ -38,3 +66,8 @@ networks:
   metrics:
     external: true
     name: ${SENTINEL_METRICS_NETWORK:-sentinel-metrics}
+  # compose 自管的专用内部网:只有 sentinel + docker-proxy 加入。
+  # internal: true → 不通外网、与 prom/loki/第三方容器隔离,无鉴权的 2375 不外泄。
+  docker_proxy:
+    driver: bridge
+    internal: true

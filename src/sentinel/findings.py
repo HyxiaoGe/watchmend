@@ -17,6 +17,10 @@ RULE_NAMES = {
     "cert_expiry": "证书临期",
     "scan_failed_prometheus": "Prometheus 巡检失败",
     "scan_failed_loki": "Loki 巡检失败",
+    "container_down": "容器停止",
+    "container_unhealthy": "容器健康检查异常",
+    "container_oom": "容器 OOM",
+    "scan_failed_docker": "Docker 巡检失败",
 }
 
 # 各评估入口"成功评估时"覆盖的规则集 → apply_findings 的 scope。
@@ -25,6 +29,11 @@ PROBE_RULES = frozenset({"service_down", "latency_degraded"})
 METRICS_RULES = frozenset({"disk_usage", "mem_pressure", "container_restart", "middleware_down"})
 LOG_RULES = frozenset({"log_error_spike"})
 HYGIENE_RULES = frozenset({"backup_stale", "disk_forecast", "cert_expiry"})
+# Docker 巡检规则集 → docker_tick 成功评估时并入 scope。
+# scan_failed_docker 不在其中:由 tick 层按连续失败计数单独并入。
+DOCKER_RULES = frozenset({"container_down", "container_unhealthy", "container_oom"})
+# 仅状态型规则进 OPEN 集(可恢复);container_oom 是 point 事件,落库即 resolved,不在此。
+DOCKER_OPEN_RULES = frozenset({"container_down", "container_unhealthy"})
 
 
 @dataclass

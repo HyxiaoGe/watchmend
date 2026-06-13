@@ -48,7 +48,8 @@ cp services.example.yaml services.yaml    # your own probe list
 make up                                   # or docker compose up -d --build
 ```
 
-Every data source is optional — leave it empty and that layer turns off cleanly:
+Most data sources are optional — leave one empty and that layer turns off cleanly
+(the docker layer is the exception, see the note below the table):
 
 | Config | Capability | When empty |
 |---|---|---|
@@ -60,6 +61,14 @@ Every data source is optional — leave it empty and that layer turns off cleanl
 | `SENTINEL_CERT_DOMAINS` | TLS certificate expiry check | check skipped |
 | backup dir mount | pg_dump freshness check | check skipped |
 | `LLM_BASE_URL` + `LLM_MODEL` | root-cause diagnosis + AI report summary | LLM layer off |
+| `SENTINEL_DOCKER_HOST` | container down/unhealthy/OOM detection + docker diagnosis tools | docker layer off † |
+
+> † Unlike the other layers, the docker layer is **on by default**: `docker-compose.yml`
+> ships a read-only `docker-socket-proxy` sidecar (`CONTAINERS=1`, POST denied by
+> default, dedicated `internal` network), and the WatchMend container **never mounts the
+> bare socket**. To turn the whole layer off: clear `SENTINEL_DOCKER_HOST` and comment out
+> the `docker-proxy` service plus sentinel's `depends_on`/`docker_proxy` network in compose
+> (the file has inline notes).
 
 All 40+ settings (thresholds, cooldowns, verbosity…) are documented inline in
 [.env.example](.env.example).
@@ -102,8 +111,9 @@ Security boundaries (design stance, not afterthought patches):
 
 - **Deterministic rules decide whether to wake you up** — the model explains, it
   never gates alerts
-- All tools are read-only; `docker` tools require an explicitly mounted socket
-  (off by default), and `docker inspect` output has env values redacted before
+- All tools are read-only; `docker` tools go through a read-only socket proxy (the
+  container never mounts the bare socket; enabled by default via the compose
+  `docker-proxy` sidecar), and `docker inspect` output has env values redacted before
   reaching the model
 - Tool output is declared untrusted data, guarding against log-injection steering
 - Suggested commands are for humans only and are never executed automatically
