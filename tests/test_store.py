@@ -190,6 +190,7 @@ def test_rule_sets_cover_rule_names():
         | findings.METRICS_RULES
         | findings.LOG_RULES
         | findings.HYGIENE_RULES
-        | {"scan_failed_prometheus", "scan_failed_loki"}
+        | findings.DOCKER_RULES
+        | {"scan_failed_prometheus", "scan_failed_loki", "scan_failed_docker"}
     )
     assert covered == findings.RULE_NAMES.keys()
