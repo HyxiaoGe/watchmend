@@ -14,9 +14,12 @@ logger = logging.getLogger("sentinel.poller")
 
 @dataclass
 class PollState:
-    """跨轮持有的可变状态:每 provider 连续失败计数。"""
+    """跨轮持有的可变状态:每 provider 连续失败计数 + 已成功送达 meta 的 provider 集。"""
 
     fail_counts: dict[str, int] = field(default_factory=dict)
+    # 已送达 meta 卡的 provider:达阈值后若全渠道宕,meta 未送达就不入此集,下轮继续重试;
+    # 送达一次即记下不再重复,抓取恢复时清除以便下次故障重新武装。
+    meta_sent: set[str] = field(default_factory=set)
 
 
 async def run_cycle(
@@ -41,13 +44,18 @@ async def run_cycle(
             count = state.fail_counts.get(provider, 0) + 1
             state.fail_counts[provider] = count
             logger.warning("fetch %s failed (%d): %s", provider, count, err)
-            if count == fail_threshold:  # 仅在恰好到阈值时发一次 meta
-                await broadcaster.send(
+            # 达阈值且尚未送达过 meta:尝试发,仅 ≥1 渠道成功才记为已送达,
+            # 否则(如阈值那一刻全渠道宕)下轮继续重试,不丢卡。
+            if count >= fail_threshold and provider not in state.meta_sent:
+                sent = await broadcaster.send(
                     _meta_notification(adapter.display_name, count, now_ts, now_str)
                 )
+                if sent >= 1:
+                    state.meta_sent.add(provider)
             continue
 
         state.fail_counts[provider] = 0  # 成功则清零
+        state.meta_sent.discard(provider)  # 抓取恢复 → meta 重新武装
         old = store.get(provider)
         events = diff(old, snapshot, verbosity=verbosity)
 

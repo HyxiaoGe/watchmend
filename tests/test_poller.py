@@ -122,6 +122,51 @@ async def test_meta_alert_fires_once_at_fail_threshold(tmp_path):
     assert len(meta) == 1  # 仅在第 3 次发一次
 
 
+async def test_meta_alert_retries_until_delivered(tmp_path):
+    # 阈值时全渠道失败,meta 卡不能丢:未送达就每轮重试,送达后才停(Codex P3)。
+    store = Store(str(tmp_path / "s.db"))
+    bad = FakeAdapter("openai", error=RuntimeError("network"))
+    bc = RecordingBroadcaster(fail=True)  # 全渠道宕
+    state = PollState()
+    for _ in range(4):  # 1、2 计数<阈值不发;3 达阈值发(失败);4 仍未送达继续重试(失败)
+        await run_cycle(
+            [bad], fetcher=None, store=store, broadcaster=bc, state=state, fail_threshold=3
+        )
+    attempts = [n for n in bc.sent if "无法获取" in n.detail]
+    assert len(attempts) == 2  # 第 3、4 轮都尝试了——没在阈值那轮之后把卡丢掉
+    bc.fail = False  # 渠道恢复
+    await run_cycle(
+        [bad], fetcher=None, store=store, broadcaster=bc, state=state, fail_threshold=3
+    )  # 第 5 轮:终于送达
+    await run_cycle(
+        [bad], fetcher=None, store=store, broadcaster=bc, state=state, fail_threshold=3
+    )  # 第 6 轮:已送达 → 不再重复
+    final = [n for n in bc.sent if "无法获取" in n.detail]
+    assert len(final) == 3  # 送达一次后即止
+
+
+async def test_meta_alert_rearms_after_recovery(tmp_path):
+    # 送达后状态页恢复又再次失败到阈值:meta 应能再发一次(meta_sent 在成功抓取时清除)。
+    store = Store(str(tmp_path / "s.db"))
+    bad = FakeAdapter("openai", error=RuntimeError("network"))
+    ok = FakeAdapter("openai", _snap("openai"))
+    bc = RecordingBroadcaster()
+    state = PollState()
+    for _ in range(3):  # 达阈值发一次
+        await run_cycle(
+            [bad], fetcher=None, store=store, broadcaster=bc, state=state, fail_threshold=3
+        )
+    await run_cycle(
+        [ok], fetcher=None, store=store, broadcaster=bc, state=state, fail_threshold=3
+    )  # 抓取成功 → 清计数与 meta_sent
+    for _ in range(3):  # 再次失败到阈值
+        await run_cycle(
+            [bad], fetcher=None, store=store, broadcaster=bc, state=state, fail_threshold=3
+        )
+    meta = [n for n in bc.sent if "无法获取" in n.detail]
+    assert len(meta) == 2  # 恢复后重新武装,可再发
+
+
 # ---- 心跳调度 ----
 
 
