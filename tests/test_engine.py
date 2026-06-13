@@ -1,24 +1,26 @@
 # tests/test_engine.py
 from sentinel.engine import apply_findings
 from sentinel.findings import Finding
+from sentinel.notify.message import Kind
 from sentinel.store import Store
 
 COOLDOWN = 21600
 
 
-class FakeFeishu:
+class FakeBroadcaster:
+    """记录收到的 Notification;返回成功投递数(fail/fail_first 模拟全渠道失败=0)。"""
+
     def __init__(self):
         self.sent = []
         self.fail = False
         self.fail_first = False
 
-    async def send(self, card):
+    async def send(self, n):
+        self.sent.append(n)
         if self.fail_first:
             self.fail_first = False
-            raise RuntimeError("send failed")
-        if self.fail:
-            raise RuntimeError("send failed")
-        self.sent.append(card)
+            return 0
+        return 0 if self.fail else 1
 
 
 def _store(tmp_path):
@@ -31,23 +33,24 @@ def _finding(**kw):
     return Finding(**base)
 
 
-async def _apply(findings, store, feishu, now_ts, scope=frozenset({"disk_usage"})):
+async def _apply(findings, store, bc, now_ts, scope=frozenset({"disk_usage"})):
     await apply_findings(
         findings,
         scope=scope,
         store=store,
-        feishu=feishu,
+        broadcaster=bc,
         now_ts=now_ts,
         now_str="n",
         cooldown_seconds=COOLDOWN,
     )
 
 
-async def test_new_finding_opens_event_and_sends_card(tmp_path):
-    store, feishu = _store(tmp_path), FakeFeishu()
-    await _apply([_finding()], store, feishu, 1000)
-    assert len(feishu.sent) == 1
-    assert "磁盘水位" in feishu.sent[0]["card"]["header"]["title"]["content"]
+async def test_new_finding_opens_event_and_sends_alert(tmp_path):
+    store, bc = _store(tmp_path), FakeBroadcaster()
+    await _apply([_finding()], store, bc, 1000)
+    assert len(bc.sent) == 1
+    assert bc.sent[0].kind is Kind.ALERT
+    assert "磁盘水位" in bc.sent[0].title
     opens = store.get_open_events()
     assert len(opens) == 1
     assert opens[0].cooldown_until == 1000 + COOLDOWN
@@ -56,49 +59,49 @@ async def test_new_finding_opens_event_and_sends_card(tmp_path):
 
 
 async def test_open_event_not_resent(tmp_path):
-    store, feishu = _store(tmp_path), FakeFeishu()
-    await _apply([_finding()], store, feishu, 1000)
-    await _apply([_finding()], store, feishu, 1900)
-    assert len(feishu.sent) == 1
+    store, bc = _store(tmp_path), FakeBroadcaster()
+    await _apply([_finding()], store, bc, 1000)
+    await _apply([_finding()], store, bc, 1900)
+    assert len(bc.sent) == 1
     assert len(store.get_open_events()) == 1
     store.close()
 
 
-async def test_recovery_resolves_and_sends_green(tmp_path):
-    store, feishu = _store(tmp_path), FakeFeishu()
-    await _apply([_finding()], store, feishu, 1000)
-    await _apply([], store, feishu, 2000)
-    assert len(feishu.sent) == 2
-    assert feishu.sent[1]["card"]["header"]["template"] == "green"
+async def test_recovery_resolves_and_sends_recovery(tmp_path):
+    store, bc = _store(tmp_path), FakeBroadcaster()
+    await _apply([_finding()], store, bc, 1000)
+    await _apply([], store, bc, 2000)
+    assert len(bc.sent) == 2
+    assert bc.sent[1].kind is Kind.RECOVERY
     assert store.get_open_events() == []
     assert store.count_resolved_since(0) == 1
     store.close()
 
 
 async def test_out_of_scope_open_event_untouched(tmp_path):
-    store, feishu = _store(tmp_path), FakeFeishu()
-    await _apply([_finding()], store, feishu, 1000)
-    await _apply([], store, feishu, 2000, scope=frozenset({"mem_pressure"}))
-    assert len(feishu.sent) == 1  # 没发恢复卡
-    assert len(store.get_open_events()) == 1  # 还 open
+    store, bc = _store(tmp_path), FakeBroadcaster()
+    await _apply([_finding()], store, bc, 1000)
+    await _apply([], store, bc, 2000, scope=frozenset({"mem_pressure"}))
+    assert len(bc.sent) == 1  # 没发恢复
+    assert len(store.get_open_events()) == 1
     store.close()
 
 
 async def test_cooldown_blocks_refire_after_resolve(tmp_path):
-    store, feishu = _store(tmp_path), FakeFeishu()
-    await _apply([_finding()], store, feishu, 1000)
-    await _apply([], store, feishu, 2000)  # 恢复
-    await _apply([_finding()], store, feishu, 3000)  # 冷却内再命中
-    assert len(feishu.sent) == 2  # 没有第三张卡
+    store, bc = _store(tmp_path), FakeBroadcaster()
+    await _apply([_finding()], store, bc, 1000)
+    await _apply([], store, bc, 2000)
+    await _apply([_finding()], store, bc, 3000)
+    assert len(bc.sent) == 2
     assert store.get_open_events() == []
-    await _apply([_finding()], store, feishu, 1000 + COOLDOWN + 1)  # 冷却过了
-    assert len(feishu.sent) == 3
+    await _apply([_finding()], store, bc, 1000 + COOLDOWN + 1)
+    assert len(bc.sent) == 3
     assert len(store.get_open_events()) == 1
     store.close()
 
 
 async def test_point_event_resolved_immediately_no_recovery(tmp_path):
-    store, feishu = _store(tmp_path), FakeFeishu()
+    store, bc = _store(tmp_path), FakeBroadcaster()
     f = _finding(
         rule="container_restart",
         subject="dozzle",
@@ -107,85 +110,82 @@ async def test_point_event_resolved_immediately_no_recovery(tmp_path):
         needs_diagnosis=True,
     )
     scope = frozenset({"container_restart"})
-    await _apply([f], store, feishu, 1000, scope=scope)
-    assert len(feishu.sent) == 1
-    assert store.get_open_events() == []  # 落库即 resolved
+    await _apply([f], store, bc, 1000, scope=scope)
+    assert len(bc.sent) == 1
+    assert store.get_open_events() == []
     assert store.get_pending_diagnosis_events()[0].rule == "container_restart"
-    await _apply([], store, feishu, 1900, scope=scope)
-    assert len(feishu.sent) == 1  # 无恢复卡
-    await _apply([f], store, feishu, 2000, scope=scope)
-    assert len(feishu.sent) == 1  # 冷却去重([1h] 窗口同一次重启会被连续扫到)
+    await _apply([], store, bc, 1900, scope=scope)
+    assert len(bc.sent) == 1
+    await _apply([f], store, bc, 2000, scope=scope)
+    assert len(bc.sent) == 1
     store.close()
 
 
 async def test_send_failure_not_committed_then_retried(tmp_path):
-    store, feishu = _store(tmp_path), FakeFeishu()
-    feishu.fail = True
-    await _apply([_finding()], store, feishu, 1000)  # 不抛出
-    assert store.get_open_events() == []  # send-then-commit:没发出去就不落库
-    feishu.fail = False
-    await _apply([_finding()], store, feishu, 2000)
-    assert len(feishu.sent) == 1
+    store, bc = _store(tmp_path), FakeBroadcaster()
+    bc.fail = True
+    await _apply([_finding()], store, bc, 1000)  # 全渠道失败 → 返回 0,不提交
+    assert store.get_open_events() == []
+    bc.fail = False
+    await _apply([_finding()], store, bc, 2000)
+    assert len([n for n in bc.sent if n.kind is Kind.ALERT]) == 2  # 第一次尝试也记到 sent
     assert len(store.get_open_events()) == 1
     store.close()
 
 
 async def test_duplicate_findings_same_round_open_once(tmp_path):
-    store, feishu = _store(tmp_path), FakeFeishu()
+    store, bc = _store(tmp_path), FakeBroadcaster()
     await apply_findings(
         [_finding(), _finding()],
         scope=frozenset({"disk_usage"}),
         store=store,
-        feishu=feishu,
+        broadcaster=bc,
         now_ts=1000,
         now_str="n",
-        cooldown_seconds=0,  # 冷却 0 也不双开
+        cooldown_seconds=0,
     )
-    assert len(feishu.sent) == 1
+    assert len(bc.sent) == 1
     assert len(store.get_open_events()) == 1
     store.close()
 
 
 async def test_one_send_failure_does_not_block_others(tmp_path):
-    store, feishu = _store(tmp_path), FakeFeishu()
-    feishu.fail_first = True
+    store, bc = _store(tmp_path), FakeBroadcaster()
+    bc.fail_first = True
     a = _finding(subject="/a")
     b = _finding(subject="/b")
-    await _apply([a, b], store, feishu, 1000)
-    assert len(feishu.sent) == 1  # 第一张失败,第二张照发
-    assert [e.subject for e in store.get_open_events()] == ["/b"]
+    await _apply([a, b], store, bc, 1000)
+    assert [e.subject for e in store.get_open_events()] == ["/b"]  # /a 第一次失败未提交
     store.close()
 
 
 async def test_recovery_send_failure_keeps_open_then_retried(tmp_path):
-    store, feishu = _store(tmp_path), FakeFeishu()
-    await _apply([_finding()], store, feishu, 1000)
-    feishu.fail = True
-    await _apply([], store, feishu, 2000)  # 恢复卡发送失败:不 resolve
+    store, bc = _store(tmp_path), FakeBroadcaster()
+    await _apply([_finding()], store, bc, 1000)
+    bc.fail = True
+    await _apply([], store, bc, 2000)  # 恢复全渠道失败 → 不 resolve
     assert len(store.get_open_events()) == 1
-    feishu.fail = False
-    await _apply([], store, feishu, 3000)
-    assert len(feishu.sent) == 2
+    bc.fail = False
+    await _apply([], store, bc, 3000)
     assert store.get_open_events() == []
     store.close()
 
 
 async def test_hold_blocks_recovery_without_firing(tmp_path):
-    store, feishu = _store(tmp_path), FakeFeishu()
+    store, bc = _store(tmp_path), FakeBroadcaster()
     lat = _finding(rule="latency_degraded", subject="auth", severity="warning", detail="慢")
     scope = frozenset({"latency_degraded"})
-    await _apply([lat], store, feishu, 1000, scope=scope)
-    # 服务随后挂掉:latency 本轮被跳过评估(不在 findings),hold 保护不被误判恢复
+    await _apply([lat], store, bc, 1000, scope=scope)
     await apply_findings(
         [],
         scope=scope,
         store=store,
-        feishu=feishu,
+        broadcaster=bc,
         now_ts=2000,
         now_str="n",
         cooldown_seconds=COOLDOWN,
         hold={("latency_degraded", "auth")},
     )
-    assert len(feishu.sent) == 1  # 没发恢复卡
-    assert len(store.get_open_events()) == 1  # 还 open
+    assert len(bc.sent) == 1  # 没发恢复
+    assert len(store.get_open_events()) == 1
     store.close()
