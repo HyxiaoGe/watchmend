@@ -47,6 +47,26 @@ def test_patrol_webhook_uses_own_value_when_set(monkeypatch):
     assert Settings(_env_file=None).patrol_sign_secret == "psec"
 
 
+def test_vendor_webhook_falls_back_to_patrol(monkeypatch):
+    # 对称回退:只配 patrol(vendor 留空)时,vendor 流也必须有渠道,否则状态页事件静默不发
+    monkeypatch.delenv("FEISHU_VENDOR_WEBHOOK", raising=False)
+    monkeypatch.setenv("FEISHU_PATROL_WEBHOOK", "https://patrol")
+    monkeypatch.setenv("FEISHU_PATROL_SIGN_SECRET", "psec")
+    s = Settings(_env_file=None)
+    assert s.vendor_webhook == "https://patrol"
+    assert s.vendor_sign_secret == "psec"
+
+
+def test_vendor_webhook_uses_own_value_when_set(monkeypatch):
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://vendor")
+    monkeypatch.setenv("FEISHU_VENDOR_SIGN_SECRET", "vsec")
+    monkeypatch.setenv("FEISHU_PATROL_WEBHOOK", "https://patrol")
+    monkeypatch.setenv("FEISHU_PATROL_SIGN_SECRET", "psec")
+    s = Settings(_env_file=None)
+    assert s.vendor_webhook == "https://vendor"
+    assert s.vendor_sign_secret == "vsec"  # 各自独立,不串用
+
+
 def test_phase2_defaults(monkeypatch):
     monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
     from sentinel.config import Settings

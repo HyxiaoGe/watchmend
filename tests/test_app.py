@@ -931,6 +931,40 @@ async def test_build_jobs_telegram_only_starts(tmp_path, monkeypatch):
     store.close()
 
 
+async def test_patrol_only_feishu_still_delivers_vendor_stream(tmp_path, monkeypatch):
+    # 只配 FEISHU_PATROL_WEBHOOK(vendor 留空):vendor 流(状态页/心跳)必须回退到 patrol 群,
+    # 否则 vendor broadcaster 为空、心跳与状态页事件静默不发(Codex P2)。
+    monkeypatch.delenv("FEISHU_VENDOR_WEBHOOK", raising=False)
+    monkeypatch.setenv("FEISHU_PATROL_WEBHOOK", "https://open.feishu.cn/hook/PATROL")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv(
+        "SENTINEL_PROVIDERS", ""
+    )  # 无外部状态页 → run_cycle 空转,单测心跳走 vendor 流
+    monkeypatch.setenv("SENTINEL_HEARTBEAT_ENABLED", "true")
+    monkeypatch.setenv("SENTINEL_HEARTBEAT_HOUR", "0")  # 0 点已过 → 启动即补发一张心跳
+
+    from sentinel.app import build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    settings = Settings(_env_file=None)
+    client = httpx.AsyncClient()
+    store = Store(settings.sentinel_db_path)
+    jobs = {n: t for n, _, t in build_jobs(settings, client, store)}
+
+    with respx.mock:
+        patrol = respx.post("https://open.feishu.cn/hook/PATROL").mock(
+            return_value=httpx.Response(200, json={"code": 0})
+        )
+        await jobs["statuspage"]()  # run_cycle(空) + run_heartbeat → vendor_broadcaster
+    assert patrol.call_count == 1  # 心跳经 vendor 流投递到 patrol 群,回退生效
+    await client.aclose()
+    store.close()
+
+
 async def test_alert_fans_out_to_feishu_and_telegram(tmp_path, monkeypatch):
     # 同时配飞书 + Telegram:metrics 连续失败升级的告警必须同时投递到两个端点(广播)
     import json

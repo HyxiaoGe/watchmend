@@ -83,6 +83,18 @@ class Settings(BaseSettings):
         return [p.strip() for p in self.sentinel_providers.split(",") if p.strip()]
 
     @property
+    def vendor_webhook(self) -> str:
+        # 对称回退:vendor 留空但配了 patrol 时,vendor 流(状态页/心跳)复用 patrol 群,
+        # 避免 patrol-only 配置下 vendor broadcaster 为空、状态页事件静默不发(见 build_jobs 校验)。
+        return self.feishu_vendor_webhook or self.feishu_patrol_webhook
+
+    @property
+    def vendor_sign_secret(self) -> str | None:
+        if self.feishu_vendor_webhook:
+            return self.feishu_vendor_sign_secret or None
+        return self.feishu_patrol_sign_secret
+
+    @property
     def patrol_webhook(self) -> str:
         return self.feishu_patrol_webhook or self.feishu_vendor_webhook
 

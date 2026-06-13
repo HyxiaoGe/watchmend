@@ -145,8 +145,8 @@ def build_jobs(
     vendor_broadcaster = _broadcaster_for(
         settings,
         client,
-        webhook=settings.feishu_vendor_webhook,
-        secret=settings.feishu_vendor_sign_secret,
+        webhook=settings.vendor_webhook,
+        secret=settings.vendor_sign_secret,
     )
     patrol_broadcaster = _broadcaster_for(
         settings, client, webhook=settings.patrol_webhook, secret=settings.patrol_sign_secret
