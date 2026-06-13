@@ -929,3 +929,43 @@ async def test_build_jobs_telegram_only_starts(tmp_path, monkeypatch):
     assert [n for n, _, _ in jobs] == ["statuspage", "daily_report"]
     await client.aclose()
     store.close()
+
+
+async def test_alert_fans_out_to_feishu_and_telegram(tmp_path, monkeypatch):
+    # 同时配飞书 + Telegram:metrics 连续失败升级的告警必须同时投递到两个端点(广播)
+    import json
+
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("SENTINEL_TELEGRAM_BOT_TOKEN", "TESTtok123")
+    monkeypatch.setenv("SENTINEL_TELEGRAM_CHAT_ID", "-100200300")
+
+    from sentinel.app import build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    settings = Settings(_env_file=None)
+    client = httpx.AsyncClient()
+    store = Store(settings.sentinel_db_path)
+    jobs = {n: t for n, _, t in build_jobs(settings, client, store)}
+
+    with respx.mock:
+        respx.get("http://prometheus:9090/api/v1/query").mock(return_value=httpx.Response(500))
+        feishu = respx.post("https://open.feishu.cn/hook/T").mock(
+            return_value=httpx.Response(200, json={"code": 0})
+        )
+        tg = respx.post("https://api.telegram.org/botTESTtok123/sendMessage").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
+        for _ in range(3):
+            await jobs["metrics_scan"]()  # 连续 3 次失败 → 升级 scan_failed_prometheus 告警
+    assert feishu.call_count == 1
+    assert tg.call_count == 1  # 同一告警 fan-out 到 Telegram
+    body = json.loads(tg.calls.last.request.content)
+    assert "Prometheus 巡检失败" in body["text"]
+    assert body["text"].startswith("🟠")  # warning 严重度前导 emoji
+    await client.aclose()
+    store.close()

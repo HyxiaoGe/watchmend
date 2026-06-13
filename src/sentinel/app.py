@@ -18,7 +18,6 @@ from sentinel.api import register_routes
 from sentinel.config import Settings
 from sentinel.docker_client import DockerClient
 from sentinel.engine import apply_findings
-from sentinel.feishu.cards import build_diagnosis_card, build_summary_card
 from sentinel.feishu.client import FeishuClient
 from sentinel.fetcher import Fetcher
 from sentinel.findings import (
@@ -32,6 +31,7 @@ from sentinel.findings import (
 from sentinel.llm_driver import LLMDriver
 from sentinel.logql import LokiClient
 from sentinel.notify.base import Broadcaster
+from sentinel.notify.build import diagnosis_notification, summary_notification
 from sentinel.notify.feishu_channel import FeishuChannel
 from sentinel.notify.ntfy import NtfyChannel
 from sentinel.notify.telegram import TelegramChannel
@@ -147,9 +147,6 @@ def build_jobs(
         client,
         webhook=settings.feishu_vendor_webhook,
         secret=settings.feishu_vendor_sign_secret,
-    )
-    patrol_feishu = FeishuClient(
-        client, settings.patrol_webhook, secret=settings.patrol_sign_secret
     )
     patrol_broadcaster = _broadcaster_for(
         settings, client, webhook=settings.patrol_webhook, secret=settings.patrol_sign_secret
@@ -364,11 +361,11 @@ def build_jobs(
                     status="done",
                     diagnosis_json=json.dumps(diagnosis, ensure_ascii=False),
                 )
-                try:  # 卡片尽力而为:诊断已落库,发卡失败不回滚
-                    card = build_diagnosis_card(event, diagnosis, now_str=now_str)
-                    await patrol_feishu.send(card)
-                except Exception:
-                    logger.exception("diagnosis card send failed (event %d)", event.id)
+                # 通知尽力而为:诊断已落库,广播失败不回滚(Broadcaster 内部已逐渠道记日志)
+                now_ts_diag, _, _ = _now()
+                await patrol_broadcaster.send(
+                    diagnosis_notification(event, diagnosis, now_ts=now_ts_diag, now_str=now_str)
+                )
             else:
                 store.set_diagnosis(
                     event.id,
@@ -416,8 +413,11 @@ def build_jobs(
                 }
                 text = await driver.summarize(data)
                 if text:
-                    card = build_summary_card(text[:1000], date_str=date_str, now_str=now_str)
-                    await patrol_feishu.send(card)
+                    await patrol_broadcaster.send(
+                        summary_notification(
+                            text[:1000], date_str=date_str, now_ts=now_ts, now_str=now_str
+                        )
+                    )
             except Exception:
                 logger.exception("daily AI summary failed")
 
