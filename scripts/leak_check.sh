@@ -24,9 +24,12 @@ if [ -f scripts/leak_patterns.local ]; then
 fi
 
 joined="$(IFS='|'; echo "${PATTERNS[*]}")"
+# docs/superpowers/ 是 gitignore 的内部规划目录(永不发布),其计划文档含本机绝对路径,
+# 会误触 /Users 模式;发布门禁只看会公开的内容,故排除。
 if grep -rnE "$joined" . \
     --exclude-dir=.git --exclude-dir=.venv --exclude-dir=data \
     --exclude-dir=__pycache__ --exclude-dir=.pytest_cache --exclude-dir=.ruff_cache \
+    --exclude-dir=superpowers \
     --exclude=leak_check.sh --exclude=leak_patterns.local; then
     echo "leak-check: 发现敏感串(见上),禁止发布" >&2
     exit 1
