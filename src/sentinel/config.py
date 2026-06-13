@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    feishu_vendor_webhook: str
+    feishu_vendor_webhook: str = ""  # CHANGED: 不再必填;至少配一个通知渠道即可(build_jobs 校验)
     feishu_vendor_sign_secret: str | None = None
     sentinel_providers: str = "anthropic,openai,github,cloudflare,google_cloud"
     sentinel_poll_interval: int = 60
@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     sentinel_docker_scan_interval: int = 60  # docker_scan 周期(秒)
     sentinel_docker_exclude: str = ""  # 排除的容器名 CSV
 
+    # 通知渠道(子项目②):全部默认空=不启用。飞书之外,海外自托管可只配任一渠道。
+    sentinel_telegram_bot_token: str = ""  # 与 chat_id 同时非空才启用
+    sentinel_telegram_chat_id: str = ""  # 群组为负数,原样字符串
+    sentinel_ntfy_url: str = ""  # 完整 topic URL,如 https://ntfy.sh/my-watchmend-xyz
+    sentinel_ntfy_token: str = ""  # 可选 Bearer(受保护 topic / 自建)
+    sentinel_webhook_url: str = ""  # 通用 webhook 端点(机器消费 JSON)
+    sentinel_webhook_token: str = ""  # 可选 Bearer
+
     @property
     def providers_list(self) -> list[str]:
         return [p.strip() for p in self.sentinel_providers.split(",") if p.strip()]
@@ -112,3 +120,19 @@ class Settings(BaseSettings):
     @property
     def docker_exclude_list(self) -> list[str]:
         return [x.strip() for x in self.sentinel_docker_exclude.split(",") if x.strip()]
+
+    @property
+    def feishu_enabled(self) -> bool:
+        return bool(self.feishu_vendor_webhook or self.feishu_patrol_webhook)
+
+    @property
+    def telegram_enabled(self) -> bool:
+        return bool(self.sentinel_telegram_bot_token and self.sentinel_telegram_chat_id)
+
+    @property
+    def ntfy_enabled(self) -> bool:
+        return bool(self.sentinel_ntfy_url)
+
+    @property
+    def webhook_enabled(self) -> bool:
+        return bool(self.sentinel_webhook_url)

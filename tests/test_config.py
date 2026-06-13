@@ -112,3 +112,39 @@ def test_docker_exclude_list_parses_csv(monkeypatch):
     monkeypatch.setenv("SENTINEL_DOCKER_EXCLUDE", " a-svc, ,b-svc ")
     s = Settings(_env_file=None)
     assert s.docker_exclude_list == ["a-svc", "b-svc"]
+
+
+def test_feishu_vendor_webhook_now_optional(monkeypatch):
+    # 不再必填:不设 FEISHU_VENDOR_WEBHOOK 也能构造 Settings(由 build_jobs 校验至少一渠道)
+    monkeypatch.delenv("FEISHU_VENDOR_WEBHOOK", raising=False)
+    s = Settings(_env_file=None)
+    assert s.feishu_vendor_webhook == ""
+    assert s.feishu_enabled is False
+
+
+def test_channel_enabled_flags(monkeypatch):
+    monkeypatch.delenv("FEISHU_VENDOR_WEBHOOK", raising=False)
+    monkeypatch.setenv("SENTINEL_TELEGRAM_BOT_TOKEN", "TESTtok")
+    monkeypatch.setenv("SENTINEL_TELEGRAM_CHAT_ID", "-100200300")
+    monkeypatch.setenv("SENTINEL_NTFY_URL", "https://ntfy.sh/t")
+    monkeypatch.setenv("SENTINEL_WEBHOOK_URL", "https://hook/x")
+    s = Settings(_env_file=None)
+    assert s.telegram_enabled is True
+    assert s.ntfy_enabled is True
+    assert s.webhook_enabled is True
+    assert s.feishu_enabled is False
+
+
+def test_telegram_needs_both_token_and_chat(monkeypatch):
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://x")
+    monkeypatch.setenv("SENTINEL_TELEGRAM_BOT_TOKEN", "TESTtok")
+    monkeypatch.delenv("SENTINEL_TELEGRAM_CHAT_ID", raising=False)
+    s = Settings(_env_file=None)
+    assert s.telegram_enabled is False  # 缺 chat_id → 不启用
+
+
+def test_feishu_enabled_via_patrol_only(monkeypatch):
+    monkeypatch.delenv("FEISHU_VENDOR_WEBHOOK", raising=False)
+    monkeypatch.setenv("FEISHU_PATROL_WEBHOOK", "https://patrol")
+    s = Settings(_env_file=None)
+    assert s.feishu_enabled is True  # 任一飞书 webhook 即视为启用
