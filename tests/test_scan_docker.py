@@ -331,6 +331,29 @@ async def test_ps_failure_propagates(settings):
         await run_docker_scan(docker, settings, now_ts=1_780_000_000, emit_oom=True)
 
 
+async def test_all_inspects_fail_raises_as_scan_failure(settings):
+    # 候选 >=2 且 inspect 全失败 = 系统性故障(代理 ACL/socket 权限/API 变更),
+    # 不是单容器竞态 → 向上抛,由 docker_tick 当连续失败升级 scan_failed_docker,
+    # 不静默吞成空 active(否则 open 的容器事件会被"消失=恢复"假绿卡)
+    docker = FakeDocker(
+        [_ps_row("a"), _ps_row("b")],
+        {"a": RuntimeError("inspect boom"), "b": RuntimeError("inspect boom")},
+    )
+    with pytest.raises(RuntimeError, match="all 2 container inspects failed"):
+        await run_docker_scan(docker, settings, now_ts=1_780_000_000, emit_oom=True)
+
+
+async def test_single_inspect_failure_tolerated_not_raised(settings):
+    # 单个候选 inspect 失败按竞态容忍(扫描期间被删很常见):返回空,不抛
+    findings, active = await _scan(
+        settings,
+        [_ps_row("solo")],
+        {"solo": RuntimeError("inspect boom")},
+    )
+    assert findings == []
+    assert active == set()
+
+
 async def test_dead_status_fires_down(settings):
     # docker 的 dead 状态(不可恢复)与 exited 同等处理 → container_down
     findings, active = await _scan(
