@@ -67,7 +67,11 @@ def test_enabled_needs_both_url_and_model(monkeypatch):
 
 async def test_diagnose_runs_tool_loop(monkeypatch):
     settings = _settings(
-        monkeypatch, LLM_BASE_URL="http://llm.test/v1", LLM_MODEL="m", LLM_API_KEY="sk-test-key"
+        monkeypatch,
+        LLM_BASE_URL="http://llm.test/v1",
+        LLM_MODEL="m",
+        LLM_API_KEY="sk-test-key",
+        SENTINEL_PROMETHEUS_URL="http://prometheus:9090",
     )
     async with httpx.AsyncClient() as client:
         driver = LLMDriver(client, settings)
@@ -109,7 +113,12 @@ async def test_diagnose_runs_tool_loop(monkeypatch):
 
 async def test_tool_failure_fed_back_not_raised(monkeypatch):
     # 工具失败(prom 500)不打断诊断:错误文本回给模型继续推理
-    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm.test/v1", LLM_MODEL="m")
+    settings = _settings(
+        monkeypatch,
+        LLM_BASE_URL="http://llm.test/v1",
+        LLM_MODEL="m",
+        SENTINEL_PROMETHEUS_URL="http://prometheus:9090",
+    )
     async with httpx.AsyncClient() as client:
         driver = LLMDriver(client, settings)
         with respx.mock:
@@ -136,7 +145,12 @@ async def test_tool_failure_fed_back_not_raised(monkeypatch):
 
 
 async def test_unknown_tool_and_bad_args(monkeypatch):
-    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm.test/v1", LLM_MODEL="m")
+    settings = _settings(
+        monkeypatch,
+        LLM_BASE_URL="http://llm.test/v1",
+        LLM_MODEL="m",
+        SENTINEL_PROMETHEUS_URL="http://prometheus:9090",
+    )
     async with httpx.AsyncClient() as client:
         driver = LLMDriver(client, settings)
         assert (await driver._run_tool("no_such", {})).startswith("unknown tool")
@@ -191,7 +205,12 @@ async def test_summarize_single_round(monkeypatch):
 
 
 async def test_loki_logs_formats_lines(monkeypatch):
-    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm.test/v1", LLM_MODEL="m")
+    settings = _settings(
+        monkeypatch,
+        LLM_BASE_URL="http://llm.test/v1",
+        LLM_MODEL="m",
+        SENTINEL_LOKI_URL="http://loki:3100",
+    )
     payload = {
         "status": "success",
         "data": {

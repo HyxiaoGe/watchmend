@@ -42,6 +42,8 @@ async def test_build_jobs_assembles_five_jobs(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(yaml_path))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "http://loki:3100")
 
     from sentinel.app import build_jobs
     from sentinel.config import Settings
@@ -95,6 +97,7 @@ async def test_build_jobs_partial_datasources(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(yaml_path))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
     monkeypatch.setenv("SENTINEL_LOKI_URL", "")
 
     from sentinel.app import build_jobs
@@ -207,6 +210,8 @@ async def test_metrics_and_log_ticks_execute(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(yaml_path))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "http://loki:3100")
 
     import httpx
     import respx
@@ -241,6 +246,7 @@ async def test_metrics_scan_consecutive_failures_escalate_to_card(tmp_path, monk
         encoding="utf-8",
     )
     monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(yaml_path))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
 
     import json
 
@@ -289,6 +295,7 @@ async def test_middleware_unconfigured_keeps_open_event(tmp_path, monkeypatch):
     monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
     monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
     monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
     monkeypatch.setenv("SENTINEL_LOKI_URL", "")
 
     from sentinel.app import build_jobs
@@ -472,6 +479,7 @@ async def test_log_scan_consecutive_failures_escalate_to_card(tmp_path, monkeypa
         encoding="utf-8",
     )
     monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(yaml_path))
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "http://loki:3100")
 
     import json
 
@@ -515,6 +523,7 @@ async def test_open_scan_failed_event_not_falsely_recovered_after_restart(tmp_pa
         encoding="utf-8",
     )
     monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(yaml_path))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
 
     import httpx
     import respx
