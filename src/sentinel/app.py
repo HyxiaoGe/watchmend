@@ -13,6 +13,7 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI
 
+from sentinel import discover
 from sentinel.api import register_routes
 from sentinel.config import Settings
 from sentinel.docker_client import DockerClient
@@ -410,6 +411,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     # load_targets 在此与 build_jobs 各调一次(读同一 yaml,幂等),可接受
     app.state.services = [t.name for t in _load_targets_or_disable(settings.sentinel_services_file)]
+    # 环境自动发现(MVP:仅日志建议):扫描容器镜像指纹,提示未启用的数据源接法。
+    for msg in await discover.probe(docker, settings):
+        logger.info(msg)
     logger.info("sentinel started, jobs=%s", [name for name, _, _ in jobs])
     tasks = [asyncio.create_task(_job_loop(name, interval, tick)) for name, interval, tick in jobs]
     try:
