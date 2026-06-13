@@ -15,11 +15,19 @@ from fastapi import FastAPI
 
 from sentinel.api import register_routes
 from sentinel.config import Settings
+from sentinel.docker_client import DockerClient
 from sentinel.engine import apply_findings
 from sentinel.feishu.cards import build_diagnosis_card, build_summary_card
 from sentinel.feishu.client import FeishuClient
 from sentinel.fetcher import Fetcher
-from sentinel.findings import LOG_RULES, METRICS_RULES, PROBE_RULES, Finding
+from sentinel.findings import (
+    DOCKER_OPEN_RULES,
+    DOCKER_RULES,
+    LOG_RULES,
+    METRICS_RULES,
+    PROBE_RULES,
+    Finding,
+)
 from sentinel.llm_driver import LLMDriver
 from sentinel.logql import LokiClient
 from sentinel.poller import PollState, run_cycle, run_heartbeat
@@ -28,6 +36,7 @@ from sentinel.probe_rules import evaluate_probe_rules
 from sentinel.promql import PromClient
 from sentinel.registry import build_adapters
 from sentinel.report import build_daily_stats, report_due, run_daily_report
+from sentinel.scan_docker import run_docker_scan
 from sentinel.scan_hygiene import run_hygiene
 from sentinel.scan_logs import run_log_scan
 from sentinel.scan_metrics import run_metrics_scan
@@ -80,7 +89,10 @@ def _load_targets_or_disable(path: str):
 
 
 def build_jobs(
-    settings: Settings, client: httpx.AsyncClient, store: Store
+    settings: Settings,
+    client: httpx.AsyncClient,
+    store: Store,
+    docker: DockerClient | None = None,
 ) -> list[tuple[str, float, Tick]]:
     """组装全部 Job:(名称, 周期秒, tick)。lifespan 据此为每个 Job 起独立任务。"""
     adapters = build_adapters(settings.providers_list)
@@ -96,9 +108,14 @@ def build_jobs(
     service_names = [t.name for t in targets]
     prom = PromClient(client, settings.sentinel_prometheus_url)
     loki = LokiClient(client, settings.sentinel_loki_url)
-    driver = LLMDriver(client, settings)
+    driver = LLMDriver(client, settings, docker)
     cooldown_seconds = settings.sentinel_cooldown_hours * 3600
-    scan_fails = {"metrics": 0, "logs": 0}  # 数据源连续失败计数(进程内,重启清零)
+    # _prom_enabled 决定 docker 层是否发 OOM 卡:prom 在则交给 prom 的 container_oom 规则,
+    # docker 层只观测不重复发(emit_oom = not _prom_enabled),避免同一 OOM 双卡。
+    _prom_enabled = bool(settings.sentinel_prometheus_url)
+    scan_fails = {"metrics": 0, "logs": 0, "docker": 0}  # 数据源连续失败计数(进程内,重启清零)
+    if settings.sentinel_docker_socket and not settings.sentinel_docker_host:
+        logger.warning("SENTINEL_DOCKER_SOCKET 已弃用,请改用 SENTINEL_DOCKER_HOST")
     if settings.sentinel_middleware_metrics and not settings.sentinel_prometheus_url:
         logger.warning(
             "SENTINEL_MIDDLEWARE_METRICS 已配置但 SENTINEL_PROMETHEUS_URL 为空,"
@@ -227,6 +244,48 @@ def build_jobs(
             cooldown_seconds=cooldown_seconds,
         )
 
+    async def docker_tick() -> None:
+        now_ts, now_str, _ = _now()
+        # 同 metrics_tick 的 scope 纪律:try 只裹 ps/scan,失败计数未达阈值时
+        # scan_failed_docker 不进 scope,避免重启清零后首轮把 open 的巡检失败事件假恢复。
+        scope: set[str] = set()
+        findings: list[Finding] = []
+        # hold:open 的容器事件,本轮 active 列表里已不见其 subject(容器消失/被过滤)
+        # → 跳过恢复判定,不发假绿卡;只有 subject 重新进 active 且本轮无 finding 才判恢复。
+        hold: set[tuple[str, str]] = set()
+        try:
+            findings, active = await run_docker_scan(
+                docker, settings, now_ts=now_ts, emit_oom=not _prom_enabled
+            )
+            scan_fails["docker"] = 0
+            scope |= DOCKER_RULES | {"scan_failed_docker"}
+            for e in store.get_open_events():
+                if e.rule in DOCKER_OPEN_RULES and e.subject not in active:
+                    hold.add((e.rule, e.subject))
+        except Exception:
+            scan_fails["docker"] += 1
+            logger.exception("docker scan failed (consecutive=%d)", scan_fails["docker"])
+        if scan_fails["docker"] >= settings.sentinel_scan_fail_threshold:
+            scope.add("scan_failed_docker")
+            findings.append(
+                Finding(
+                    rule="scan_failed_docker",
+                    subject="docker_scan",
+                    severity="warning",
+                    detail=f"docker 巡检连续失败 {scan_fails['docker']} 次,容器检测停摆",
+                )
+            )
+        await apply_findings(
+            findings,
+            scope=scope,
+            store=store,
+            feishu=patrol_feishu,
+            now_ts=now_ts,
+            now_str=now_str,
+            cooldown_seconds=cooldown_seconds,
+            hold=hold,
+        )
+
     async def diag_tick() -> None:
         # 容器内直连诊断:与宿主机 openclaw 编排(host/ 三件套)二选一,
         # 同抢 pending 队列,两条路径都开会重复诊断
@@ -317,6 +376,8 @@ def build_jobs(
         jobs.append(("metrics_scan", settings.sentinel_scan_interval, metrics_tick))
     if settings.sentinel_loki_url:
         jobs.append(("log_scan", settings.sentinel_scan_interval, logs_tick))
+    if docker is not None:
+        jobs.append(("docker_scan", settings.sentinel_docker_scan_interval, docker_tick))
     if driver.enabled:
         jobs.append(("diagnosis", settings.sentinel_diag_interval, diag_tick))
     return jobs
@@ -327,12 +388,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = Settings()
     client = httpx.AsyncClient()
     store = Store(settings.sentinel_db_path)
+    # docker_endpoint 空 → 不启用容器扫描层(挂 socket 等于宿主机级权限,默认关)。
+    # lifespan 持有并负责关闭 DockerClient;LLMDriver/docker_tick 只借用不拥有。
+    docker = DockerClient(settings.docker_endpoint) if settings.docker_endpoint else None
     try:
-        jobs = build_jobs(settings, client, store)
+        jobs = build_jobs(settings, client, store, docker)
     except Exception:
         # 启动期组装失败(如 services.yaml 缺失):收尾资源后让进程带着清晰报错退出
         await client.aclose()
         store.close()
+        if docker is not None:
+            await docker.aclose()
         raise
     # Phase 3 API 依赖注入:编排脚本经宿主机 127.0.0.1:8765 调用。
     # patrol_feishu 与 build_jobs 闭包内实例是两份(节流互不感知):诊断卡/总结卡
@@ -356,6 +422,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await task
         await client.aclose()
         store.close()
+        if docker is not None:
+            await docker.aclose()
 
 
 app = FastAPI(title="WatchMend", lifespan=lifespan)
