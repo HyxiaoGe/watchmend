@@ -68,6 +68,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ev.scanfail": "数据源故障·非恢复绿卡",
         "footer.notify": "通知:{channels}",
         "footer.none": "无",
+        "footer.docker_readonly": "(只读)",
+        "footer.env": "env 遮蔽 ",
+        "ev.notfound": "事件不存在",
+        "ev.notfound_hint": "没有找到该事件,可能已被清理或 id 有误。",
+        "ev.commands": "建议命令(永不自动执行)",
         "footer.readonly": "只读 · localhost-only · env 值全遮蔽 · 建议命令永不自动执行",
     },
     "en": {
@@ -131,6 +136,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ev.scanfail": "data-source failure · not a recovery",
         "footer.notify": "Channels: {channels}",
         "footer.none": "none",
+        "footer.docker_readonly": "(read-only)",
+        "footer.env": "env redacted ",
+        "ev.notfound": "Event not found",
+        "ev.notfound_hint": "No such event — it may have been pruned, or the id is wrong.",
+        "ev.commands": "Suggested commands (never auto-run)",
         "footer.readonly": "read-only · localhost-only · env values redacted · "
         "suggested commands never auto-run",
     },

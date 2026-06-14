@@ -441,3 +441,42 @@ async def test_services_cap_expand_collapse(tmp_path, monkeypatch):
     r_all = await _get(app, "/?svc_all=1")
     assert "svc4" in r_all.text  # 展开后全列
     store.close()
+
+
+async def test_overview_en_no_chinese_footer_leak(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    r = await _get(app, "/?lang=en")
+    assert "(read-only)" in r.text  # footer.docker_readonly en
+    assert "(只读)" not in r.text  # 不再泄漏中文
+    store.close()
+
+
+async def test_event_detail_404_per_lang(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    r_en = await _get(app, "/event/999999?lang=en")
+    assert r_en.status_code == 404
+    assert "Event not found" in r_en.text  # ev.notfound en
+    assert "事件不存在" not in r_en.text  # 不再中英混排
+    r_zh = await _get(app, "/event/999999?lang=zh")
+    assert r_zh.status_code == 404
+    assert "事件不存在" in r_zh.text  # zh 仍正常
+    store.close()
+
+
+async def test_overview_today_nodata_tooltip(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    yesterday = (datetime.now(tz).date() - timedelta(days=1)).isoformat()
+    # 有历史日数据使服务出现,但今天无样本 → 今日格 nodata
+    store.upsert_probe_daily("api", yesterday, total=10, ok_count=10, p50=1.0, p95=2.0)
+    app = _build_app(store, settings)
+    r = await _get(app, "/")
+    assert "暂无样本" in r.text  # tip.today_nodata zh,今日无数据专属提示
+    store.close()

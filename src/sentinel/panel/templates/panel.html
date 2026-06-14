@@ -34,7 +34,7 @@
     </div>
     <div class="upbar">
       {% for d in svc.days %}
-      <i class="{{ d.state }}" title="{{ d.date }} · {{ t('st.' ~ d.state) }}{% if d.uptime_pct is not none %} · {{ d.uptime_pct }}%{% endif %}{% if d.is_today %} · {{ t('tip.today') }}{% endif %}"></i>
+      <i class="{{ d.state }}" title="{{ d.date }} · {{ t('st.' ~ d.state) }}{% if d.uptime_pct is not none %} · {{ d.uptime_pct }}%{% endif %}{% if d.is_today %} · {% if d.uptime_pct is none %}{{ t('tip.today_nodata') }}{% else %}{{ t('tip.today') }}{% endif %}{% endif %}"></i>
       {% endfor %}
     </div>
     <div class="comp-ax">
@@ -117,7 +117,7 @@
 </div>
 {% endif %}
 
-<div class="footer mono">docker:{{ posture.docker.mode }}{% if posture.docker.read_only %}(只读){% endif %} ·
+<div class="footer mono">docker:{{ posture.docker.mode }}{% if posture.docker.read_only %}{{ t('footer.docker_readonly') }}{% endif %} ·
   {{ t('footer.notify', channels=posture.channels|join('、') if posture.channels else t('footer.none')) }} ·
-  {% if posture.env_redaction %}env {% for r in posture.env_redaction %}{{ r.subject }} {{ r.count }}{% if not loop.last %}、{% endif %}{% endfor %}{% endif %}</div>
+  {% if posture.env_redaction %}{{ t('footer.env') }}{% for r in posture.env_redaction %}{{ r.subject }} {{ r.count }}{% if not loop.last %}、{% endif %}{% endfor %}{% endif %}</div>
 {% endblock %}

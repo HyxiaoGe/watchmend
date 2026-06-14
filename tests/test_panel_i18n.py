@@ -65,6 +65,11 @@ def test_new_template_keys_present():
         "ev.scanfail",
         "footer.notify",
         "footer.none",
+        "footer.docker_readonly",
+        "footer.env",
+        "ev.notfound",
+        "ev.notfound_hint",
+        "ev.commands",
     }
     for k in needed:
         assert k in i18n.MESSAGES["zh"], f"zh missing {k}"

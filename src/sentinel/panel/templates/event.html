@@ -3,8 +3,8 @@
 {% block body %}
 <p><a href="/">← {{ t('nav.latest') }}</a></p>
 {% if detail is none %}
-<h1>事件不存在 / Not found</h1>
-<p class="muted">没有找到该事件,可能已被清理或 id 有误。 / No such event.</p>
+<h1>{{ t('ev.notfound') }}</h1>
+<p class="muted">{{ t('ev.notfound_hint') }}</p>
 {% else %}
 {% set e = detail.event %}
 <h1>{{ e.subject }} · {{ rule_label(e.rule, lang) }}
@@ -35,7 +35,7 @@
 {% endfor %}
 
 {% if detail.diagnosis and detail.diagnosis.suggested_commands %}
-<h2>{{ t('footer.readonly') }}</h2>
+<h2>{{ t('ev.commands') }}</h2>
 <pre>{% for c in detail.diagnosis.suggested_commands %}{{ c }}
 {% endfor %}</pre>
 {% endif %}
