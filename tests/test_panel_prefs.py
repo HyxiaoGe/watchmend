@@ -24,10 +24,15 @@ def test_resolve_window():
     assert prefs.resolve_window("30", None, history_days=90) == 30
     assert prefs.resolve_window("90", None, history_days=90) == 90
     assert prefs.resolve_window(None, "30", history_days=90) == 30
-    assert prefs.resolve_window(None, None, history_days=90) == 90  # 默认 = 上限
-    assert prefs.resolve_window("999", None, history_days=90) == 90  # 非法 → 默认
+    assert prefs.resolve_window(None, None, history_days=90) == 90  # 不传 default → 上限(兼容)
+    assert prefs.resolve_window("999", None, history_days=90) == 90  # 非法 → 回退
     # history_days=30 时，30 即唯一上限
     assert prefs.resolve_window("90", None, history_days=30) == 30
+    # 配置默认(在允许集内)：无 query/cookie 时采用
+    assert prefs.resolve_window(None, None, history_days=90, default=30) == 30
+    assert prefs.resolve_window("90", None, history_days=90, default=30) == 90  # query 仍优先
+    assert prefs.resolve_window(None, "30", history_days=90, default=90) == 30  # cookie 优先于默认
+    assert prefs.resolve_window(None, None, history_days=90, default=999) == 90  # 默认越界→回退上限
 
 
 def test_resolve_page():

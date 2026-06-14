@@ -5,10 +5,16 @@
 <div class="banner {{ 'ok' if posture.open_count == 0 else 'bad' }}">
   <span class="pulse"></span>
   {% if posture.open_count == 0 %}
-  <span class="big">{{ t('banner.ok', probes=probes, open=0, days=window_days) }}</span>
+  <span class="big">{{ t('banner.ok') }}</span>
   {% else %}
-  <span class="big">{{ t('banner.issues', open=posture.open_count, probes=probes) }}</span>
+  <span class="big">{{ t('banner.issues', open=posture.open_count) }}</span>
   {% endif %}
+  <span class="metrics mono">
+    <span><b>{{ probes }}</b> {{ t('metric.probes') }}</span>
+    <span><b>{{ posture.open_count }}</b> {{ t('metric.open') }}</span>
+    <span><b>{{ posture.resolved_24h }}</b> {{ t('metric.recovered') }}</span>
+    <span>{{ t('metric.window', days=window_days) }}</span>
+  </span>
 </div>
 
 <div class="secrow">
@@ -98,11 +104,11 @@
   {% if e.summary or e.has_evidence %}
   <details>
     <summary class="chip ai">🧠 {{ t('ev.ai') }}</summary>
-    {% if e.summary %}<div class="diag"><div class="lbl">{{ t('ev.summary') }}</div><div class="body">{{ e.summary }}</div></div>{% endif %}
-    <p><a href="/event/{{ e.id }}">{{ t('ev.detail') }}</a></p>
+    {% if e.summary %}<div class="diag">{% if lang != diag_lang %}<div class="diag-lang">{{ t('ev.diag_lang', lang=diag_lang) }}</div>{% endif %}<div class="lbl">{{ t('ev.summary') }}</div><div class="body">{{ e.summary }}</div></div>{% endif %}
+    <p><a href="{{ eurl(e.id) }}">{{ t('ev.detail') }}</a></p>
   </details>
   {% else %}
-  <p><a href="/event/{{ e.id }}">{{ t('ev.detail') }}</a></p>
+  <p><a href="{{ eurl(e.id) }}">{{ t('ev.detail') }}</a></p>
   {% endif %}
 </div>
 {% else %}

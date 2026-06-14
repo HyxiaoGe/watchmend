@@ -1,7 +1,7 @@
 {% extends "_base.html" %}
 {% block title %}{{ t('hdr.title') }}{% endblock %}
 {% block body %}
-<p><a href="/">← {{ t('nav.latest') }}</a></p>
+<p><a href="{{ back_url }}">← {{ t('nav.latest') }}</a></p>
 {% if detail is none %}
 <h1>{{ t('ev.notfound') }}</h1>
 <p class="muted">{{ t('ev.notfound_hint') }}</p>
@@ -16,6 +16,7 @@
 <div class="muted">{{ t('host.llm.off') }}</div>
 {% elif detail.diagnosis %}
 <h2>{{ t('ev.ai') }}{% if detail.diagnosis.confidence %} · {{ detail.diagnosis.confidence }}{% endif %}</h2>
+{% if lang != diag_lang %}<p class="diag-lang">{{ t('ev.diag_lang', lang=diag_lang) }}</p>{% endif %}
 {% if detail.diagnosis.root_cause %}<p><span class="vio">{{ t('ev.summary') }}:</span> {{ detail.diagnosis.root_cause }}</p>{% endif %}
 {% if detail.diagnosis.summary %}<p>{{ detail.diagnosis.summary }}</p>{% endif %}
 {% if detail.diagnosis.evidence %}<ul>{% for item in detail.diagnosis.evidence %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}

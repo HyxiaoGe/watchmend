@@ -14,6 +14,9 @@ from sentinel.store import Store
 
 _REFRESH_SECONDS = 30
 _DAY_SECONDS = 24 * 3600
+# 健康行排序权重：现态(今日格)最坏者优先，使被 services_cap 截断后仍先露出需关注的服务。
+# nodata 排最后(刚开始采样的服务不抢占注意力)。同权重内按服务名稳定排序。
+_STATE_RANK = {"down": 0, "partial": 1, "degraded": 2, "ok": 3, "nodata": 4}
 # 自身/代理永不计入“在监容器”(与 scan_docker 同口径:按镜像子串识别,兼容 registry 前缀)
 _SELF_IMAGE_SUBSTR = "watchmend"
 _SOCKET_PROXY_IMAGE = "tecnativa/docker-socket-proxy"
@@ -250,6 +253,14 @@ def _service_health_bars(
                 "days": days,
             }
         )
+    # 现态最坏优先（今日格状态），同权重内按服务名；保证 services_cap 截断后先露出问题服务。
+    # days 在 window_days<=0 的误配下会为空(range(0))；空则按 nodata 收尾，绝不 IndexError 崩整页。
+    bars.sort(
+        key=lambda b: (
+            _STATE_RANK.get(b["days"][-1]["state"] if b["days"] else "nodata", 5),
+            b["service"],
+        )
+    )
     return bars
 
 

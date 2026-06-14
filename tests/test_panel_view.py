@@ -483,6 +483,51 @@ async def test_build_overview_engine_unknown_when_never_probed(tmp_path, monkeyp
     store.close()
 
 
+async def test_health_bars_sorted_worst_first(tmp_path, monkeypatch):
+    # 健康柱条按"今日现态最坏优先"排序，同状态内按服务名；
+    # 服务名故意与期望顺序逆排，证明排序键是状态而非字母序（issue #11）。
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+
+    def _samples(service, n_ok, n_fail):
+        out = []
+        for i in range(n_ok):
+            out.append(
+                ProbeSample(
+                    ts=NOW_TS - 100 - i,
+                    service=service,
+                    ok=True,
+                    status_code=200,
+                    latency_ms=10.0,
+                )
+            )
+        for i in range(n_fail):
+            out.append(
+                ProbeSample(
+                    ts=NOW_TS - 200 - i,
+                    service=service,
+                    ok=False,
+                    status_code=500,
+                    latency_ms=None,
+                )
+            )
+        return out
+
+    store.add_probe_samples(
+        _samples("aaa", 2, 0)  # 100% → ok（字母最前）
+        + _samples("bbb", 2, 0)  # 100% → ok（同状态，名次后）
+        + _samples("mmm", 4, 1)  # 80% → partial
+        + _samples("zzz", 1, 2)  # 33% → down（字母最后）
+    )
+    ov = await view.build_overview(store, settings, now=NOW, docker=None, window_days=30)
+    order = [b["service"] for b in ov["health"]]
+    # down → partial → ok(aaa) → ok(bbb)：状态主序、同状态内字母次序
+    assert order == ["zzz", "mmm", "aaa", "bbb"]
+    assert ov["health"][0]["days"][-1]["state"] == "down"
+    assert ov["health"][1]["days"][-1]["state"] == "partial"
+    store.close()
+
+
 async def test_build_overview_event_feed_pagination(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
