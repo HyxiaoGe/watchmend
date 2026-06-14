@@ -6,7 +6,10 @@ import respx
 
 from sentinel.docker_client import DockerClient
 from sentinel.findings import EventRecord
+from sentinel.llm_config import LLMProfile
 from sentinel.llm_driver import LLMDriver, parse_diagnosis
+
+PROFILE = LLMProfile(name="t", base_url="http://llm.test/v1", api_key="sk-test-key", model="m")
 
 LLM_URL = "http://llm.test/v1/chat/completions"
 
@@ -52,19 +55,6 @@ def _llm_message(content=None, tool_calls=None):
     return httpx.Response(200, json={"choices": [{"message": msg}]})
 
 
-def test_disabled_without_config(monkeypatch):
-    settings = _settings(monkeypatch)
-    driver = LLMDriver(httpx.AsyncClient(), settings)
-    assert not driver.enabled
-
-
-def test_enabled_needs_both_url_and_model(monkeypatch):
-    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm.test/v1")
-    assert not LLMDriver(httpx.AsyncClient(), settings).enabled
-    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm.test/v1", LLM_MODEL="m")
-    assert LLMDriver(httpx.AsyncClient(), settings).enabled
-
-
 async def test_diagnose_runs_tool_loop(monkeypatch):
     settings = _settings(
         monkeypatch,
@@ -96,7 +86,7 @@ async def test_diagnose_runs_tool_loop(monkeypatch):
             respx.get("http://prometheus:9090/api/v1/query").mock(
                 return_value=httpx.Response(200, json={"status": "success", "data": {}})
             )
-            diagnosis, raw, _ = await driver.diagnose(_event())
+            diagnosis, raw, _ = await driver.diagnose(_event(), profile=PROFILE)
 
     assert diagnosis == DIAG_JSON
     assert "```json" in raw
@@ -137,7 +127,7 @@ async def test_tool_failure_fed_back_not_raised(monkeypatch):
                 ]
             )
             respx.get("http://prometheus:9090/api/v1/query").mock(return_value=httpx.Response(500))
-            diagnosis, _, _ = await driver.diagnose(_event())
+            diagnosis, _, _ = await driver.diagnose(_event(), profile=PROFILE)
     assert diagnosis == DIAG_JSON
     second = json.loads(llm.calls[1].request.content)
     tool_msg = [m for m in second["messages"] if m["role"] == "tool"][0]
@@ -184,7 +174,7 @@ async def test_rounds_exhausted_forces_final_answer(monkeypatch):
             respx.get("http://prometheus:9090/api/v1/query").mock(
                 return_value=httpx.Response(200, json={"status": "success"})
             )
-            diagnosis, _, _ = await driver.diagnose(_event())
+            diagnosis, _, _ = await driver.diagnose(_event(), profile=PROFILE)
     assert diagnosis == DIAG_JSON
     final = json.loads(llm.calls[1].request.content)
     assert "tools" not in final  # 催结论那轮不再给工具
@@ -197,7 +187,7 @@ async def test_summarize_single_round(monkeypatch):
         driver = LLMDriver(client, settings)
         with respx.mock:
             llm = respx.post(LLM_URL).mock(return_value=_llm_message(content="整体平稳,无异常。"))
-            text = await driver.summarize({"date": "2026-06-12", "services": []})
+            text = await driver.summarize({"date": "2026-06-12", "services": []}, profile=PROFILE)
     assert text == "整体平稳,无异常。"
     body = json.loads(llm.calls[0].request.content)
     assert "tools" not in body  # 总结数据全内联,不需要工具
@@ -316,7 +306,7 @@ async def test_diagnose_captures_tool_calls(monkeypatch):
             respx.get("http://prometheus:9090/api/v1/query").mock(
                 return_value=httpx.Response(200, json={"status": "success", "data": {}})
             )
-            diagnosis, raw, tool_calls = await driver.diagnose(_event())
+            diagnosis, raw, tool_calls = await driver.diagnose(_event(), profile=PROFILE)
     assert diagnosis == DIAG_JSON
     assert "```json" in raw
     assert len(tool_calls) == 1
@@ -357,7 +347,7 @@ async def test_evidence_capped_but_model_gets_full_output(monkeypatch):
             respx.get("http://prometheus:9090/api/v1/query").mock(
                 return_value=httpx.Response(200, text=big)
             )
-            _, _, tool_calls = await driver.diagnose(_event())
+            _, _, tool_calls = await driver.diagnose(_event(), profile=PROFILE)
     # 模型在第二轮收到完整 6000 字符(未被面板的 4096 截断)
     second = json.loads(llm.calls[1].request.content)
     tool_msg = next(m for m in second["messages"] if m["role"] == "tool")
@@ -395,7 +385,7 @@ async def test_diagnose_captures_failed_tool_call(monkeypatch):
                 ]
             )
             respx.get("http://prometheus:9090/api/v1/query").mock(return_value=httpx.Response(500))
-            _, _, tool_calls = await driver.diagnose(_event())
+            _, _, tool_calls = await driver.diagnose(_event(), profile=PROFILE)
     assert tool_calls[0]["ok"] is False
     assert tool_calls[0]["output"].startswith("tool prom_query failed")
 
