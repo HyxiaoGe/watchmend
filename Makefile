@@ -62,9 +62,9 @@ services-yaml-ready:
 # make up/demo 先经此预置空占位 llm.yaml(被 compose 挂进容器);留空=回落 .env 的 LLM_*。
 llm-yaml-ready:
 	@if [ -d llm.yaml ]; then \
-		rmdir llm.yaml; \
-		echo "(已清理 docker 误建的 llm.yaml 空目录)"; fi
-	@if [ ! -f llm.yaml ]; then \
+		rmdir llm.yaml 2>/dev/null && echo "(已清理 docker 误建的 llm.yaml 空目录)" \
+			|| echo "⚠ ./llm.yaml 是非空目录,无法清理;host make llm-init/switch 将无效,请手动处理"; fi
+	@if [ ! -e llm.yaml ]; then \
 		printf '# llm.yaml — WatchMend LLM provider 注册表(可选;空=回落 .env 的 LLM_* 变量)\n# make llm-init 加 provider、make llm-switch name=<x> 切 active;详见 llm.example.yaml\n' > llm.yaml; \
 		echo "(已预置空 llm.yaml 占位:make llm-init 配置容器内直连诊断,或留空走 .env LLM_*)"; fi
 
