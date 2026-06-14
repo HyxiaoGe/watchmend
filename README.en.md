@@ -88,7 +88,7 @@ pointer; edits **hot-reload on the next diagnosis round — no restart**:
 ```yaml
 # llm.yaml (gitignored; see llm.example.yaml)
 active: deepseek       # current diagnoser
-fallback: kimi         # optional: tried once after active exhausts its retries
+fallback: kimi         # optional: tried once after active fails (event diagnosis AND daily summary)
 providers:
   deepseek:
     base_url: https://api.deepseek.com/v1
@@ -106,8 +106,14 @@ make llm-switch name=kimi  # switch active (next round, no restart)
 make llm-list              # show providers and whether keys are ready
 ```
 
-> **Backward compatible**: with no `llm.yaml`, it falls back to the legacy three env
-> vars `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL` (zero breaking). Bad config is always
+> **Docker deployment**: `llm.yaml` is bind-mounted into the container via compose
+> (`./llm.yaml:/app/llm.yaml:ro`), and `make up`/`make demo` scaffold a blank placeholder
+> for you. Running `make llm-init/switch` on the host edits the very file the container
+> reads — it **hot-reloads on the next diagnosis round, no exec into the container, no restart**.
+
+> **Backward compatible**: with no `llm.yaml` (or a blank/comments-only one, like the
+> placeholder `make up` scaffolds), it falls back to the legacy three env vars
+> `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL` (zero breaking). Bad config is always
 > fail-safe: a broken config at startup only disables the LLM layer (deterministic
 > patrol keeps running); breaking `llm.yaml` while running keeps the last good config
 > and never interrupts monitoring. **Enabling the LLM from scratch needs one restart**;

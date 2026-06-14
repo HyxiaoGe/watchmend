@@ -80,7 +80,7 @@ make up                                   # 或 docker compose up -d --build
 ```yaml
 # llm.yaml(gitignored;见 llm.example.yaml)
 active: deepseek       # 当前诊断器
-fallback: kimi         # 可选:active 重试耗尽后再试一轮
+fallback: kimi         # 可选:active 失败后再试一轮(事件诊断与日报 AI 总结都走)
 providers:
   deepseek:
     base_url: https://api.deepseek.com/v1
@@ -98,10 +98,14 @@ make llm-switch name=kimi  # 切 active(下一轮生效,免重启)
 make llm-list            # 看各 provider 与 key 是否就绪
 ```
 
-> **向后兼容**:没有 `llm.yaml` 时回落老三环境变量 `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL`
-> (零 breaking)。坏配置一律 fail-safe:启动时坏配置只关 LLM 层、确定性巡检照跑;运行中
-> 改坏 `llm.yaml` 保留上一份有效配置,不打断监控。**首次从零启用 LLM 需重启一次**;之后
-> 切 provider/改 model 全走热加载。
+> **Docker 部署**:`llm.yaml` 经 compose 挂进容器(`./llm.yaml:/app/llm.yaml:ro`),
+> `make up`/`make demo` 会自动预置一个空占位。宿主机上 `make llm-init/switch` 改的就是
+> 容器读的同一份文件,**下一轮诊断热加载生效——无需进容器、无需重启**。
+
+> **向后兼容**:没有 `llm.yaml`(或它为空/纯注释,如 `make up` 预置的占位)时回落老三
+> 环境变量 `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL`(零 breaking)。坏配置一律 fail-safe:
+> 启动时坏配置只关 LLM 层、确定性巡检照跑;运行中改坏 `llm.yaml` 保留上一份有效配置,
+> 不打断监控。**首次从零启用 LLM 需重启一次**;之后切 provider/改 model 全走热加载。
 
 | 平台 | `LLM_BASE_URL` | `LLM_MODEL` 示例 | 备注 |
 |---|---|---|---|
