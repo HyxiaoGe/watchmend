@@ -187,3 +187,49 @@ async def build_overview(store: Store, settings: Settings, *, now: datetime, doc
             "hygiene_alerts": [_event_view(e, tz) for e in open_events if e.rule in HYGIENE_RULES],
         },
     }
+
+
+def _tool_calls_view(tools_json: str | None) -> list[dict]:
+    if not tools_json:
+        return []
+    try:
+        calls = json.loads(tools_json)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    out: list[dict] = []
+    for c in calls if isinstance(calls, list) else []:
+        if not isinstance(c, dict):
+            continue
+        out.append(
+            {
+                "tool": c.get("tool", "?"),
+                "args_str": json.dumps(c.get("args") or {}, ensure_ascii=False),
+                "output": c.get("output", ""),
+                "ok": bool(c.get("ok")),
+            }
+        )
+    return out
+
+
+def build_event_detail(store: Store, settings: Settings, event_id: int) -> dict | None:
+    """单事件详情 view-model。事件不存在 → None(路由据此 404)。
+    settings 用于 llm_enabled 与时间显示时区(spec §6 签名补 settings)。"""
+    e = store.get_event(event_id)
+    if e is None:
+        return None
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    ev = _event_view(e, tz)
+    ev["detail"] = e.detail
+    diagnosis = None
+    if e.diagnosis_status == "done" and e.diagnosis_json:
+        try:
+            parsed = json.loads(e.diagnosis_json)
+            diagnosis = parsed if isinstance(parsed, dict) else None
+        except (json.JSONDecodeError, TypeError):
+            diagnosis = None
+    return {
+        "event": ev,
+        "llm_enabled": bool(settings.llm_base_url and settings.llm_model),
+        "diagnosis": diagnosis,
+        "tool_calls": _tool_calls_view(e.diagnosis_tools_json),
+    }

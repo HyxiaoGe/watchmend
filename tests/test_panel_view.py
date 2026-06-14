@@ -233,3 +233,66 @@ async def test_build_overview_empty_store_degrades(tmp_path, monkeypatch):
     assert ov["now_str"] == "2026-06-14 14:32"
     assert ov["refresh_seconds"] == 30
     store.close()
+
+
+async def test_build_event_detail_with_evidence(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm/v1", LLM_MODEL="m")
+    store = Store(str(tmp_path / "s.db"))
+    eid = _seed_open(
+        store,
+        "container_down",
+        "postgres",
+        diag={
+            "summary": "OOM",
+            "root_cause": "内存不足",
+            "suggested_commands": ["docker restart postgres"],
+            "confidence": "high",
+        },
+        tools=[
+            {
+                "tool": "docker_logs",
+                "args": {"name": "postgres", "tail": 100},
+                "output": "FATAL: out of memory",
+                "ok": True,
+            }
+        ],
+    )
+    d = view.build_event_detail(store, settings, eid)
+    assert d["llm_enabled"] is True
+    assert d["diagnosis"]["root_cause"] == "内存不足"
+    assert d["tool_calls"][0]["tool"] == "docker_logs"
+    assert d["tool_calls"][0]["args_str"] == json.dumps(
+        {"name": "postgres", "tail": 100}, ensure_ascii=False
+    )
+    assert d["tool_calls"][0]["ok"] is True
+    assert d["tool_calls"][0]["output"] == "FATAL: out of memory"
+    assert d["event"]["detail"] == "postgres detail"
+    store.close()
+
+
+def test_build_event_detail_missing_returns_none(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    assert view.build_event_detail(store, settings, 999999) is None
+    store.close()
+
+
+def test_build_event_detail_no_llm_no_evidence(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)  # llm off
+    store = Store(str(tmp_path / "s.db"))
+    eid = store.insert_event(
+        ts=NOW_TS - 600,
+        rule="disk_usage",
+        subject="/",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    d = view.build_event_detail(store, settings, eid)
+    assert d["llm_enabled"] is False
+    assert d["diagnosis"] is None
+    assert d["tool_calls"] == []
+    store.close()
