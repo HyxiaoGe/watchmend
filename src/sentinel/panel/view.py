@@ -173,6 +173,82 @@ def _hygiene_services(store: Store, *, now_ts: int) -> list[dict]:
     return out
 
 
+def _day_state(
+    uptime_pct: float | None, rules: frozenset[str] | set[str], settings: Settings
+) -> str:
+    """单（服务×天）状态。nodata 优先于一切；其余取最坏 down>partial>degraded>ok。
+    uptime is None（total==0）一律 nodata，绝不当 0%→down。"""
+    if uptime_pct is None:
+        return "nodata"
+    down_event = bool({"service_down", "container_down"} & rules)
+    if down_event or uptime_pct < settings.sentinel_panel_red_uptime_pct:
+        return "down"
+    if uptime_pct < settings.sentinel_panel_partial_uptime_pct or "container_unhealthy" in rules:
+        return "partial"
+    if {"latency_degraded", "mem_pressure"} & rules:
+        return "degraded"
+    return "ok"
+
+
+def _service_health_bars(
+    store: Store,
+    settings: Settings,
+    *,
+    now_ts: int,
+    tz: timezone,
+    window_days: int,
+    today_samples: list,
+) -> list[dict]:
+    """每服务一行 N 天逐日健康柱条。
+    返回 [{service, uptime_pct, p95_ms, days:[{date, state, is_today, uptime_pct}]}]。
+    days 左=最早、右=今天；历史取 probe_daily，今天用实时聚合；缺行/零样本 → nodata。
+    服务集从数据派生（probe_daily 服务 ∪ 今日样本服务），不解析 services.yaml。
+    事件按 (date_local, subject) 一次性索引，逐格 O(1) 命中。"""
+    today_local = datetime.fromtimestamp(now_ts, tz).date()
+    start_date = today_local - timedelta(days=window_days - 1)
+    daily = store.get_probe_daily_since(start_date.isoformat())
+    services = sorted({r.service for r in daily} | {s.service for s in today_samples})
+    today_stats = {st.service: st for st in aggregate_window(today_samples, services)}
+    # 当天事件索引：date_local 用同一 tz 换算，与 probe_daily.date 同口径
+    ev_idx: dict[tuple[str, str], set[str]] = {}
+    for e in store.get_events_since(now_ts - window_days * _DAY_SECONDS):
+        d = datetime.fromtimestamp(e.ts, tz).date().isoformat()
+        ev_idx.setdefault((d, e.subject), set()).add(e.rule)
+    daily_idx = {(r.service, r.date): r for r in daily}
+    bars: list[dict] = []
+    for svc in services:
+        days: list[dict] = []
+        for i in range(window_days):
+            day = start_date + timedelta(days=i)
+            ds = day.isoformat()
+            is_today = day == today_local
+            if is_today:
+                st = today_stats.get(svc)
+                uptime = st.uptime_pct if (st and st.total) else None
+            else:
+                row = daily_idx.get((svc, ds))
+                uptime = (row.ok_count / row.total * 100) if (row and row.total) else None
+            state = _day_state(uptime, ev_idx.get((ds, svc), frozenset()), settings)
+            days.append(
+                {
+                    "date": ds,
+                    "state": state,
+                    "is_today": is_today,
+                    "uptime_pct": round(uptime, 1) if uptime is not None else None,
+                }
+            )
+        st = today_stats.get(svc)
+        bars.append(
+            {
+                "service": svc,
+                "uptime_pct": round(st.uptime_pct, 1) if (st and st.total) else None,
+                "p95_ms": st.p95_ms if st else None,
+                "days": days,
+            }
+        )
+    return bars
+
+
 async def build_overview(
     store: Store,
     settings: Settings,
