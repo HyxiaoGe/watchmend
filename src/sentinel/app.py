@@ -36,6 +36,7 @@ from sentinel.notify.feishu_channel import FeishuChannel
 from sentinel.notify.ntfy import NtfyChannel
 from sentinel.notify.telegram import TelegramChannel
 from sentinel.notify.webhook import WebhookChannel
+from sentinel.panel.routes import register_panel_routes
 from sentinel.poller import PollState, run_cycle, run_heartbeat
 from sentinel.probe import load_targets, run_probe_cycle
 from sentinel.probe_rules import evaluate_probe_rules
@@ -471,6 +472,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     # load_targets 在此与 build_jobs 各调一次(读同一 yaml,幂等),可接受
     app.state.services = [t.name for t in _load_targets_or_disable(settings.sentinel_services_file)]
+    app.state.docker = docker  # 面板「在监容器」计数用(可为 None)
     # 环境自动发现(MVP:仅日志建议):扫描容器镜像指纹,提示未启用的数据源接法。
     for msg in await discover.probe(docker, settings):
         logger.info(msg)
@@ -493,6 +495,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="WatchMend", lifespan=lifespan)
 
 register_routes(app)
+register_panel_routes(app)
 
 
 @app.get("/health")

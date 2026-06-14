@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% if refresh_seconds %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endif %}
+<title>{% block title %}WatchMend 证据台{% endblock %}</title>
+<style>
+  body { background:#0d1117; color:#c9d1d9; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; margin:0; padding:1.2rem; }
+  a { color:#58a6ff; text-decoration:none; }
+  h1 { font-size:1.1rem; }
+  h2 { font-size:.95rem; border-bottom:1px solid #30363d; padding-bottom:.3rem; margin-top:1.4rem; }
+  .row { padding:.25rem 0; border-bottom:1px solid #161b22; }
+  .crit { color:#f85149; } .warn { color:#d29922; } .ok { color:#3fb950; } .muted { color:#8b949e; }
+  pre { background:#161b22; padding:.6rem; overflow:auto; white-space:pre-wrap; word-break:break-all; }
+  details { margin:.3rem 0; } summary { cursor:pointer; }
+  code { color:#79c0ff; }
+  .pill { display:inline-block; padding:0 .4rem; border:1px solid #30363d; border-radius:.5rem; margin-right:.3rem; }
+</style>
+</head>
+<body>
+{% block body %}{% endblock %}
+<p class="muted">WatchMend · 只读证据台 · localhost-only · 建议命令永不自动执行</p>
+</body>
+</html>

@@ -1,0 +1,43 @@
+{% extends "_base.html" %}
+{% block title %}事件详情 · WatchMend 证据台{% endblock %}
+{% block body %}
+<p><a href="/">← 返回总览</a></p>
+{% if detail is none %}
+<h1>事件不存在</h1>
+<p class="muted">没有找到该事件,可能已被清理或 id 有误。</p>
+{% else %}
+{% set e = detail.event %}
+<h1>{{ e.subject }} · {{ e.rule_label }}
+  <span class="{{ 'crit' if e.severity == 'critical' else 'warn' }}">{{ e.severity|upper }}</span></h1>
+<p class="muted">触发 {{ e.ts_str }} · 状态 {{ e.lifecycle }}{% if e.resolved_str %} · 已恢复 {{ e.resolved_str }}{% endif %}</p>
+<p>{{ e.detail }}</p>
+
+{% if not detail.llm_enabled %}
+<div class="row muted">未启用 LLM 诊断层</div>
+{% elif detail.diagnosis %}
+<h2>诊断{% if detail.diagnosis.confidence %}(置信度 {{ detail.diagnosis.confidence }}){% endif %}</h2>
+{% if detail.diagnosis.root_cause %}<p>根因:{{ detail.diagnosis.root_cause }}</p>{% endif %}
+{% if detail.diagnosis.summary %}<p>现象:{{ detail.diagnosis.summary }}</p>{% endif %}
+{% if detail.diagnosis.evidence %}<ul>{% for ev in detail.diagnosis.evidence %}<li>{{ ev }}</li>{% endfor %}</ul>{% endif %}
+{% else %}
+<div class="row muted">诊断未产出可解析结论(见下方证据链)</div>
+{% endif %}
+
+<h2>LLM 实际调用的只读工具</h2>
+{% for t in detail.tool_calls %}
+<div class="row">
+  {{ loop.index }} <code>{{ t.tool }}({{ t.args_str }})</code>
+  <span class="{{ 'ok' if t.ok else 'crit' }}">{{ '成功' if t.ok else '失败' }}</span>
+  <details><summary>展开原始输出</summary><pre>{{ t.output }}</pre></details>
+</div>
+{% else %}
+<div class="row muted">无证据链(未调用工具或未启用 LLM)</div>
+{% endfor %}
+
+{% if detail.diagnosis and detail.diagnosis.suggested_commands %}
+<h2>建议命令(须人工确认 · 永不自动执行)</h2>
+<pre>{% for c in detail.diagnosis.suggested_commands %}{{ c }}
+{% endfor %}</pre>
+{% endif %}
+{% endif %}
+{% endblock %}
