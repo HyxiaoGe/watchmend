@@ -8,6 +8,8 @@ from pathlib import Path
 from sentinel.findings import EventRecord
 from sentinel.models import ProbeSample, Snapshot, snapshot_from_dict, snapshot_to_dict
 
+_UNSET = object()  # 区分"省略 tools_json(不动该列)"与"显式传 None(清空该列)"
+
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
     """幂等迁移:列不存在才 ALTER TABLE ADD COLUMN。应对升级前已建库的实例。
@@ -246,17 +248,20 @@ class Store:
         *,
         status: str,
         diagnosis_json: str | None = None,
-        tools_json: str | None = None,
+        tools_json: str | None | object = _UNSET,
     ) -> bool:
         """诊断回写(Phase 3)。status 仅限终态;返回是否真的更新了一行(False=事件不存在)。
-        tools_json=证据链 JSON 数组(子项目③),默认 None 不破坏现有调用。"""
+        tools_json=证据链 JSON 数组(子项目③):省略=不动该列(保留既有证据);
+        显式传 None=清空该列;显式传字符串=写入。"""
         if status not in ("done", "failed", "skipped"):
             raise ValueError(f"invalid diagnosis status: {status}")
-        cur = self._conn.execute(
-            "UPDATE events SET diagnosis_status = ?, diagnosis_json = ?, diagnosis_tools_json = ? "
-            "WHERE id = ?",
-            (status, diagnosis_json, tools_json, event_id),
-        )
+        cols = ["diagnosis_status = ?", "diagnosis_json = ?"]
+        params: list = [status, diagnosis_json]
+        if tools_json is not _UNSET:
+            cols.append("diagnosis_tools_json = ?")
+            params.append(tools_json)
+        params.append(event_id)
+        cur = self._conn.execute(f"UPDATE events SET {', '.join(cols)} WHERE id = ?", params)
         self._conn.commit()
         return cur.rowcount > 0
 

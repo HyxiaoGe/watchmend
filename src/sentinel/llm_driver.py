@@ -57,6 +57,21 @@ def _truncate(text: str, cap: int) -> str:
     return text if len(text) <= cap else text[:cap] + "…(truncated)"
 
 
+def cap_tool_outputs(tools: list[dict]) -> list[dict]:
+    """对证据链每项的 output 套用 PANEL_TOOL_OUTPUT_CAP(面板/存储统一上限)。
+    用于 API 回填路径(host 编排),与容器内 _tool_loop 的逐项截断同一口径。"""
+    out: list[dict] = []
+    for t in tools:
+        if isinstance(t, dict):
+            item = dict(t)
+            if isinstance(item.get("output"), str):
+                item["output"] = _truncate(item["output"], PANEL_TOOL_OUTPUT_CAP)
+            out.append(item)
+        else:
+            out.append(t)
+    return out
+
+
 def parse_diagnosis(text: str) -> dict | None:
     """提取 ```json 围栏(或退化到首个 {...} 片段)并校验必须字段。"""
     fence = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)

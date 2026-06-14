@@ -1187,3 +1187,119 @@ async def test_post_diagnosis_accepts_optional_tools(tmp_path, monkeypatch):
     e = store.get_event(eid)
     assert json.loads(e.diagnosis_tools_json)[0]["tool"] == "docker_ps"
     store.close()
+
+
+def _diag_app(store, monkeypatch):
+    from fastapi import FastAPI
+
+    from sentinel.api import register_routes
+    from sentinel.config import Settings
+    from sentinel.notify.base import Broadcaster
+
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    app = FastAPI()
+    register_routes(app)
+    app.state.store = store
+    app.state.settings = Settings(_env_file=None)
+    app.state.patrol_broadcaster = Broadcaster([])  # 无渠道,send→0,不发卡不出网
+    app.state.services = []
+    return app
+
+
+def _pending_event(store):
+    return store.insert_event(
+        ts=1700000000,
+        rule="container_down",
+        subject="pg",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="pending",
+        cooldown_until=0,
+    )
+
+
+async def test_post_diagnosis_caps_tool_output(tmp_path, monkeypatch):
+    # 回填路径必须与容器内 _tool_loop 同口径:每项 output 截断到 PANEL_TOOL_OUTPUT_CAP
+    import json
+
+    from sentinel.llm_driver import PANEL_TOOL_OUTPUT_CAP
+    from sentinel.store import Store
+
+    store = Store(str(tmp_path / "s.db"))
+    eid = _pending_event(store)
+    app = _diag_app(store, monkeypatch)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        resp = await c.post(
+            f"/events/{eid}/diagnosis",
+            json={
+                "status": "done",
+                "diagnosis": {"summary": "s", "root_cause": "r"},
+                "tools": [{"tool": "docker_logs", "args": {}, "output": "x" * 6000, "ok": True}],
+            },
+        )
+    assert resp.status_code == 200
+    stored = json.loads(store.get_event(eid).diagnosis_tools_json)[0]["output"]
+    assert stored.endswith("…(truncated)")
+    assert len(stored) == PANEL_TOOL_OUTPUT_CAP + len("…(truncated)")
+    store.close()
+
+
+async def test_post_diagnosis_omitted_tools_preserves_evidence(tmp_path, monkeypatch):
+    # status-only 回填(无 tools 字段)绝不能抹掉既有证据链
+    import json
+
+    from sentinel.store import Store
+
+    store = Store(str(tmp_path / "s.db"))
+    eid = _pending_event(store)
+    seeded = [{"tool": "prom_query", "args": {"query": "up"}, "output": "1", "ok": True}]
+    store.set_diagnosis(
+        eid,
+        status="done",
+        diagnosis_json=json.dumps({"summary": "s"}),
+        tools_json=json.dumps(seeded),
+    )
+    app = _diag_app(store, monkeypatch)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        resp = await c.post(
+            f"/events/{eid}/diagnosis",
+            json={"status": "done", "diagnosis": {"summary": "s2"}},
+        )
+    assert resp.status_code == 200
+    preserved = store.get_event(eid).diagnosis_tools_json
+    assert preserved is not None
+    assert json.loads(preserved)[0]["tool"] == "prom_query"
+    store.close()
+
+
+async def test_post_diagnosis_explicit_empty_tools_clears(tmp_path, monkeypatch):
+    # 显式 tools=[] = 明确清空该列
+    import json
+
+    from sentinel.store import Store
+
+    store = Store(str(tmp_path / "s.db"))
+    eid = _pending_event(store)
+    store.set_diagnosis(
+        eid,
+        status="done",
+        diagnosis_json=json.dumps({"summary": "s"}),
+        tools_json=json.dumps([{"tool": "prom_query", "args": {}, "output": "1", "ok": True}]),
+    )
+    app = _diag_app(store, monkeypatch)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        resp = await c.post(
+            f"/events/{eid}/diagnosis",
+            json={"status": "done", "diagnosis": {"summary": "s2"}, "tools": []},
+        )
+    assert resp.status_code == 200
+    assert store.get_event(eid).diagnosis_tools_json is None
+    store.close()

@@ -57,3 +57,33 @@ def test_set_diagnosis_missing_event_returns_false(store):
 
 def test_get_event_missing_returns_none(store):
     assert store.get_event(42) is None
+
+
+def test_set_diagnosis_omitted_tools_json_leaves_column_unchanged(store):
+    # 不传 tools_json = 不动该列:既有证据链必须保留
+    eid = _insert(store)
+    store.set_diagnosis(
+        eid,
+        status="done",
+        diagnosis_json=json.dumps({"summary": "x"}),
+        tools_json=json.dumps([{"tool": "prom_query"}]),
+    )
+    # 二次回写只更新状态(不带 tools_json),证据列不应被抹掉
+    store.set_diagnosis(eid, status="done", diagnosis_json=json.dumps({"summary": "y"}))
+    ev = store.get_event(eid)
+    assert json.loads(ev.diagnosis_tools_json)[0]["tool"] == "prom_query"
+
+
+def test_set_diagnosis_explicit_none_tools_json_clears_column(store):
+    # 显式 tools_json=None = 清空该列
+    eid = _insert(store)
+    store.set_diagnosis(
+        eid,
+        status="done",
+        diagnosis_json=json.dumps({"summary": "x"}),
+        tools_json=json.dumps([{"tool": "prom_query"}]),
+    )
+    store.set_diagnosis(
+        eid, status="done", diagnosis_json=json.dumps({"summary": "y"}), tools_json=None
+    )
+    assert store.get_event(eid).diagnosis_tools_json is None
