@@ -67,7 +67,7 @@ make up                                   # 或 docker compose up -d --build
 > 本容器**永不挂裸 socket**。要整层关闭:清空 `SENTINEL_DOCKER_HOST` 并注释掉 compose
 > 里的 `docker-proxy` service 及 sentinel 的 `depends_on`/`docker_proxy` 网络(文件内有注释)。
 
-> **通知渠道为广播模型**:配置的所有渠道同时收到每条告警/日报/诊断,失败相互隔离(任一渠道挂不影响其余)。**至少配置一个渠道**(飞书 `FEISHU_VENDOR_WEBHOOK` 或上述任一)即可启动;`FEISHU_VENDOR_WEBHOOK` 不再强制必填,海外自托管可只配 Telegram/ntfy/webhook。
+> **通知渠道为广播模型**:配置的所有渠道并发收到每条告警/恢复/日报/诊断,失败相互隔离(任一渠道挂只记日志,不影响其余)。两类投递语义不同:**告警/恢复**走 **send-then-commit**——**≥1 个渠道投递成功才落库**(去重/冷却),全部失败则不落库、留待下一轮整体重发,保证瞬时故障不丢事件;**诊断/日报卡**是**「已落库后尽力推送」**——底层诊断结果/日报数据先持久化,卡片广播失败**不回滚**已落库记录(证据台仍可见)、也不重发。两类在单次广播内都**不对失败渠道做重试**。**至少配置一个渠道**(飞书 `FEISHU_VENDOR_WEBHOOK` 或上述任一)即可启动;`FEISHU_VENDOR_WEBHOOK` 不再强制必填,海外自托管可只配 Telegram/ntfy/webhook。
 
 全部 40+ 配置项(阈值、冷却、播报粒度…)见 [.env.example](.env.example),每项带注释。
 

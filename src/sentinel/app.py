@@ -226,7 +226,8 @@ def build_jobs(
             "SENTINEL_MIDDLEWARE_METRICS 已配置但 SENTINEL_PROMETHEUS_URL 为空,"
             "中间件兜底检查不会运行"
         )
-    if bool(settings.llm_base_url) != bool(settings.llm_model):
+    if bool(settings.llm_base_url) != bool(settings.llm_model) and not config.enabled:
+        # 仅当 llm.yaml 未在管时才提醒 env 半配置;有效 llm.yaml 已接管,env LLM_* 无关
         logger.warning(
             "LLM_BASE_URL 和 LLM_MODEL 必须同时配置,当前只有一个非空:LLM 诊断/总结层不会启用"
         )
@@ -528,6 +529,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.services = [t.name for t in _load_targets_or_disable(settings.sentinel_services_file)]
     app.state.docker = docker  # 面板「在监容器」计数用(可为 None)
     app.state.llm_config = LLMConfig(settings)  # 面板 LLM 姿态真源(与 build_jobs 各持一份,均热加载)
+    # 诊断 job 是否在启动时注册(④ 条件注册):面板据此区分"已配置在跑" vs"已配置·待重启"
+    app.state.diag_job_registered = any(name == "diagnosis" for name, _, _ in jobs)
     # 环境自动发现(MVP:仅日志建议):扫描容器镜像指纹,提示未启用的数据源接法。
     for msg in await discover.probe(docker, settings):
         logger.info(msg)

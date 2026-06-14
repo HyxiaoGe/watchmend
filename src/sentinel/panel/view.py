@@ -23,12 +23,16 @@ def _hhmm(ts: int, tz: timezone) -> str:
     return datetime.fromtimestamp(ts, tz).strftime("%H:%M")
 
 
-def _lifecycle(e: EventRecord) -> str:
-    """事件生命周期标签(状态机可视化)。resolved 优先;open 的 scan_failed_* 单列。"""
+def _lifecycle(e: EventRecord, *, diag_active: bool = True) -> str:
+    """事件生命周期标签(状态机可视化)。resolved 优先;open 的 scan_failed_* 单列。
+    diag_active=诊断层此刻是否真在跑:为 False 时(LLM 关或已配置待重启)pending
+    事件其实无人调查,显示 open 而非"调查中",避免面板误导。"""
     if e.status == "resolved":
         return "recovered"
     if e.rule.startswith("scan_failed_"):
         return "scan_failed"
+    if e.diagnosis_status == "pending" and not diag_active:
+        return "open"
     return {
         "pending": "investigating",
         "done": "diagnosed",
@@ -49,7 +53,7 @@ def _summary_of(e: EventRecord) -> str | None:
     return None
 
 
-def _event_view(e: EventRecord, tz: timezone) -> dict:
+def _event_view(e: EventRecord, tz: timezone, *, diag_active: bool = True) -> dict:
     return {
         "id": e.id,
         "ts_str": _hhmm(e.ts, tz),
@@ -57,7 +61,7 @@ def _event_view(e: EventRecord, tz: timezone) -> dict:
         "rule_label": RULE_NAMES.get(e.rule, e.rule),
         "subject": e.subject,
         "severity": e.severity,
-        "lifecycle": _lifecycle(e),
+        "lifecycle": _lifecycle(e, diag_active=diag_active),
         "is_scan_failure": e.rule.startswith("scan_failed_"),
         "diagnosis_status": e.diagnosis_status,
         "has_evidence": e.diagnosis_status == "done" and bool(e.diagnosis_tools_json),
@@ -88,14 +92,27 @@ def _channels(settings: Settings) -> list[str]:
     return out
 
 
-def _llm_posture(llm_config, settings: Settings) -> dict:
+def _llm_posture(llm_config, settings: Settings, *, diag_registered: bool | None = None) -> dict:
     """LLM 姿态:优先 LLMConfig(llm.yaml/env 真源,鸭子类型 .current());
-    无 config 时回退 settings.llm_*(向后兼容老调用/单测)。"""
+    无 config 时回退 settings.llm_*(向后兼容老调用/单测)。
+
+    diag_registered=启动时诊断 job 是否注册(④ 条件注册:仅 config.enabled 时注册)。
+    已配置(current() 非空)但 diag 未注册 → 是启动后才配的,诊断要重启一次才跑
+    (pending_restart)。None=调用方未提供该信号,不下此结论(老调用/单测保持原状)。"""
     if llm_config is not None:
         profile = llm_config.current()
-        return {"enabled": profile is not None, "model": profile.model if profile else None}
+        configured = profile is not None
+        return {
+            "enabled": configured,
+            "pending_restart": configured and diag_registered is False,
+            "model": profile.model if configured else None,
+        }
     enabled = bool(settings.llm_base_url and settings.llm_model)
-    return {"enabled": enabled, "model": settings.llm_model if enabled else None}
+    return {
+        "enabled": enabled,
+        "pending_restart": False,
+        "model": settings.llm_model if enabled else None,
+    }
 
 
 def _env_redaction(events: list[EventRecord]) -> list[dict]:
@@ -157,10 +174,17 @@ def _hygiene_services(store: Store, *, now_ts: int) -> list[dict]:
 
 
 async def build_overview(
-    store: Store, settings: Settings, *, now: datetime, docker=None, llm_config=None
+    store: Store,
+    settings: Settings,
+    *,
+    now: datetime,
+    docker=None,
+    llm_config=None,
+    diag_registered: bool | None = None,
 ) -> dict:
     """总览 view-model。docker 为可选注入的 DockerClient,缺省 None → 容器计数降级 None。
-    llm_config 为可选注入的 LLMConfig,缺省 None → 回退 settings.llm_*。"""
+    llm_config 为可选注入的 LLMConfig,缺省 None → 回退 settings.llm_*。
+    diag_registered 为启动时诊断 job 是否注册(lifespan 注入),用于"已配置·待重启"判定。"""
     tz = (
         now.tzinfo
         if isinstance(now.tzinfo, timezone)
@@ -170,7 +194,9 @@ async def build_overview(
     open_events = store.get_open_events()
     recoveries = store.get_resolved_since(now_ts - _DAY_SECONDS)
     docker_mode = _docker_mode(settings)
-    llm = _llm_posture(llm_config, settings)
+    llm = _llm_posture(llm_config, settings, diag_registered=diag_registered)
+    # 诊断层此刻是否真在跑:已配置且未待重启。pending 事件的生命周期据此显示。
+    diag_active = llm["enabled"] and not llm["pending_restart"]
     return {
         "now_str": now.strftime("%Y-%m-%d %H:%M"),
         "refresh_seconds": _REFRESH_SECONDS,
@@ -189,11 +215,19 @@ async def build_overview(
             "channels": _channels(settings),
             "env_redaction": _env_redaction(open_events + recoveries),
         },
-        "anomalies": [_event_view(e, tz) for e in open_events if e.rule not in HYGIENE_RULES],
-        "recoveries": [_event_view(e, tz) for e in recoveries],
+        "anomalies": [
+            _event_view(e, tz, diag_active=diag_active)
+            for e in open_events
+            if e.rule not in HYGIENE_RULES
+        ],
+        "recoveries": [_event_view(e, tz, diag_active=diag_active) for e in recoveries],
         "hygiene": {
             "services": _hygiene_services(store, now_ts=now_ts),
-            "hygiene_alerts": [_event_view(e, tz) for e in open_events if e.rule in HYGIENE_RULES],
+            "hygiene_alerts": [
+                _event_view(e, tz, diag_active=diag_active)
+                for e in open_events
+                if e.rule in HYGIENE_RULES
+            ],
         },
     }
 
@@ -221,16 +255,19 @@ def _tool_calls_view(tools_json: str | None) -> list[dict]:
 
 
 def build_event_detail(
-    store: Store, settings: Settings, event_id: int, *, llm_config=None
+    store: Store, settings: Settings, event_id: int, *, llm_config=None, diag_registered=None
 ) -> dict | None:
     """单事件详情 view-model。事件不存在 → None(路由据此 404)。
     settings 用于 llm_enabled 与时间显示时区(spec §6 签名补 settings)。
-    llm_config 为可选注入的 LLMConfig,缺省 None → 回退 settings.llm_*。"""
+    llm_config 为可选注入的 LLMConfig,缺省 None → 回退 settings.llm_*。
+    diag_registered 同 build_overview:控制 pending 事件是否显示"调查中"。"""
     e = store.get_event(event_id)
     if e is None:
         return None
     tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
-    ev = _event_view(e, tz)
+    posture = _llm_posture(llm_config, settings, diag_registered=diag_registered)
+    diag_active = posture["enabled"] and not posture["pending_restart"]
+    ev = _event_view(e, tz, diag_active=diag_active)
     ev["detail"] = e.detail
     diagnosis = None
     if e.diagnosis_status == "done" and e.diagnosis_json:
@@ -241,7 +278,7 @@ def build_event_detail(
             diagnosis = None
     return {
         "event": ev,
-        "llm_enabled": _llm_posture(llm_config, settings)["enabled"],
+        "llm_enabled": posture["enabled"],
         "diagnosis": diagnosis,
         "tool_calls": _tool_calls_view(e.diagnosis_tools_json),
     }

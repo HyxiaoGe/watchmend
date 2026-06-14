@@ -5,7 +5,7 @@
   <span class="pill">在监 {% if posture.monitored_containers is not none %}{{ posture.monitored_containers }}{% else %}—{% endif %} 容器</span>
   <span class="pill">开放 {{ posture.open_count }}</span>
   <span class="pill">24h 已恢复 {{ posture.resolved_24h }}</span>
-  <span class="pill">LLM:{% if posture.llm.enabled %}{{ posture.llm.model }} ✓{% else %}未启用{% endif %}</span>
+  <span class="pill">LLM:{% if posture.llm.enabled %}{{ posture.llm.model }}{% if posture.llm.pending_restart %} ·诊断待重启{% else %} ✓{% endif %}{% else %}未启用{% endif %}</span>
   <span class="pill">docker:{{ posture.docker.mode }}{% if posture.docker.read_only %}(只读){% endif %}</span>
 </p>
 
