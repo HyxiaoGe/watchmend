@@ -48,9 +48,90 @@ async def test_overview_renders(tmp_path, monkeypatch):
     app = _build_app(store, settings)
     resp = await _get(app, "/")
     assert resp.status_code == 200
-    assert "证据台" in resp.text
-    assert "永不自动执行" in resp.text
-    assert "数据源故障" in resp.text  # scan_failed 标注
+    assert "证据台" in resp.text  # hdr.title
+    assert "永不自动执行" in resp.text  # footer.readonly
+    assert "组件健康" in resp.text  # sec.health
+    assert "事件" in resp.text  # sec.events
+    assert "Loki 巡检失败" in resp.text  # rule_label(scan_failed_loki, zh)
+    store.close()
+
+
+async def test_overview_health_bars_and_states(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    today = datetime.now(tz).date()
+    d_ok = (today - timedelta(days=2)).isoformat()
+    d_down = (today - timedelta(days=1)).isoformat()
+    store.upsert_probe_daily("api", d_ok, total=100, ok_count=100, p50=10.0, p95=20.0)
+    store.upsert_probe_daily("api", d_down, total=100, ok_count=10, p50=10.0, p95=20.0)  # →down
+    store.add_probe_samples(
+        [
+            ProbeSample(
+                ts=int(datetime.now(tz).timestamp()) - 30,
+                service="api",
+                ok=True,
+                status_code=200,
+                latency_ms=12.0,
+            )
+        ]
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/?win=30")
+    assert r.status_code == 200
+    assert "upbar" in r.text  # 柱条容器
+    assert "down" in r.text  # 含 down 态格子(class 或图例)
+    assert "api" in r.text  # 服务名出现
+    store.close()
+
+
+async def test_overview_en_light_smoke(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    r = await _get(app, "/?lang=en&theme=light")
+    assert r.status_code == 200
+    assert 'data-theme="light"' in r.text and '<html lang="en"' in r.text
+    assert "Component Health" in r.text  # sec.health en
+    assert "Events" in r.text  # sec.events en
+    assert "证据台" not in r.text  # 外壳标题区已全英文
+    store.close()
+
+
+async def test_overview_event_ai_diagnosis_inline(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm/v1", LLM_MODEL="m")
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    recent = int(datetime.now(tz).timestamp()) - 3600  # 近 1 小时,落在事件流窗口内
+    eid = store.insert_event(
+        ts=recent,
+        rule="container_down",
+        subject="postgres",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="pending",
+        cooldown_until=0,
+    )
+    store.set_diagnosis(
+        eid,
+        status="done",
+        diagnosis_json=json.dumps({"summary": "OOM 根因摘要", "root_cause": "内存不足"}),
+        tools_json=json.dumps([{"tool": "docker_logs", "args": {}, "output": "x", "ok": True}]),
+    )
+    store.resolve_event(eid, resolved_ts=recent + 600)  # 已恢复也必须可点
+    app = _build_app(store, settings)
+    r = await _get(app, "/")
+    assert "OOM 根因摘要" in r.text  # AI summary 就地可见
+    assert f"/event/{eid}" in r.text  # 已恢复事件有详情链接(可点)
+    assert "AI 诊断" in r.text  # ev.ai chip
     store.close()
 
 

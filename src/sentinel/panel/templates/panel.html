@@ -1,52 +1,123 @@
 {% extends "_base.html" %}
 {% block body %}
-<h1>WatchMend 证据台 <span class="muted">· 刷新于 {{ now_str }} · 自动 {{ refresh_seconds }}s</span></h1>
-<p>
-  <span class="pill">在监 {% if posture.monitored_containers is not none %}{{ posture.monitored_containers }}{% else %}—{% endif %} 容器</span>
-  <span class="pill">开放 {{ posture.open_count }}</span>
-  <span class="pill">24h 已恢复 {{ posture.resolved_24h }}</span>
-  <span class="pill">LLM:{% if posture.llm.enabled %}{{ posture.llm.model }}{% if posture.llm.pending_restart %} ·诊断待重启{% else %} ✓{% endif %}{% else %}未启用{% endif %}</span>
-  <span class="pill">docker:{{ posture.docker.mode }}{% if posture.docker.read_only %}(只读){% endif %}</span>
-</p>
 
-<h2>当前异常(状态机)</h2>
-{% for a in anomalies %}
-<div class="row">
-  <span class="{{ 'crit' if a.severity == 'critical' else 'warn' }}">● {{ a.severity|upper }}</span>
-  {{ a.rule_label }} <strong>{{ a.subject }}</strong>
-  <span class="muted">触发 {{ a.ts_str }} · {{ a.lifecycle }}</span>
-  {% if a.is_scan_failure %}<span class="warn">（数据源故障·非恢复绿卡）</span>{% endif %}
-  <a href="/event/{{ a.id }}">证据详情→</a>
+{% set probes = health|length %}
+<div class="banner {{ 'ok' if posture.open_count == 0 else 'bad' }}">
+  <span class="pulse"></span>
+  {% if posture.open_count == 0 %}
+  <span class="big">{{ t('banner.ok', probes=probes, open=0, days=window_days) }}</span>
+  {% else %}
+  <span class="big">{{ t('banner.issues', open=posture.open_count, probes=probes) }}</span>
+  {% endif %}
+</div>
+
+<div class="secrow">
+  <span class="sec">{{ t('sec.health') }}</span>
+  <div class="right">
+    <span class="lg">
+      <span><i style="background:var(--st-ok)"></i>{{ t('st.ok') }}</span>
+      <span><i style="background:var(--st-degraded)"></i>{{ t('st.degraded') }}</span>
+      <span><i style="background:var(--st-partial)"></i>{{ t('st.partial') }}</span>
+      <span><i style="background:var(--st-down)"></i>{{ t('st.down') }}</span>
+      <span><i style="background:var(--st-nodata)"></i>{{ t('st.nodata') }}</span>
+    </span>
+  </div>
+</div>
+
+<div class="comps">
+{% set shown = health if svc_all else health[:services_cap] %}
+{% for svc in shown %}
+  <div class="comp">
+    <div class="comp-hd">
+      <b>{{ svc.service }}</b>
+      <span class="muted mono">{% if svc.uptime_pct is not none %}{{ svc.uptime_pct }}%{% else %}—{% endif %}</span>
+    </div>
+    <div class="upbar">
+      {% for d in svc.days %}
+      <i class="{{ d.state }}" title="{{ d.date }} · {{ t('st.' ~ d.state) }}{% if d.uptime_pct is not none %} · {{ d.uptime_pct }}%{% endif %}{% if d.is_today %} · {{ t('tip.today') }}{% endif %}"></i>
+      {% endfor %}
+    </div>
+    <div class="comp-ax">
+      <span>{{ t('axis.window', days=window_days) }}</span><span class="ln"></span>
+      <span>{% if svc.uptime_pct is not none %}{{ t('comp.uptime', uptime=svc.uptime_pct, p95=svc.p95_ms if svc.p95_ms is not none else '—') }}{% endif %}</span>
+      <span class="ln"></span><span>{{ t('axis.today') }}</span>
+    </div>
+  </div>
+{% else %}
+  <div class="comp muted">{{ t('st.nodata') }}</div>
+{% endfor %}
+</div>
+{% if not svc_all and health|length > services_cap %}
+<p><a href="{{ qurl(svc_all=1) }}">{{ t('comp.expand', n=health|length - services_cap) }}</a></p>
+{% elif svc_all and health|length > services_cap %}
+<p><a href="{{ qurl(svc_all=None) }}">{{ t('comp.collapse') }}</a></p>
+{% endif %}
+
+<div class="secrow"><span class="sec">{{ t('sec.hostself') }}</span></div>
+<div class="self">
+  <div class="ln1">
+    <span class="k">{{ t('host.host') }}</span>
+    {% if hygiene.hygiene_alerts %}
+      {% for h in hygiene.hygiene_alerts %}
+      <span class="{{ 'crit' if h.severity == 'critical' else 'warn' }}">{{ rule_label(h.rule, lang) }} {{ h.subject }}</span>
+      {% endfor %}
+    {% else %}
+      <span class="ok">{{ t('host.host.ok') }} ✓</span>
+    {% endif %}
+  </div>
+  <div class="ln1">
+    <span class="k">{{ t('host.self') }}</span>
+    <span>{{ t('host.engine') }}
+      {% if host_self.probe_engine_live is none %}<span class="muted">{{ t('host.engine.unknown') }}</span>
+      {% elif host_self.probe_engine_live %}<span class="ok">{{ t('host.engine.live') }} ✓</span>
+      {% else %}<span class="crit">{{ t('host.engine.stale') }}</span>{% endif %}</span>
+    <span>{{ t('host.channels') }}
+      <span class="{{ 'ok' if posture.channels else 'muted' }}">{% if posture.channels %}{{ posture.channels|join('、') }}{% else %}{{ t('footer.none') }}{% endif %}</span></span>
+    <span>{{ t('host.layers') }}
+      <span class="muted">prom{{ '✓' if posture.layers.prometheus else '✗' }}
+      loki{{ '✓' if posture.layers.loki else '✗' }}
+      docker{{ '✓' if posture.layers.docker else '✗' }}
+      LLM{{ '✓' if posture.layers.llm else '✗' }}</span></span>
+    <span>{{ t('host.llm') }}
+      {% if host_self.llm.active %}<span class="vio">{{ host_self.llm.active }} ✓</span>
+      {% if host_self.llm.fallback_ready %}<span class="tag">{{ t('host.llm.fallback', model=host_self.llm.fallback) }}</span>{% endif %}
+      {% else %}<span class="muted">{{ t('host.llm.off') }}</span>{% endif %}</span>
+  </div>
+</div>
+
+<div class="secrow"><span class="sec">{{ t('sec.events') }}</span></div>
+{% for e in events['items'] %}
+<div class="ev">
+  <div class="top">
+    <span class="dot {{ e.severity }}" title="{{ t('sev.' ~ e.severity) }}"></span>
+    <b>{{ rule_label(e.rule, lang) }}</b> <span class="mono">{{ e.subject }}</span>
+    <span class="chip {{ 'ok' if e.lifecycle == 'recovered' else '' }}">{{ t('life.' ~ e.lifecycle) }}</span>
+    {% if e.is_scan_failure %}<span class="chip warn">{{ t('ev.scanfail') }}</span>{% endif %}
+    <span class="when mono">{{ e.ts_str }}{% if e.resolved_str %} → {{ e.resolved_str }}{% endif %}</span>
+  </div>
+  {% if e.summary or e.has_evidence %}
+  <details>
+    <summary class="chip ai">🧠 {{ t('ev.ai') }}</summary>
+    {% if e.summary %}<div class="diag"><div class="lbl">{{ t('ev.summary') }}</div><div class="body">{{ e.summary }}</div></div>{% endif %}
+    <p><a href="/event/{{ e.id }}">{{ t('ev.detail') }}</a></p>
+  </details>
+  {% else %}
+  <p><a href="/event/{{ e.id }}">{{ t('ev.detail') }}</a></p>
+  {% endif %}
 </div>
 {% else %}
-<div class="row muted">暂无异常</div>
+<div class="ev muted">{{ t('ev.empty') }}</div>
 {% endfor %}
 
-<h2>最近恢复(24h)</h2>
-{% for r in recoveries %}
-<div class="row"><span class="ok">✓</span> {{ r.rule_label }} {{ r.subject }}
-  <span class="muted">触发 {{ r.ts_str }} → 已恢复 {{ r.resolved_str }}</span></div>
-{% else %}
-<div class="row muted">24h 内无恢复</div>
-{% endfor %}
+{% if events.total_pages > 1 %}
+<div class="pager">
+  {% if events.page > 1 %}<a href="{{ qurl(ev_page=events.page - 1) }}">{{ t('ev.prev') }}</a>{% endif %}
+  <span>{{ t('ev.page', page=events.page, total=events.total_pages, count=events.total) }}</span>
+  {% if events.page < events.total_pages %}<a href="{{ qurl(ev_page=events.page + 1) }}">{{ t('ev.next') }}</a>{% endif %}
+</div>
+{% endif %}
 
-<h2>安全姿态</h2>
-<div class="row">docker:{{ posture.docker.mode }}{% if posture.docker.read_only %}(只读 API){% endif %} ·
-{% if posture.env_redaction %}env 遮蔽:{% for r in posture.env_redaction %}{{ r.subject }} {{ r.count }} 项{% if not loop.last %}、{% endif %}{% endfor %}{% else %}所有 inspect 的 env 值已遮蔽{% endif %}</div>
-<div class="row">建议命令一律「永不自动执行」 · 启用层
-  prom{{ '✓' if posture.layers.prometheus else '✗' }}
-  loki{{ '✓' if posture.layers.loki else '✗' }}
-  docker{{ '✓' if posture.layers.docker else '✗' }}
-  LLM{{ '✓' if posture.layers.llm else '✗' }}
-  · 通知:{% if posture.channels %}{{ posture.channels|join('、') }}{% else %}无{% endif %}</div>
-
-<h2>巡检概览(hygiene/uptime)</h2>
-{% for s in hygiene.services %}
-<div class="row">探针24h {{ s.service }}
-  {% if s.uptime_pct is not none %}{{ s.uptime_pct }}%{% else %}—{% endif %}
-  {% if s.p95_ms is not none %}· p95 {{ s.p95_ms }}ms{% endif %}</div>
-{% else %}
-<div class="row muted">暂无探针数据</div>
-{% endfor %}
-<div class="row">hygiene:{% if hygiene.hygiene_alerts %}{% for h in hygiene.hygiene_alerts %}{{ h.rule_label }} {{ h.subject }}{% if not loop.last %}、{% endif %}{% endfor %}{% else %}无告警{% endif %}</div>
+<div class="footer mono">docker:{{ posture.docker.mode }}{% if posture.docker.read_only %}(只读){% endif %} ·
+  {{ t('footer.notify', channels=posture.channels|join('、') if posture.channels else t('footer.none')) }} ·
+  {% if posture.env_redaction %}env {% for r in posture.env_redaction %}{{ r.subject }} {{ r.count }}{% if not loop.last %}、{% endif %}{% endfor %}{% endif %}</div>
 {% endblock %}
