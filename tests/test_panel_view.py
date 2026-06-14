@@ -417,3 +417,96 @@ def test_event_detail_pending_restart_marks_open(tmp_path, monkeypatch):
     d = view.build_event_detail(store, settings, eid, llm_config=cfg, diag_registered=False)
     assert d["event"]["lifecycle"] == "open"
     store.close()
+
+
+async def test_build_overview_keeps_legacy_keys_and_adds_new(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    ov = await view.build_overview(store, settings, now=NOW, docker=None)
+    # 既有键保留（默认 window_days=90）
+    for key in ("now_str", "refresh_seconds", "posture", "anomalies", "recoveries", "hygiene"):
+        assert key in ov
+    # 新增键
+    assert ov["window_days"] == 90
+    assert isinstance(ov["health"], list)
+    assert "probe_engine_live" in ov["host_self"] and "llm" in ov["host_self"]
+    assert ov["events"] == {"items": [], "page": 1, "total_pages": 1, "total": 0, "page_size": 8}
+    store.close()
+
+
+async def test_build_overview_page_size_zero_no_crash(tmp_path, monkeypatch):
+    # SENTINEL_PANEL_PAGE_SIZE=0 不应让面板首页 500（ZeroDivisionError）；钳到 ≥1。
+    settings = _settings(monkeypatch, SENTINEL_PANEL_PAGE_SIZE="0")
+    store = Store(str(tmp_path / "s.db"))
+    for i in range(3):
+        store.insert_event(
+            ts=NOW_TS - i * 60,
+            rule="service_down",
+            subject="api",
+            severity="critical",
+            status="open",
+            detail="d",
+            payload_json="{}",
+            diagnosis_status="skipped",
+            cooldown_until=0,
+        )
+    ov = await view.build_overview(store, settings, now=NOW, docker=None)
+    ev = ov["events"]
+    assert ev["page_size"] == 1  # 0 钳到 1
+    assert ev["total"] == 3 and ev["total_pages"] == 3
+    assert ev["page"] == 1 and len(ev["items"]) == 1
+    store.close()
+
+
+async def test_build_overview_engine_live_across_midnight(tmp_path, monkeypatch):
+    # 午夜后查看：最新探针在昨日 23:59（4 分钟前），按 5 分钟间隔应判 live，
+    # 不能因"只看今日零点后样本"误判 unknown(None)。
+    settings = _settings(monkeypatch)  # probe_interval 默认 300 → 阈值 600s
+    store = Store(str(tmp_path / "s.db"))
+    after_midnight = datetime(2026, 6, 14, 0, 3, tzinfo=TZ)
+    am_ts = int(after_midnight.timestamp())
+    store.add_probe_samples(  # am_ts-240 = 昨日 23:59，落在今日午夜之前
+        [ProbeSample(ts=am_ts - 240, service="api", ok=True, status_code=200, latency_ms=12.0)]
+    )
+    ov = await view.build_overview(store, settings, now=after_midnight, docker=None)
+    assert ov["host_self"]["probe_engine_live"] is True
+    store.close()
+
+
+async def test_build_overview_engine_unknown_when_never_probed(tmp_path, monkeypatch):
+    # 从未探测过（全表无样本）→ 引擎活性 unknown(None)，区别于"探测过但陈旧"=False。
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    ov = await view.build_overview(store, settings, now=NOW, docker=None)
+    assert ov["host_self"]["probe_engine_live"] is None
+    store.close()
+
+
+async def test_build_overview_event_feed_pagination(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    for i in range(10):  # 10 起 open 事件，均落今日窗口内
+        store.insert_event(
+            ts=NOW_TS - i * 60,
+            rule="service_down",
+            subject="api",
+            severity="critical",
+            status="open",
+            detail="d",
+            payload_json="{}",
+            diagnosis_status="skipped",
+            cooldown_until=0,
+        )
+    ov = await view.build_overview(store, settings, now=NOW, docker=None, window_days=30, page=1)
+    assert ov["window_days"] == 30
+    ev = ov["events"]
+    assert ev["total"] == 10 and ev["page_size"] == 8 and ev["total_pages"] == 2
+    assert ev["page"] == 1 and len(ev["items"]) == 8
+    ev2 = (await view.build_overview(store, settings, now=NOW, docker=None, page=2))["events"]
+    assert ev2["page"] == 2 and len(ev2["items"]) == 2
+    # 越界页钳到末页
+    ev9 = (await view.build_overview(store, settings, now=NOW, docker=None, page=99))["events"]
+    assert ev9["page"] == 2 and len(ev9["items"]) == 2
+    # 事件项沿用 _event_view 结构（含原始 rule）
+    assert ev["items"][0]["rule"] == "service_down"
+    store.close()

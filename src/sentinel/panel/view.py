@@ -173,6 +173,147 @@ def _hygiene_services(store: Store, *, now_ts: int) -> list[dict]:
     return out
 
 
+def _day_state(
+    uptime_pct: float | None, rules: frozenset[str] | set[str], settings: Settings
+) -> str:
+    """单（服务×天）状态。nodata 优先于一切；其余取最坏 down>partial>degraded>ok。
+    uptime is None（total==0）一律 nodata，绝不当 0%→down。"""
+    if uptime_pct is None:
+        return "nodata"
+    down_event = bool({"service_down", "container_down"} & rules)
+    if down_event or uptime_pct < settings.sentinel_panel_red_uptime_pct:
+        return "down"
+    if uptime_pct < settings.sentinel_panel_partial_uptime_pct or "container_unhealthy" in rules:
+        return "partial"
+    if {"latency_degraded", "mem_pressure"} & rules:
+        return "degraded"
+    return "ok"
+
+
+def _service_health_bars(
+    store: Store,
+    settings: Settings,
+    *,
+    now_ts: int,
+    tz: timezone,
+    window_days: int,
+    today_samples: list,
+) -> list[dict]:
+    """每服务一行 N 天逐日健康柱条。
+    返回 [{service, uptime_pct, p95_ms, days:[{date, state, is_today, uptime_pct}]}]。
+    days 左=最早、右=今天；历史取 probe_daily，今天用实时聚合；缺行/零样本 → nodata。
+    服务集从数据派生（probe_daily 服务 ∪ 今日样本服务），不解析 services.yaml。
+    事件按 (date_local, subject) 一次性索引，逐格 O(1) 命中。"""
+    today_local = datetime.fromtimestamp(now_ts, tz).date()
+    start_date = today_local - timedelta(days=window_days - 1)
+    daily = store.get_probe_daily_since(start_date.isoformat())
+    services = sorted({r.service for r in daily} | {s.service for s in today_samples})
+    today_stats = {st.service: st for st in aggregate_window(today_samples, services)}
+    # 当天事件索引：date_local 用同一 tz 换算，与 probe_daily.date 同口径。
+    # 查询窗对齐 start_date 本地午夜(与逐日格同口径),不用 now_ts-N*86400
+    # ——后者偏移半天、会多捞一截不展示日的事件,徒增噪声。
+    win_start_ts = int(
+        datetime(start_date.year, start_date.month, start_date.day, tzinfo=tz).timestamp()
+    )
+    ev_idx: dict[tuple[str, str], set[str]] = {}
+    for e in store.get_events_since(win_start_ts):
+        d = datetime.fromtimestamp(e.ts, tz).date().isoformat()
+        ev_idx.setdefault((d, e.subject), set()).add(e.rule)
+    daily_idx = {(r.service, r.date): r for r in daily}
+    bars: list[dict] = []
+    for svc in services:
+        days: list[dict] = []
+        for i in range(window_days):
+            day = start_date + timedelta(days=i)
+            ds = day.isoformat()
+            is_today = day == today_local
+            if is_today:
+                st = today_stats.get(svc)
+                uptime = st.uptime_pct if (st and st.total) else None
+            else:
+                row = daily_idx.get((svc, ds))
+                uptime = (row.ok_count / row.total * 100) if (row and row.total) else None
+            state = _day_state(uptime, ev_idx.get((ds, svc), frozenset()), settings)
+            days.append(
+                {
+                    "date": ds,
+                    "state": state,
+                    "is_today": is_today,
+                    "uptime_pct": round(uptime, 1) if uptime is not None else None,
+                }
+            )
+        st = today_stats.get(svc)
+        bars.append(
+            {
+                "service": svc,
+                "uptime_pct": round(st.uptime_pct, 1) if (st and st.total) else None,
+                "p95_ms": st.p95_ms if st else None,
+                "days": days,
+            }
+        )
+    return bars
+
+
+def _host_self(
+    settings: Settings,
+    *,
+    latest_probe_ts: int | None,
+    now_ts: int,
+    llm_config,
+    llm: dict,
+) -> dict:
+    """宿主 & 自身行的新增自省块：探针引擎活性 + LLM active/fallback。
+    宿主级 hygiene 告警另由 build_overview 的 hygiene.hygiene_alerts 提供，这里不重算。
+    llm 为 _llm_posture 结果（env 回退路径用其 model；llm_config 在时给 active+fallback）。"""
+    if latest_probe_ts is None:
+        engine_live: bool | None = None
+    else:
+        engine_live = (now_ts - latest_probe_ts) < 2 * settings.sentinel_probe_interval
+    active = fallback = None
+    if llm_config is not None:
+        cur = llm_config.current()
+        fb = llm_config.fallback()
+        active = cur.model if cur else None
+        fallback = fb.model if fb else None
+    else:
+        active = llm.get("model")
+    return {
+        "probe_engine_live": engine_live,
+        "llm": {"active": active, "fallback": fallback, "fallback_ready": fallback is not None},
+    }
+
+
+def _event_feed(
+    store: Store,
+    settings: Settings,
+    *,
+    now_ts: int,
+    tz: timezone,
+    open_events: list,
+    page: int,
+    diag_active: bool,
+) -> dict:
+    """事件流：近 N 天发生的事件 + 仍 open 的更早事件，ts 降序、服务端切片分页。
+    page 越上界钳到末页；空流 total_pages=1、items=[]。"""
+    window_start = now_ts - settings.sentinel_event_feed_days * _DAY_SECONDS
+    recent = store.get_events_since(window_start)  # ts >= start, desc
+    older_open = [e for e in open_events if e.ts < window_start]
+    feed = sorted(older_open + recent, key=lambda e: e.ts, reverse=True)
+    size = max(1, settings.sentinel_panel_page_size)  # 防 0/负配置触发除零 → 钳到 ≥1
+    total = len(feed)
+    total_pages = max(1, (total + size - 1) // size)
+    page = min(max(1, page), total_pages)
+    start = (page - 1) * size
+    items = [_event_view(e, tz, diag_active=diag_active) for e in feed[start : start + size]]
+    return {
+        "items": items,
+        "page": page,
+        "total_pages": total_pages,
+        "total": total,
+        "page_size": size,
+    }
+
+
 async def build_overview(
     store: Store,
     settings: Settings,
@@ -181,6 +322,8 @@ async def build_overview(
     docker=None,
     llm_config=None,
     diag_registered: bool | None = None,
+    window_days: int = 90,
+    page: int = 1,
 ) -> dict:
     """总览 view-model。docker 为可选注入的 DockerClient,缺省 None → 容器计数降级 None。
     llm_config 为可选注入的 LLMConfig,缺省 None → 回退 settings.llm_*。
@@ -197,6 +340,30 @@ async def build_overview(
     llm = _llm_posture(llm_config, settings, diag_registered=diag_registered)
     # 诊断层此刻是否真在跑:已配置且未待重启。pending 事件的生命周期据此显示。
     diag_active = llm["enabled"] and not llm["pending_restart"]
+    # 健康柱条 + 宿主自身行：今日样本只拉一次，健康柱条与引擎活性共用。
+    today_local = datetime.fromtimestamp(now_ts, tz).date()
+    midnight_ts = int(
+        datetime(today_local.year, today_local.month, today_local.day, tzinfo=tz).timestamp()
+    )
+    today_samples = store.get_probe_samples_since(midnight_ts)
+    health = _service_health_bars(
+        store, settings, now_ts=now_ts, tz=tz, window_days=window_days, today_samples=today_samples
+    )
+    # 引擎活性看全表最新样本(不限今日):午夜后最新样本可能落在昨日,
+    # 复用 today_samples 会把"刚探测过"误判成 unknown。
+    latest_probe_ts = store.get_latest_probe_ts()
+    host_self = _host_self(
+        settings, latest_probe_ts=latest_probe_ts, now_ts=now_ts, llm_config=llm_config, llm=llm
+    )
+    events = _event_feed(
+        store,
+        settings,
+        now_ts=now_ts,
+        tz=tz,
+        open_events=open_events,
+        page=page,
+        diag_active=diag_active,
+    )
     return {
         "now_str": now.strftime("%Y-%m-%d %H:%M"),
         "refresh_seconds": _REFRESH_SECONDS,
@@ -229,6 +396,10 @@ async def build_overview(
                 if e.rule in HYGIENE_RULES
             ],
         },
+        "window_days": window_days,
+        "health": health,
+        "host_self": host_self,
+        "events": events,
     }
 
 

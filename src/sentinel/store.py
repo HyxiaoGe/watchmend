@@ -6,7 +6,13 @@ import sqlite3
 from pathlib import Path
 
 from sentinel.findings import EventRecord
-from sentinel.models import ProbeSample, Snapshot, snapshot_from_dict, snapshot_to_dict
+from sentinel.models import (
+    ProbeDailyRow,
+    ProbeSample,
+    Snapshot,
+    snapshot_from_dict,
+    snapshot_to_dict,
+)
 
 _UNSET = object()  # 区分"省略 tools_json(不动该列)"与"显式传 None(清空该列)"
 
@@ -114,6 +120,12 @@ class Store:
             for r in rows
         ]
 
+    def get_latest_probe_ts(self) -> int | None:
+        """全表最新探针样本 ts（不限今日）。None=从未探测过。
+        供探针引擎活性判定：午夜后最新样本可能落在昨日，不能只看今日零点后样本。"""
+        row = self._conn.execute("SELECT MAX(ts) FROM probe_samples").fetchone()
+        return row[0] if row and row[0] is not None else None
+
     def prune_probe_samples(self, before_ts: int) -> int:
         cur = self._conn.execute("DELETE FROM probe_samples WHERE ts < ?", (before_ts,))
         self._conn.commit()
@@ -149,6 +161,21 @@ class Store:
             (service, before_date, limit),
         ).fetchall()
         return [r[0] for r in rows]
+
+    def get_probe_daily_since(self, start_date: str) -> list[ProbeDailyRow]:
+        """窗口内全服务日汇总（date 升序）。90 天 × 16 服务 ≈ 1440 行，廉价。
+        start_date 为本地日期字符串（ISO，与 probe_daily.date 同口径）。"""
+        rows = self._conn.execute(
+            "SELECT service, date, total, ok_count, p50, p95 FROM probe_daily "
+            "WHERE date >= ? ORDER BY date",
+            (start_date,),
+        ).fetchall()
+        return [
+            ProbeDailyRow(
+                service=r[0], date=r[1], total=r[2], ok_count=r[3], p50_ms=r[4], p95_ms=r[5]
+            )
+            for r in rows
+        ]
 
     # ---- 巡检事件(Phase 2) ----
 
@@ -234,6 +261,17 @@ class Store:
             "WHERE status = 'resolved' AND resolved_ts >= ? ORDER BY resolved_ts DESC LIMIT ?",
             (since_ts, limit),
         ).fetchall()
+        return [EventRecord(*r) for r in rows]
+
+    def get_events_since(self, since_ts: int, *, limit: int | None = None) -> list[EventRecord]:
+        """窗口内全部事件（open + resolved），按 ts 降序。供逐日着色与事件流分页。
+        事件稀疏，量可控；limit=None 不限。"""
+        sql = f"SELECT {self._EVENT_COLS} FROM events WHERE ts >= ? ORDER BY ts DESC"
+        params: list = [since_ts]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        rows = self._conn.execute(sql, params).fetchall()
         return [EventRecord(*r) for r in rows]
 
     def get_event(self, event_id: int) -> EventRecord | None:

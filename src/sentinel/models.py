@@ -132,6 +132,18 @@ class ServiceDayStats:
         return self.ok_count / self.total * 100
 
 
+@dataclass
+class ProbeDailyRow:
+    """probe_daily 一行（逐日健康柱条用）。p50_ms/p95_ms 可空（当天无 ok 样本）。"""
+
+    service: str
+    date: str
+    total: int
+    ok_count: int
+    p50_ms: float | None
+    p95_ms: float | None
+
+
 def snapshot_from_dict(d: dict) -> Snapshot:
     return Snapshot(
         provider=d["provider"],

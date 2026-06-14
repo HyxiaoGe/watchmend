@@ -83,6 +83,17 @@ class Settings(BaseSettings):
     # 证据台只读面板(子项目③):SSR 零 JS,仅本机访问无鉴权。默认开,部署可关。
     sentinel_panel_enabled: bool = True
 
+    # 证据台重设计（子项目⑤）：外观/可视化偏好默认 + 颜色阈值 + 诊断语言。
+    sentinel_panel_default_lang: str = ""  # 空=auto（Accept-Language）；否则 zh|en 强制
+    sentinel_panel_default_theme: str = "system"  # dark|light|system
+    sentinel_panel_history_days: int = 90  # 健康柱条最长窗口 = 90/30 切换的上限
+    sentinel_panel_page_size: int = 8  # 事件流每页条数
+    sentinel_panel_services_cap: int = 20  # 服务行默认全列上限（超出走"展开剩余 N"，模板侧）
+    sentinel_panel_red_uptime_pct: float = 50.0  # 当日 uptime 低于此 → down（红）
+    sentinel_panel_partial_uptime_pct: float = 99.5  # 低于此（且≥red）→ partial（橙）
+    sentinel_llm_lang: str = "zh"  # 此后新生成的诊断语言（zh|en）；历史不回溯翻译
+    sentinel_event_feed_days: int = 30  # 事件流纳入"近 N 天"的窗口（open 不受限）
+
     @property
     def providers_list(self) -> list[str]:
         return [p.strip() for p in self.sentinel_providers.split(",") if p.strip()]
