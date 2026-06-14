@@ -31,14 +31,20 @@ def register_panel_routes(app: FastAPI) -> None:
         state = request.app.state
         tz = timezone(timedelta(hours=state.settings.sentinel_heartbeat_utc_offset))
         overview = await view.build_overview(
-            state.store, state.settings, now=datetime.now(tz), docker=getattr(state, "docker", None)
+            state.store,
+            state.settings,
+            now=datetime.now(tz),
+            docker=getattr(state, "docker", None),
+            llm_config=getattr(state, "llm_config", None),
         )
         return HTMLResponse(_env.get_template("panel.html").render(**overview))
 
     @app.get("/event/{event_id}", response_class=HTMLResponse)
     async def panel_event(event_id: int, request: Request) -> HTMLResponse:
         state = request.app.state
-        detail = view.build_event_detail(state.store, state.settings, event_id)
+        detail = view.build_event_detail(
+            state.store, state.settings, event_id, llm_config=getattr(state, "llm_config", None)
+        )
         status = 200 if detail is not None else 404
         return HTMLResponse(
             _env.get_template("event.html").render(detail=detail), status_code=status

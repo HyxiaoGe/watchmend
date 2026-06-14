@@ -296,3 +296,56 @@ def test_build_event_detail_no_llm_no_evidence(tmp_path, monkeypatch):
     assert d["diagnosis"] is None
     assert d["tool_calls"] == []
     store.close()
+
+
+async def test_build_overview_llm_from_config_overrides_env(tmp_path, monkeypatch):
+    # llm.yaml 是真源:env 留空但 yaml 配了 → 面板姿态反映 yaml 的 model
+    from sentinel.config import Settings
+    from sentinel.llm_config import LLMConfig
+
+    path = tmp_path / "llm.yaml"
+    path.write_text(
+        "active: deepseek\nproviders:\n  deepseek:\n"
+        "    base_url: https://api.deepseek.com/v1\n    model: deepseek-chat\n    api_key: ''\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_LLM_CONFIG_FILE", str(path))
+    settings = Settings(_env_file=None)  # 注意:无 LLM_BASE_URL/MODEL
+    cfg = LLMConfig(settings)
+    store = Store(str(tmp_path / "s.db"))
+    ov = await view.build_overview(store, settings, now=NOW, docker=None, llm_config=cfg)
+    assert ov["posture"]["llm"] == {"enabled": True, "model": "deepseek-chat"}
+    assert ov["posture"]["layers"]["llm"] is True
+    store.close()
+
+
+def test_build_event_detail_llm_from_config(tmp_path, monkeypatch):
+    from sentinel.config import Settings
+    from sentinel.llm_config import LLMConfig
+
+    path = tmp_path / "llm.yaml"
+    path.write_text(
+        "active: deepseek\nproviders:\n  deepseek:\n"
+        "    base_url: https://api.deepseek.com/v1\n    model: deepseek-chat\n    api_key: ''\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_LLM_CONFIG_FILE", str(path))
+    settings = Settings(_env_file=None)
+    cfg = LLMConfig(settings)
+    store = Store(str(tmp_path / "s.db"))
+    eid = store.insert_event(
+        ts=NOW_TS - 600,
+        rule="disk_usage",
+        subject="/",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    d = view.build_event_detail(store, settings, eid, llm_config=cfg)
+    assert d["llm_enabled"] is True
+    store.close()

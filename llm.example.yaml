@@ -1,0 +1,24 @@
+# llm.example.yaml — WatchMend LLM provider 注册表(示例)
+# 复制为 llm.yaml 后改成你自己的;或直接跑 `make llm-init` 交互生成。
+# llm.yaml 已 gitignored(同 services.yaml);本示例文件入库供参考。
+#
+# active 选哪家做诊断器;fallback 可选,active 重试耗尽后再试一轮。
+# 真 key 不写这里:api_key_env 引用环境变量名(写进 .env / export);
+# 仅本地无鉴权端点(Ollama 等)才用内联 api_key。
+# 无此文件时回落老 LLM_BASE_URL/LLM_API_KEY/LLM_MODEL 三环境变量,零 breaking。
+active: deepseek
+fallback: kimi
+
+providers:
+  deepseek:
+    base_url: https://api.deepseek.com/v1
+    model: deepseek-chat
+    api_key_env: LLM_API_KEY_DEEPSEEK
+  kimi:
+    base_url: https://api.moonshot.cn/v1
+    model: kimi-k2-turbo-preview
+    api_key_env: LLM_API_KEY_KIMI
+  ollama:
+    base_url: http://localhost:11434/v1
+    model: qwen3
+    api_key: ""

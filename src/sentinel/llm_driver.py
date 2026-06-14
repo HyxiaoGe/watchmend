@@ -18,6 +18,7 @@ import httpx
 from sentinel.config import Settings
 from sentinel.docker_client import DockerClient
 from sentinel.findings import EventRecord
+from sentinel.llm_config import LLMProfile
 
 logger = logging.getLogger("sentinel")
 
@@ -100,7 +101,8 @@ def _diag_user_prompt(event: EventRecord) -> str:
 
 
 class LLMDriver:
-    """OpenAI-compatible tool 循环。enabled=False(未配 base_url/model)时所有入口直接短路。"""
+    """OpenAI-compatible tool 循环。
+    诊断/总结按调用方传入的 LLMProfile 直连(base_url/api_key/model)。"""
 
     def __init__(
         self, client: httpx.AsyncClient, settings: Settings, docker: DockerClient | None = None
@@ -109,42 +111,40 @@ class LLMDriver:
         self._settings = settings
         self._docker = docker
 
-    @property
-    def enabled(self) -> bool:
-        return bool(self._settings.llm_base_url and self._settings.llm_model)
-
     # ---- 对外入口 ----
 
-    async def diagnose(self, event: EventRecord) -> tuple[dict | None, str, list[dict]]:
+    async def diagnose(
+        self, event: EventRecord, *, profile: LLMProfile
+    ) -> tuple[dict | None, str, list[dict]]:
         """返回 (诊断 dict 或 None, 模型最终原文, 工具调用证据链)。
         网络/HTTP 异常向上抛,由调用方决定重试。诊断决策逻辑不变,纯增量捕获。"""
         messages = [
             {"role": "system", "content": _DIAG_SYSTEM},
             {"role": "user", "content": _diag_user_prompt(event)},
         ]
-        text, tool_calls = await self._tool_loop(messages)
+        text, tool_calls = await self._tool_loop(messages, profile)
         return parse_diagnosis(text), text, tool_calls
 
-    async def summarize(self, data: dict) -> str | None:
+    async def summarize(self, data: dict, *, profile: LLMProfile) -> str | None:
         """日报 AI 总结:数据全部内联,单轮无工具。"""
         prompt = _SUMMARY_TEMPLATE.format(
             date=data.get("date", ""), data=json.dumps(data, ensure_ascii=False)
         )
-        msg = await self._chat([{"role": "user", "content": prompt}], tools=[])
+        msg = await self._chat([{"role": "user", "content": prompt}], tools=[], profile=profile)
         text = (msg.get("content") or "").strip()
         return text or None
 
     # ---- tool 循环 ----
 
-    async def _chat(self, messages: list[dict], tools: list[dict]) -> dict:
+    async def _chat(self, messages: list[dict], tools: list[dict], profile: LLMProfile) -> dict:
         headers = {}
-        if self._settings.llm_api_key:
-            headers["Authorization"] = f"Bearer {self._settings.llm_api_key}"
-        payload: dict = {"model": self._settings.llm_model, "messages": messages}
+        if profile.api_key:
+            headers["Authorization"] = f"Bearer {profile.api_key}"
+        payload: dict = {"model": profile.model, "messages": messages}
         if tools:
             payload["tools"] = tools
         resp = await self._client.post(
-            f"{self._settings.llm_base_url.rstrip('/')}/chat/completions",
+            f"{profile.base_url.rstrip('/')}/chat/completions",
             json=payload,
             headers=headers,
             timeout=float(self._settings.llm_timeout_seconds),
@@ -152,11 +152,11 @@ class LLMDriver:
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]
 
-    async def _tool_loop(self, messages: list[dict]) -> tuple[str, list[dict]]:
+    async def _tool_loop(self, messages: list[dict], profile: LLMProfile) -> tuple[str, list[dict]]:
         tools = self._tool_specs()
         tool_log: list[dict] = []  # 证据链:每次工具调用一项(子项目③),不影响决策
         for _ in range(self._settings.llm_max_tool_rounds):
-            msg = await self._chat(messages, tools)
+            msg = await self._chat(messages, tools, profile)
             tool_calls = msg.get("tool_calls") or []
             if not tool_calls:
                 return msg.get("content") or "", tool_log
@@ -183,7 +183,7 @@ class LLMDriver:
         messages.append(
             {"role": "user", "content": "工具轮数已用完,基于已有证据直接给出最终结论。"}
         )
-        msg = await self._chat(messages, tools=[])
+        msg = await self._chat(messages, tools=[], profile=profile)
         return msg.get("content") or "", tool_log
 
     async def _run_tool(self, name: str, args: dict) -> tuple[str, bool]:

@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = 120
     llm_max_tool_rounds: int = 8  # 单次诊断的工具调用轮数上限,防失控烧 token
     sentinel_diag_interval: int = 120  # pending 事件诊断轮询周期(秒)
+    # LLM provider 注册表文件(子项目④);缺失=回落老 LLM_* env(零 breaking)。
+    sentinel_llm_config_file: str = "llm.yaml"
     # docker 只读诊断 + 容器巡检(ps/logs/inspect):配 host 启用,空=整体不启用。
     # 挂 socket / 连 socket-proxy 等于给容器宿主机级权限,默认关、按需打开。
     sentinel_docker_socket: str = ""  # DEPRECATED:保留向后兼容,新部署改用 sentinel_docker_host

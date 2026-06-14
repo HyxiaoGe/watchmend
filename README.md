@@ -74,13 +74,40 @@ make up                                   # 或 docker compose up -d --build
 ## LLM 诊断(可选)
 
 **不锁平台。** WatchMend 走标准 OpenAI `chat/completions` + function calling 协议,
-任何提供 OpenAI 兼容端点的服务都即插即用——只改 `.env` 三行,代码零改动:
+任何提供 OpenAI 兼容端点的服务都即插即用。多家可共存,声明在 `llm.yaml` 里、`active`
+指针选用,改了**下一轮诊断热加载生效、无需重启**:
+
+```yaml
+# llm.yaml(gitignored;见 llm.example.yaml)
+active: deepseek       # 当前诊断器
+fallback: kimi         # 可选:active 失败后再试一轮(事件诊断与日报 AI 总结都走)
+providers:
+  deepseek:
+    base_url: https://api.deepseek.com/v1
+    model: deepseek-chat
+    api_key_env: LLM_API_KEY_DEEPSEEK   # 真 key 留在环境变量,不落盘
+  kimi:
+    base_url: https://api.moonshot.cn/v1
+    model: kimi-k2-turbo-preview
+    api_key_env: LLM_API_KEY_KIMI
+```
 
 ```bash
-LLM_BASE_URL=https://api.deepseek.com/v1   # 各平台见下表
-LLM_API_KEY=sk-...                          # 本地端点可随便填
-LLM_MODEL=deepseek-chat
+make llm-init            # 交互向导,加一个 provider
+make llm-switch name=kimi  # 切 active(下一轮生效,免重启)
+make llm-list            # 看各 provider 与 key 是否就绪
 ```
+
+> **Docker 部署**:`llm.yaml` 经 compose 挂进容器(`./llm.yaml:/app/llm.yaml:ro`),
+> `make up`/`make demo` 会自动预置一个空占位;宿主机上 `make llm-init`(先加 provider)、
+> `make llm-switch`(再切 active)改的就是容器读的同一份文件。**LLM 已启用后**,切 provider /
+> 改 model 都**下一轮诊断热加载生效——无需进容器、无需重启**;但**首次**在空占位上从零启用
+> 诊断仍需重启一次容器(诊断 job 在启动时按是否启用注册,见下条)。
+
+> **向后兼容**:没有 `llm.yaml`(或它为空/纯注释,如 `make up` 预置的占位)时回落老三
+> 环境变量 `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL`(零 breaking)。坏配置一律 fail-safe:
+> 启动时坏配置只关 LLM 层、确定性巡检照跑;运行中改坏 `llm.yaml` 保留上一份有效配置,
+> 不打断监控。**首次从零启用 LLM 需重启一次**;之后切 provider/改 model 全走热加载。
 
 | 平台 | `LLM_BASE_URL` | `LLM_MODEL` 示例 | 备注 |
 |---|---|---|---|

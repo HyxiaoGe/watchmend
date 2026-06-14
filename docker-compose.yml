@@ -12,6 +12,9 @@ services:
       - ./data:/data
       # 探针清单:cp services.example.yaml services.yaml 后按自己的服务编辑(make up 会自动复制)
       - ./services.yaml:/app/services.yaml:ro
+      # LLM 直连诊断的 provider 注册表(可选):make up 预置空占位并挂这里,host 改它
+      # (make llm-init/switch)下一轮诊断热加载生效;留空/缺失=回落 .env 的 LLM_* 变量。
+      - ./llm.yaml:/app/llm.yaml:ro
       # hygiene 备份新鲜度:指向宿主机 pg_dump 目录;目录为空=自动跳过该检查,无需关心
       - ${SENTINEL_BACKUP_HOST_DIR:-./backups}:/backups/postgresql:ro
       # docker 容器巡检 + LLM 诊断的只读工具(可选,二选一):

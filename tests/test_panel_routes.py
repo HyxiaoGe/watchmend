@@ -118,3 +118,23 @@ async def test_panel_disabled_does_not_register(tmp_path, monkeypatch):
     resp = await _get(app, "/")
     assert resp.status_code == 404
     store.close()
+
+
+async def test_overview_llm_pill_from_config(tmp_path, monkeypatch):
+    from sentinel.llm_config import LLMConfig
+
+    path = tmp_path / "llm.yaml"
+    path.write_text(
+        "active: deepseek\nproviders:\n  deepseek:\n"
+        "    base_url: https://api.deepseek.com/v1\n    model: deepseek-chat\n    api_key: ''\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SENTINEL_LLM_CONFIG_FILE", str(path))
+    settings = _settings(monkeypatch)  # 无 LLM_BASE_URL/MODEL
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    app.state.llm_config = LLMConfig(settings)
+    resp = await _get(app, "/")
+    assert resp.status_code == 200
+    assert "deepseek-chat" in resp.text  # 面板 LLM 标识反映 llm.yaml(env 留空也对)
+    store.close()

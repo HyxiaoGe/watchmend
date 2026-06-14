@@ -376,6 +376,7 @@ async def test_diag_tick_done_and_failed_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("SENTINEL_LOKI_URL", "")
     monkeypatch.setenv("LLM_BASE_URL", "http://llm.test/v1")
     monkeypatch.setenv("LLM_MODEL", "test-model")
+    monkeypatch.setenv("SENTINEL_LLM_CONFIG_FILE", str(tmp_path / "no-llm.yaml"))
 
     from sentinel.app import build_jobs
     from sentinel.config import Settings
@@ -1015,6 +1016,7 @@ async def test_diag_tick_persists_tool_calls_on_done_and_failed(tmp_path, monkey
     monkeypatch.setenv("SENTINEL_LOKI_URL", "")
     monkeypatch.setenv("LLM_BASE_URL", "http://llm.test/v1")
     monkeypatch.setenv("LLM_MODEL", "test-model")
+    monkeypatch.setenv("SENTINEL_LLM_CONFIG_FILE", str(tmp_path / "no-llm.yaml"))
 
     from sentinel.app import build_jobs
     from sentinel.config import Settings
