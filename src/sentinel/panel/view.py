@@ -88,7 +88,12 @@ def _channels(settings: Settings) -> list[str]:
     return out
 
 
-def _llm_posture(settings: Settings) -> dict:
+def _llm_posture(llm_config, settings: Settings) -> dict:
+    """LLM 姿态:优先 LLMConfig(llm.yaml/env 真源,鸭子类型 .current());
+    无 config 时回退 settings.llm_*(向后兼容老调用/单测)。"""
+    if llm_config is not None:
+        profile = llm_config.current()
+        return {"enabled": profile is not None, "model": profile.model if profile else None}
     enabled = bool(settings.llm_base_url and settings.llm_model)
     return {"enabled": enabled, "model": settings.llm_model if enabled else None}
 
@@ -151,8 +156,11 @@ def _hygiene_services(store: Store, *, now_ts: int) -> list[dict]:
     return out
 
 
-async def build_overview(store: Store, settings: Settings, *, now: datetime, docker=None) -> dict:
-    """总览 view-model。docker 为可选注入的 DockerClient,缺省 None → 容器计数降级 None。"""
+async def build_overview(
+    store: Store, settings: Settings, *, now: datetime, docker=None, llm_config=None
+) -> dict:
+    """总览 view-model。docker 为可选注入的 DockerClient,缺省 None → 容器计数降级 None。
+    llm_config 为可选注入的 LLMConfig,缺省 None → 回退 settings.llm_*。"""
     tz = (
         now.tzinfo
         if isinstance(now.tzinfo, timezone)
@@ -162,6 +170,7 @@ async def build_overview(store: Store, settings: Settings, *, now: datetime, doc
     open_events = store.get_open_events()
     recoveries = store.get_resolved_since(now_ts - _DAY_SECONDS)
     docker_mode = _docker_mode(settings)
+    llm = _llm_posture(llm_config, settings)
     return {
         "now_str": now.strftime("%Y-%m-%d %H:%M"),
         "refresh_seconds": _REFRESH_SECONDS,
@@ -169,13 +178,13 @@ async def build_overview(store: Store, settings: Settings, *, now: datetime, doc
             "monitored_containers": await _monitored_containers(docker, settings),
             "open_count": len(open_events),
             "resolved_24h": store.count_resolved_since(now_ts - _DAY_SECONDS),
-            "llm": _llm_posture(settings),
+            "llm": llm,
             "docker": {"mode": docker_mode, "read_only": True},
             "layers": {
                 "prometheus": bool(settings.sentinel_prometheus_url),
                 "loki": bool(settings.sentinel_loki_url),
                 "docker": docker_mode != "off",
-                "llm": bool(settings.llm_base_url and settings.llm_model),
+                "llm": llm["enabled"],
             },
             "channels": _channels(settings),
             "env_redaction": _env_redaction(open_events + recoveries),
@@ -211,9 +220,12 @@ def _tool_calls_view(tools_json: str | None) -> list[dict]:
     return out
 
 
-def build_event_detail(store: Store, settings: Settings, event_id: int) -> dict | None:
+def build_event_detail(
+    store: Store, settings: Settings, event_id: int, *, llm_config=None
+) -> dict | None:
     """单事件详情 view-model。事件不存在 → None(路由据此 404)。
-    settings 用于 llm_enabled 与时间显示时区(spec §6 签名补 settings)。"""
+    settings 用于 llm_enabled 与时间显示时区(spec §6 签名补 settings)。
+    llm_config 为可选注入的 LLMConfig,缺省 None → 回退 settings.llm_*。"""
     e = store.get_event(event_id)
     if e is None:
         return None
@@ -229,7 +241,7 @@ def build_event_detail(store: Store, settings: Settings, event_id: int) -> dict 
             diagnosis = None
     return {
         "event": ev,
-        "llm_enabled": bool(settings.llm_base_url and settings.llm_model),
+        "llm_enabled": _llm_posture(llm_config, settings)["enabled"],
         "diagnosis": diagnosis,
         "tool_calls": _tool_calls_view(e.diagnosis_tools_json),
     }
