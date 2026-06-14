@@ -252,3 +252,55 @@ def test_example_yaml_parses(monkeypatch):
     reg = _parse_and_resolve(str(example))
     assert reg.active.name == "deepseek"
     assert reg.fallback.name == "kimi"
+
+
+def test_empty_yaml_falls_back_to_env(tmp_path, monkeypatch):
+    # 空/纯注释 llm.yaml(compose 预置的占位)= 未配置 → 回落老 LLM_* env(零 breaking)
+    from sentinel.llm_config import LLMConfig
+
+    path = tmp_path / "llm.yaml"
+    path.write_text("# 占位:还没配 provider\n", encoding="utf-8")  # 纯注释 → safe_load=None
+    s = _settings(
+        monkeypatch,
+        SENTINEL_LLM_CONFIG_FILE=str(path),
+        LLM_BASE_URL="http://llm.test/v1",
+        LLM_MODEL="m",
+        LLM_API_KEY="sk-env",
+    )
+    cfg = LLMConfig(s)
+    prof = cfg.current()
+    assert prof is not None
+    assert prof.name == "env"
+    assert prof.base_url == "http://llm.test/v1"
+    assert cfg.fallback() is None
+
+
+def test_empty_yaml_no_env_stays_disabled(tmp_path, monkeypatch):
+    # 空 llm.yaml 且无 LLM_* env → 整层关闭(不要因为"占位文件在"就误开)
+    from sentinel.llm_config import LLMConfig
+
+    path = tmp_path / "llm.yaml"
+    path.write_text("\n", encoding="utf-8")  # 完全空 → safe_load=None
+    s = _settings(monkeypatch, SENTINEL_LLM_CONFIG_FILE=str(path))
+    cfg = LLMConfig(s)
+    assert cfg.current() is None
+    assert cfg.enabled is False
+
+
+def test_yaml_is_directory_falls_back_to_env(tmp_path, monkeypatch):
+    # docker 对缺失的 bind-mount 源会误建空目录:视同未配置 → 回落 env,而非整层崩
+    from sentinel.llm_config import LLMConfig
+
+    path = tmp_path / "llm.yaml"
+    path.mkdir()  # 模拟 docker 误建的空目录
+    s = _settings(
+        monkeypatch,
+        SENTINEL_LLM_CONFIG_FILE=str(path),
+        LLM_BASE_URL="http://llm.test/v1",
+        LLM_MODEL="m",
+        LLM_API_KEY="sk-env",
+    )
+    cfg = LLMConfig(s)
+    prof = cfg.current()
+    assert prof is not None
+    assert prof.name == "env"

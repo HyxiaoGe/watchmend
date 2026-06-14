@@ -12,6 +12,7 @@ import argparse
 import logging
 import os
 import re
+import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,9 +69,8 @@ def _resolve_provider(name: str, spec: object) -> LLMProfile:
     return LLMProfile(name=name, base_url=str(base_url), api_key=str(api_key), model=str(model))
 
 
-def _parse_and_resolve(path: str) -> _Registry:
-    """读 llm.yaml → 解析 active(严判,抛)+ fallback(宽判,坏则忽略)。"""
-    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+def _resolve_registry(raw: object) -> _Registry:
+    """从已解析的 yaml 顶层对象解析 active(严判,抛)+ fallback(宽判,坏则忽略)。"""
     if not isinstance(raw, dict):
         raise LLMConfigError("llm.yaml 顶层不是映射")
     providers = raw.get("providers")
@@ -91,6 +91,12 @@ def _parse_and_resolve(path: str) -> _Registry:
             except LLMConfigError as e:
                 logger.warning("fallback=%s 无效,忽略: %s", fb_name, e)
     return _Registry(active=active, fallback=fallback)
+
+
+def _parse_and_resolve(path: str) -> _Registry:
+    """读 llm.yaml 文件 → 解析。空/纯注释(safe_load→None)按"顶层非映射"抛;
+    LLMConfig 层会把这种"空"当未配置、回落老 LLM_* env。"""
+    return _resolve_registry(yaml.safe_load(Path(path).read_text(encoding="utf-8")))
 
 
 class LLMConfig:
@@ -117,16 +123,26 @@ class LLMConfig:
 
     def _reload_if_changed(self) -> None:
         try:
-            mtime = os.stat(self._path).st_mtime
+            st = os.stat(self._path)
         except FileNotFoundError:
             self._last_good = self._env_registry()  # yaml 缺席 → env 回落
             self._last_mtime = None
             return
-        if mtime == self._last_mtime:
+        if stat.S_ISDIR(st.st_mode):
+            # docker 对缺失的 bind-mount 源会误建空目录:视同未配置 → 回落老 LLM_* env
+            self._last_good = self._env_registry()
+            self._last_mtime = None
             return
-        self._last_mtime = mtime
+        if st.st_mtime == self._last_mtime:
+            return
+        self._last_mtime = st.st_mtime
         try:
-            self._last_good = _parse_and_resolve(self._path)
+            raw = yaml.safe_load(Path(self._path).read_text(encoding="utf-8"))
+            if raw is None:
+                # 空/纯注释 llm.yaml(compose 预置的占位)= 未配置 → 回落老 LLM_* env(零 breaking)
+                self._last_good = self._env_registry()
+                return
+            self._last_good = _resolve_registry(raw)
             logger.info("llm.yaml 已加载,active=%s", self._last_good.active.name)
         except Exception as e:
             logger.warning("llm.yaml 无效,保留上一份有效配置: %s", e)
