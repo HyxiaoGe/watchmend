@@ -299,7 +299,7 @@ def _event_feed(
     recent = store.get_events_since(window_start)  # ts >= start, desc
     older_open = [e for e in open_events if e.ts < window_start]
     feed = sorted(older_open + recent, key=lambda e: e.ts, reverse=True)
-    size = settings.sentinel_panel_page_size
+    size = max(1, settings.sentinel_panel_page_size)  # 防 0/负配置触发除零 → 钳到 ≥1
     total = len(feed)
     total_pages = max(1, (total + size - 1) // size)
     page = min(max(1, page), total_pages)
@@ -349,7 +349,9 @@ async def build_overview(
     health = _service_health_bars(
         store, settings, now_ts=now_ts, tz=tz, window_days=window_days, today_samples=today_samples
     )
-    latest_probe_ts = max((s.ts for s in today_samples), default=None)
+    # 引擎活性看全表最新样本(不限今日):午夜后最新样本可能落在昨日,
+    # 复用 today_samples 会把"刚探测过"误判成 unknown。
+    latest_probe_ts = store.get_latest_probe_ts()
     host_self = _host_self(
         settings, latest_probe_ts=latest_probe_ts, now_ts=now_ts, llm_config=llm_config, llm=llm
     )

@@ -120,6 +120,12 @@ class Store:
             for r in rows
         ]
 
+    def get_latest_probe_ts(self) -> int | None:
+        """全表最新探针样本 ts（不限今日）。None=从未探测过。
+        供探针引擎活性判定：午夜后最新样本可能落在昨日，不能只看今日零点后样本。"""
+        row = self._conn.execute("SELECT MAX(ts) FROM probe_samples").fetchone()
+        return row[0] if row and row[0] is not None else None
+
     def prune_probe_samples(self, before_ts: int) -> int:
         cur = self._conn.execute("DELETE FROM probe_samples WHERE ts < ?", (before_ts,))
         self._conn.commit()

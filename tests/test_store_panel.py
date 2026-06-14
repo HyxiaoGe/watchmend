@@ -1,5 +1,19 @@
-from sentinel.models import ProbeDailyRow
+from sentinel.models import ProbeDailyRow, ProbeSample
 from sentinel.store import Store
+
+
+def test_get_latest_probe_ts_empty_and_max(tmp_path):
+    s = Store(str(tmp_path / "s.db"))
+    assert s.get_latest_probe_ts() is None  # 空库 → None（从未探测）
+    s.add_probe_samples(
+        [
+            ProbeSample(ts=1000, service="api", ok=True, status_code=200, latency_ms=10.0),
+            ProbeSample(ts=3000, service="db", ok=False, status_code=500, latency_ms=None),
+            ProbeSample(ts=2000, service="api", ok=True, status_code=200, latency_ms=12.0),
+        ]
+    )
+    assert s.get_latest_probe_ts() == 3000  # 全表最大 ts（跨服务，不限今日）
+    s.close()
 
 
 def test_get_probe_daily_since_range_and_order(tmp_path):
