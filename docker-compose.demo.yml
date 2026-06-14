@@ -27,6 +27,9 @@ services:
     volumes:
       - ./demo/data:/data
       - ./demo/services.demo.yaml:/app/services.yaml:ro
+      # 可选 LLM 直连诊断:make demo 预置空占位并挂这里;空=回落 .env 的 LLM_* 变量,
+      # 或 make llm-init 配置容器内直连(改了下一轮热加载生效,免重启)。
+      - ./llm.yaml:/app/llm.yaml:ro
     ports:
       - "127.0.0.1:8765:8000"
     depends_on:

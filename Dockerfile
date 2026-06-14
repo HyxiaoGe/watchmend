@@ -8,8 +8,9 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock ./
 RUN uv export --frozen --no-dev --no-emit-project -o requirements.txt \
     && uv pip install --system --no-cache -r requirements.txt
-# services.yaml 不进镜像:探针清单是部署配置,运行时经 volume 挂载
-# (缺失时自动降级 vendor-only 模式,只监控外部状态页)
+# services.yaml / llm.yaml 不进镜像:都是部署配置,运行时经 volume 挂载
+# (services.yaml 缺失→降级 vendor-only,只监控外部状态页;
+#  llm.yaml 空/缺失→回落 .env 的 LLM_* 变量,见 docker-compose.yml 挂载)
 COPY src ./src
 RUN uv pip install --system --no-cache --no-deps .
 
