@@ -278,6 +278,37 @@ def _host_self(
     }
 
 
+def _event_feed(
+    store: Store,
+    settings: Settings,
+    *,
+    now_ts: int,
+    tz: timezone,
+    open_events: list,
+    page: int,
+    diag_active: bool,
+) -> dict:
+    """事件流：近 N 天发生的事件 + 仍 open 的更早事件，ts 降序、服务端切片分页。
+    page 越上界钳到末页；空流 total_pages=1、items=[]。"""
+    window_start = now_ts - settings.sentinel_event_feed_days * _DAY_SECONDS
+    recent = store.get_events_since(window_start)  # ts >= start, desc
+    older_open = [e for e in open_events if e.ts < window_start]
+    feed = sorted(older_open + recent, key=lambda e: e.ts, reverse=True)
+    size = settings.sentinel_panel_page_size
+    total = len(feed)
+    total_pages = max(1, (total + size - 1) // size)
+    page = min(max(1, page), total_pages)
+    start = (page - 1) * size
+    items = [_event_view(e, tz, diag_active=diag_active) for e in feed[start : start + size]]
+    return {
+        "items": items,
+        "page": page,
+        "total_pages": total_pages,
+        "total": total,
+        "page_size": size,
+    }
+
+
 async def build_overview(
     store: Store,
     settings: Settings,
@@ -286,6 +317,8 @@ async def build_overview(
     docker=None,
     llm_config=None,
     diag_registered: bool | None = None,
+    window_days: int = 90,
+    page: int = 1,
 ) -> dict:
     """总览 view-model。docker 为可选注入的 DockerClient,缺省 None → 容器计数降级 None。
     llm_config 为可选注入的 LLMConfig,缺省 None → 回退 settings.llm_*。
@@ -302,6 +335,28 @@ async def build_overview(
     llm = _llm_posture(llm_config, settings, diag_registered=diag_registered)
     # 诊断层此刻是否真在跑:已配置且未待重启。pending 事件的生命周期据此显示。
     diag_active = llm["enabled"] and not llm["pending_restart"]
+    # 健康柱条 + 宿主自身行：今日样本只拉一次，健康柱条与引擎活性共用。
+    today_local = datetime.fromtimestamp(now_ts, tz).date()
+    midnight_ts = int(
+        datetime(today_local.year, today_local.month, today_local.day, tzinfo=tz).timestamp()
+    )
+    today_samples = store.get_probe_samples_since(midnight_ts)
+    health = _service_health_bars(
+        store, settings, now_ts=now_ts, tz=tz, window_days=window_days, today_samples=today_samples
+    )
+    latest_probe_ts = max((s.ts for s in today_samples), default=None)
+    host_self = _host_self(
+        settings, latest_probe_ts=latest_probe_ts, now_ts=now_ts, llm_config=llm_config, llm=llm
+    )
+    events = _event_feed(
+        store,
+        settings,
+        now_ts=now_ts,
+        tz=tz,
+        open_events=open_events,
+        page=page,
+        diag_active=diag_active,
+    )
     return {
         "now_str": now.strftime("%Y-%m-%d %H:%M"),
         "refresh_seconds": _REFRESH_SECONDS,
@@ -334,6 +389,10 @@ async def build_overview(
                 if e.rule in HYGIENE_RULES
             ],
         },
+        "window_days": window_days,
+        "health": health,
+        "host_self": host_self,
+        "events": events,
     }
 
 
