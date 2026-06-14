@@ -398,3 +398,34 @@ def test_truncate_caps_output():
     out = _truncate(long, PANEL_TOOL_OUTPUT_CAP)
     assert out.endswith("…(truncated)")
     assert len(out) == PANEL_TOOL_OUTPUT_CAP + len("…(truncated)")
+
+
+def test_diag_system_selects_by_lang():
+    from sentinel.llm_driver import _DIAG_SYSTEM, _DIAG_SYSTEM_EN, _diag_system
+
+    assert _diag_system("en") is _DIAG_SYSTEM_EN
+    assert _diag_system("zh") is _DIAG_SYSTEM
+    assert _diag_system("anything-else") is _DIAG_SYSTEM  # 默认 zh
+    # 两版都强制最终输出一个 json 代码块
+    assert "```json" in _DIAG_SYSTEM and "```json" in _DIAG_SYSTEM_EN
+    assert "只读" in _DIAG_SYSTEM and "read-only" in _DIAG_SYSTEM_EN
+
+
+async def test_diagnose_uses_english_system_prompt_when_configured(monkeypatch):
+    from sentinel.llm_driver import _DIAG_SYSTEM_EN
+
+    settings = _settings(
+        monkeypatch,
+        LLM_BASE_URL="http://llm.test/v1",
+        LLM_MODEL="m",
+        LLM_API_KEY="sk-test-key",
+        SENTINEL_LLM_LANG="en",
+    )
+    async with httpx.AsyncClient() as client:
+        driver = LLMDriver(client, settings)
+        with respx.mock:
+            llm = respx.post(LLM_URL).mock(side_effect=[_llm_message(content=FINAL_TEXT)])
+            await driver.diagnose(_event(), profile=PROFILE)
+    sent = json.loads(llm.calls[0].request.content)
+    assert sent["messages"][0]["role"] == "system"
+    assert sent["messages"][0]["content"] == _DIAG_SYSTEM_EN
