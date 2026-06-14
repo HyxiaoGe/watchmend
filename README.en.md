@@ -73,7 +73,7 @@ Most data sources are optional — leave one empty and that layer turns off clea
 > the `docker-proxy` service plus sentinel's `depends_on`/`docker_proxy` network in compose
 > (the file has inline notes).
 
-> **Notification channels are a broadcast model**: every configured channel receives each alert/report/diagnosis; failures are isolated (one channel failing does not affect the others). **At least one channel must be configured** (Feishu `FEISHU_VENDOR_WEBHOOK` or any of the above) to start; `FEISHU_VENDOR_WEBHOOK` is no longer mandatory — overseas self-hosters can run with Telegram/ntfy/webhook only.
+> **Notification channels are a broadcast model**: every configured channel receives each alert/report/diagnosis concurrently; failures are isolated (a failing channel is only logged and does not affect the others). Delivery is **send-then-commit**: **if at least one channel succeeds the message counts as delivered**, and the event state is committed (dedup/cooldown); **only when every channel fails is nothing committed, so it is re-sent on the next round** — transient outages never drop events nor get stuck. There is **no per-channel retry within a single broadcast** (the whole thing is re-sent next round). **At least one channel must be configured** (Feishu `FEISHU_VENDOR_WEBHOOK` or any of the above) to start; `FEISHU_VENDOR_WEBHOOK` is no longer mandatory — overseas self-hosters can run with Telegram/ntfy/webhook only.
 
 All 40+ settings (thresholds, cooldowns, verbosity…) are documented inline in
 [.env.example](.env.example).
