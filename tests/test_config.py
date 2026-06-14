@@ -168,3 +168,10 @@ def test_feishu_enabled_via_patrol_only(monkeypatch):
     monkeypatch.setenv("FEISHU_PATROL_WEBHOOK", "https://patrol")
     s = Settings(_env_file=None)
     assert s.feishu_enabled is True  # 任一飞书 webhook 即视为启用
+
+
+def test_llm_config_file_default(monkeypatch):
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    from sentinel.config import Settings
+
+    assert Settings(_env_file=None).sentinel_llm_config_file == "llm.yaml"
