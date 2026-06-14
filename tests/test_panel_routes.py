@@ -173,3 +173,43 @@ async def test_overview_pending_restart_badge_and_open_lifecycle(tmp_path, monke
     assert "诊断待重启" in resp.text
     assert "investigating" not in resp.text  # pending 生命周期标 open,不是 investigating
     store.close()
+
+
+async def test_pref_cookies_written_only_when_in_query(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    # 无偏好 querystring → 不写偏好 cookie
+    r0 = await _get(app, "/")
+    assert "wm_lang" not in r0.headers.get("set-cookie", "")
+    # 带偏好 querystring → 写对应 cookie(SameSite=Lax)
+    r1 = await _get(app, "/?lang=en&theme=light&win=30")
+    sc = r1.headers.get("set-cookie", "")
+    assert "wm_lang=en" in sc and "wm_theme=light" in sc and "wm_win=30" in sc
+    assert "SameSite=Lax" in sc
+    store.close()
+
+
+async def test_pagination_and_window_params_accepted(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    # 越界页码 / 非法窗口 / svc_all 都不应 500(view 钳制 + prefs 回退)
+    for path in ("/?ev_page=999", "/?ev_page=abc", "/?win=bogus", "/?svc_all=1"):
+        resp = await _get(app, path)
+        assert resp.status_code == 200
+    store.close()
+
+
+async def test_lang_cookie_survives_without_query(tmp_path, monkeypatch):
+    # 仅 cookie 带 en(无 querystring)→ 不崩(en 文案断言留到模板重写后)
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://t", cookies={"wm_lang": "en"}
+    ) as c:
+        resp = await c.get("/")
+    assert resp.status_code == 200
+    store.close()
