@@ -467,6 +467,20 @@ async def test_event_detail_404_per_lang(tmp_path, monkeypatch):
     store.close()
 
 
+async def test_default_lang_overrides_accept_language(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch, SENTINEL_PANEL_DEFAULT_LANG="en")
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        resp = await c.get("/", headers={"Accept-Language": "zh-CN,zh;q=0.9"})
+    assert '<html lang="en"' in resp.text  # 配置默认 en 覆盖浏览器 zh(Codex 场景)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        resp2 = await c.get("/?lang=zh", headers={"Accept-Language": "en-US"})
+    assert '<html lang="zh"' in resp2.text  # query 仍优先于配置默认
+    store.close()
+
+
 async def test_overview_today_nodata_tooltip(tmp_path, monkeypatch):
     from datetime import datetime, timedelta, timezone
 

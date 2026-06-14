@@ -171,12 +171,21 @@ _SUPPORTED = ("zh", "en")
 _DEFAULT_LANG = "zh"
 
 
-def resolve_lang(query: str | None, cookie: str | None, accept_language: str | None) -> str:
-    """query > cookie > Accept-Language（zh* → zh，否则 en）> 默认 zh。
-    query/cookie 仅当显式为受支持语言时采用，否则落到下一优先级。"""
+def resolve_lang(
+    query: str | None,
+    cookie: str | None,
+    accept_language: str | None,
+    *,
+    default: str | None = None,
+) -> str:
+    """query > cookie > 配置默认(zh|en) > Accept-Language(zh*→zh,否则 en) > 默认 zh。
+    query/cookie/default 仅当显式为受支持语言时采用;default 空/非法(=auto)则跳过,
+    落到 Accept-Language。"""
     for cand in (query, cookie):
         if cand and cand.strip().lower() in _SUPPORTED:
             return cand.strip().lower()
+    if default and default.strip().lower() in _SUPPORTED:
+        return default.strip().lower()
     if accept_language and accept_language.strip():
         return "zh" if accept_language.strip().lower().startswith("zh") else "en"
     return _DEFAULT_LANG

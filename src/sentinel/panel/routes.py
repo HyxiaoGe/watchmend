@@ -43,7 +43,9 @@ def register_panel_routes(app: FastAPI) -> None:
         c = request.cookies
         accept = request.headers.get("accept-language")
 
-        lang = prefs.resolve_lang(q.get("lang"), c.get("wm_lang"), accept)
+        lang = prefs.resolve_lang(
+            q.get("lang"), c.get("wm_lang"), accept, default=settings.sentinel_panel_default_lang
+        )
         theme = prefs.resolve_theme(
             q.get("theme"), c.get("wm_theme"), settings.sentinel_panel_default_theme
         )
@@ -108,7 +110,9 @@ def register_panel_routes(app: FastAPI) -> None:
         c = request.cookies
         accept = request.headers.get("accept-language")
 
-        lang = prefs.resolve_lang(q.get("lang"), c.get("wm_lang"), accept)
+        lang = prefs.resolve_lang(
+            q.get("lang"), c.get("wm_lang"), accept, default=settings.sentinel_panel_default_lang
+        )
         theme = prefs.resolve_theme(
             q.get("theme"), c.get("wm_theme"), settings.sentinel_panel_default_theme
         )

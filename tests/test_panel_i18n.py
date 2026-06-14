@@ -18,6 +18,17 @@ def test_resolve_lang_priority():
     assert i18n.resolve_lang("bogus", None, None) == "zh"
 
 
+def test_resolve_lang_configured_default():
+    # 配置默认(zh|en)优先级:在 query/cookie 之后、Accept-Language 之前
+    assert i18n.resolve_lang(None, None, "zh-CN", default="en") == "en"  # 默认覆盖浏览器
+    assert i18n.resolve_lang("zh", None, None, default="en") == "zh"  # query 仍最优先
+    assert i18n.resolve_lang(None, "zh", None, default="en") == "zh"  # cookie 优先于默认
+    assert i18n.resolve_lang(None, None, "zh-CN", default="") == "zh"  # 空默认=auto→Accept
+    assert i18n.resolve_lang(None, None, "en-US", default="bogus") == "en"  # 非法默认忽略→Accept
+    assert i18n.resolve_lang(None, None, None, default="en") == "en"  # 无信号时用默认
+    assert i18n.resolve_lang(None, None, None) == "zh"  # 不传 default 行为不变
+
+
 def test_make_translator_lookup_and_fallback():
     t_en = i18n.make_translator("en")
     assert t_en("st.ok") == "Operational"
