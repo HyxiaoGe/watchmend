@@ -117,6 +117,43 @@ def test_service_health_bars_event_colors_only_matching_subject(tmp_path, monkey
     store.close()
 
 
+def test_service_health_bars_event_colors_earliest_displayed_day(tmp_path, monkeypatch):
+    """边界守护:最早展示日(start_date)凌晨 00:30 的事件必须染到该格。
+    钉住"事件查询窗 ⊇ 展示窗"契约——查询窗须从 start_date 本地午夜起,
+    不得退回 now_ts-N*86400(偏移半天会漏染最早日靠后时段、或多捞不展示日)。"""
+    from sentinel.panel.view import _service_health_bars
+
+    s = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    window_days = 30
+    start_date = (NOW - timedelta(days=window_days - 1)).date()  # 最早展示日 06-14→05-16
+    start_iso = start_date.isoformat()
+    store.upsert_probe_daily("api", start_iso, total=100, ok_count=100, p50=50.0, p95=80.0)  # ok
+    # 最早展示日凌晨 00:30 的降级事件:务必落进 (start_iso, api) 索引把 ok 升 degraded
+    ts_dawn = int(
+        datetime(start_date.year, start_date.month, start_date.day, 0, 30, tzinfo=TZ).timestamp()
+    )
+    store.insert_event(
+        ts=ts_dawn,
+        rule="latency_degraded",
+        subject="api",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    today_samples = store.get_probe_samples_since(MIDNIGHT_TS)
+    bars = _service_health_bars(
+        store, s, now_ts=NOW_TS, tz=TZ, window_days=window_days, today_samples=today_samples
+    )
+    api = {b["service"]: b for b in bars}["api"]
+    by_date = {d["date"]: d for d in api["days"]}
+    assert by_date[start_iso]["state"] == "degraded"  # 边界事件已染
+    store.close()
+
+
 def test_service_health_bars_empty_store(tmp_path, monkeypatch):
     from sentinel.panel.view import _service_health_bars
 

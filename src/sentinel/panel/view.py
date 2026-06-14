@@ -209,9 +209,14 @@ def _service_health_bars(
     daily = store.get_probe_daily_since(start_date.isoformat())
     services = sorted({r.service for r in daily} | {s.service for s in today_samples})
     today_stats = {st.service: st for st in aggregate_window(today_samples, services)}
-    # 当天事件索引：date_local 用同一 tz 换算，与 probe_daily.date 同口径
+    # 当天事件索引：date_local 用同一 tz 换算，与 probe_daily.date 同口径。
+    # 查询窗对齐 start_date 本地午夜(与逐日格同口径),不用 now_ts-N*86400
+    # ——后者偏移半天、会多捞一截不展示日的事件,徒增噪声。
+    win_start_ts = int(
+        datetime(start_date.year, start_date.month, start_date.day, tzinfo=tz).timestamp()
+    )
     ev_idx: dict[tuple[str, str], set[str]] = {}
-    for e in store.get_events_since(now_ts - window_days * _DAY_SECONDS):
+    for e in store.get_events_since(win_start_ts):
         d = datetime.fromtimestamp(e.ts, tz).date().isoformat()
         ev_idx.setdefault((d, e.subject), set()).add(e.rule)
     daily_idx = {(r.service, r.date): r for r in daily}
