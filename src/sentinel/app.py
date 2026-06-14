@@ -26,8 +26,10 @@ from sentinel.findings import (
     LOG_RULES,
     METRICS_RULES,
     PROBE_RULES,
+    EventRecord,
     Finding,
 )
+from sentinel.llm_config import LLMConfig, LLMProfile
 from sentinel.llm_driver import LLMDriver
 from sentinel.logql import LokiClient
 from sentinel.notify.base import Broadcaster
@@ -57,6 +59,36 @@ Tick = Callable[[], Awaitable[None]]
 _REPORT_CHECK_INTERVAL = 60  # 日报门控轮询间隔(秒):到点才真正发
 _DIAG_MAX_PER_TICK = 3  # 单轮最多诊断事件数,防事件风暴时 LLM 调用失控
 _DIAG_ATTEMPTS = 2  # 同一事件最多尝试次数,之后落 failed(可经 API 人工重置)
+
+
+async def _diagnose_with_fallback(
+    driver: LLMDriver,
+    event: EventRecord,
+    profile: LLMProfile,
+    fallback: LLMProfile | None,
+) -> tuple[dict | None, str, list[dict]]:
+    """active 重试 _DIAG_ATTEMPTS 次,全败且有 fallback 再试一轮。
+    返回 (诊断 dict 或 None, 模型最终原文, 证据链)。"""
+    diagnosis: dict | None = None
+    raw = ""
+    tool_calls: list[dict] = []
+    for attempt in range(1, _DIAG_ATTEMPTS + 1):
+        try:
+            diagnosis, raw, tool_calls = await driver.diagnose(event, profile=profile)
+        except Exception as exc:
+            logger.exception("diagnose event %d attempt %d", event.id, attempt)
+            raw = f"llm error: {exc}"
+            continue
+        if diagnosis:
+            return diagnosis, raw, tool_calls
+    if fallback is not None:
+        logger.info("active=%s 诊断失败,转 fallback=%s", profile.name, fallback.name)
+        try:
+            diagnosis, raw, tool_calls = await driver.diagnose(event, profile=fallback)
+        except Exception as exc:
+            logger.exception("fallback diagnose event %d", event.id)
+            raw = f"llm error: {exc}"
+    return diagnosis, raw, tool_calls
 
 
 async def _job_loop(name: str, interval: float, tick: Tick) -> None:
@@ -158,6 +190,7 @@ def build_jobs(
     prom = PromClient(client, settings.sentinel_prometheus_url)
     loki = LokiClient(client, settings.sentinel_loki_url)
     driver = LLMDriver(client, settings, docker)
+    config = LLMConfig(settings)
     cooldown_seconds = settings.sentinel_cooldown_hours * 3600
     # _prom_enabled:Prometheus 接入是否启用。docker 层是否发 OOM 卡由它 + metrics
     # 巡检健康度共同决定(emit_oom 在 docker_tick 内计算),既去重又不漏报,见该闭包注释。
@@ -342,20 +375,17 @@ def build_jobs(
         )
 
     async def diag_tick() -> None:
-        # 容器内直连诊断:与宿主机 openclaw 编排(host/ 三件套)二选一,
-        # 同抢 pending 队列,两条路径都开会重复诊断
+        # 容器内直连诊断:与宿主机 openclaw 编排(host/ 三件套)二选一,同抢 pending 队列。
+        # 内部 gate:热加载中途配置变坏 → current() 回退 last-good 或 None,None 则本轮跳过。
+        profile = config.current()
+        if profile is None:
+            return
+        fallback = config.fallback()
         for event in store.get_pending_diagnosis_events()[:_DIAG_MAX_PER_TICK]:
             _, now_str, _ = _now()
-            diagnosis, raw, tool_calls = None, "", []
-            for attempt in range(1, _DIAG_ATTEMPTS + 1):
-                try:
-                    diagnosis, raw, tool_calls = await driver.diagnose(event)
-                except Exception as exc:
-                    logger.exception("diagnose event %d attempt %d", event.id, attempt)
-                    raw = f"llm error: {exc}"
-                    continue
-                if diagnosis:
-                    break
+            diagnosis, raw, tool_calls = await _diagnose_with_fallback(
+                driver, event, profile, fallback
+            )
             # done 与 failed 都落证据链(失败时证据链更值钱:看出查了什么仍判不出)
             tools_json = json.dumps(tool_calls, ensure_ascii=False) if tool_calls else None
             if diagnosis:
@@ -365,7 +395,7 @@ def build_jobs(
                     diagnosis_json=json.dumps(diagnosis, ensure_ascii=False),
                     tools_json=tools_json,
                 )
-                # 通知尽力而为:诊断已落库,广播失败不回滚(Broadcaster 内部已逐渠道记日志)
+                # 通知尽力而为:诊断已落库,广播失败不回滚
                 now_ts_diag, _, _ = _now()
                 await patrol_broadcaster.send(
                     diagnosis_notification(event, diagnosis, now_ts=now_ts_diag, now_str=now_str)
@@ -377,7 +407,7 @@ def build_jobs(
                     diagnosis_json=json.dumps({"raw": raw[:2000]}, ensure_ascii=False),
                     tools_json=tools_json,
                 )
-                logger.warning("event %d diagnosis failed after %d attempts", event.id, attempt)
+                logger.warning("event %d diagnosis failed", event.id)
 
     async def report_tick() -> None:
         now_ts, now_str, now_local = _now()
@@ -406,7 +436,8 @@ def build_jobs(
             hour=settings.sentinel_report_hour,
             retention_days=settings.sentinel_probe_retention_days,
         )
-        if sent and driver.enabled:
+        diag_profile = config.current()
+        if sent and diag_profile is not None:
             try:  # AI 总结跟在日报后面,失败只损失总结不影响日报本身
                 date_str = now_local.date().isoformat()
                 stats = build_daily_stats(store, service_names, now_ts=now_ts, date_str=date_str)
@@ -416,7 +447,7 @@ def build_jobs(
                     "open_events": [asdict(e) for e in store.get_open_events()],
                     "resolved_24h": store.count_resolved_since(now_ts - 24 * 3600),
                 }
-                text = await driver.summarize(data)
+                text = await driver.summarize(data, profile=diag_profile)
                 if text:
                     await patrol_broadcaster.send(
                         summary_notification(
@@ -440,7 +471,7 @@ def build_jobs(
         jobs.append(("log_scan", settings.sentinel_scan_interval, logs_tick))
     if docker is not None:
         jobs.append(("docker_scan", settings.sentinel_docker_scan_interval, docker_tick))
-    if driver.enabled:
+    if config.enabled:
         jobs.append(("diagnosis", settings.sentinel_diag_interval, diag_tick))
     return jobs
 
@@ -473,6 +504,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # load_targets 在此与 build_jobs 各调一次(读同一 yaml,幂等),可接受
     app.state.services = [t.name for t in _load_targets_or_disable(settings.sentinel_services_file)]
     app.state.docker = docker  # 面板「在监容器」计数用(可为 None)
+    app.state.llm_config = LLMConfig(settings)  # 面板 LLM 姿态真源(与 build_jobs 各持一份,均热加载)
     # 环境自动发现(MVP:仅日志建议):扫描容器镜像指纹,提示未启用的数据源接法。
     for msg in await discover.probe(docker, settings):
         logger.info(msg)
