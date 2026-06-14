@@ -41,3 +41,36 @@ def test_rule_labels_cover_all_findings_rules():
     assert i18n.rule_label("service_down", "en") == "Service down"
     assert i18n.rule_label("service_down", "zh") == "服务异常"
     assert i18n.rule_label("not_a_rule", "en") == "not_a_rule"  # 未知 → 原样
+
+
+def test_messages_zh_en_parity():
+    # 两语言 key 集必须完全一致(防补一边漏一边)
+    assert set(i18n.MESSAGES["zh"]) == set(i18n.MESSAGES["en"])
+
+
+def test_new_template_keys_present():
+    needed = {
+        "banner.issues",
+        "llm.pending_restart",
+        "win.label",
+        "comp.uptime",
+        "comp.expand",
+        "comp.collapse",
+        "host.host",
+        "host.self",
+        "host.host.ok",
+        "ev.ai",
+        "ev.summary",
+        "ev.detail",
+        "ev.scanfail",
+        "footer.notify",
+        "footer.none",
+    }
+    for k in needed:
+        assert k in i18n.MESSAGES["zh"], f"zh missing {k}"
+        assert k in i18n.MESSAGES["en"], f"en missing {k}"
+    # 带参 key 的 format 占位正确
+    t = i18n.make_translator("en")
+    assert t("win.label", days=30) == "30d"
+    assert t("comp.expand", n=5) == "Show 5 more"
+    assert "7" in t("banner.issues", open=7, probes=16)
