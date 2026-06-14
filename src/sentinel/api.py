@@ -23,6 +23,7 @@ _TokenHeader = Annotated[str | None, Header(alias="X-Sentinel-Token")]
 class DiagnosisIn(BaseModel):
     status: Literal["done", "failed", "skipped"]
     diagnosis: dict = Field(default_factory=dict)
+    tools: list[dict] | None = None  # 子项目③:可选证据链回填(host 编排路径);缺省=不动该列
 
 
 class SummaryIn(BaseModel):
@@ -65,7 +66,10 @@ def register_routes(app: FastAPI) -> None:
         if event is None:
             raise HTTPException(status_code=404, detail="event not found")
         diagnosis_json = json.dumps(body.diagnosis, ensure_ascii=False) if body.diagnosis else None
-        store.set_diagnosis(event_id, status=body.status, diagnosis_json=diagnosis_json)
+        tools_json = json.dumps(body.tools, ensure_ascii=False) if body.tools else None
+        store.set_diagnosis(
+            event_id, status=body.status, diagnosis_json=diagnosis_json, tools_json=tools_json
+        )
         card_sent = False
         if body.status == "done" and body.diagnosis:
             now_local = _now_local(request)

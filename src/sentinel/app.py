@@ -345,7 +345,7 @@ def build_jobs(
         # 同抢 pending 队列,两条路径都开会重复诊断
         for event in store.get_pending_diagnosis_events()[:_DIAG_MAX_PER_TICK]:
             _, now_str, _ = _now()
-            diagnosis, raw = None, ""
+            diagnosis, raw, tool_calls = None, "", []
             for attempt in range(1, _DIAG_ATTEMPTS + 1):
                 try:
                     diagnosis, raw, tool_calls = await driver.diagnose(event)
@@ -355,11 +355,14 @@ def build_jobs(
                     continue
                 if diagnosis:
                     break
+            # done 与 failed 都落证据链(失败时证据链更值钱:看出查了什么仍判不出)
+            tools_json = json.dumps(tool_calls, ensure_ascii=False) if tool_calls else None
             if diagnosis:
                 store.set_diagnosis(
                     event.id,
                     status="done",
                     diagnosis_json=json.dumps(diagnosis, ensure_ascii=False),
+                    tools_json=tools_json,
                 )
                 # 通知尽力而为:诊断已落库,广播失败不回滚(Broadcaster 内部已逐渠道记日志)
                 now_ts_diag, _, _ = _now()
@@ -371,6 +374,7 @@ def build_jobs(
                     event.id,
                     status="failed",
                     diagnosis_json=json.dumps({"raw": raw[:2000]}, ensure_ascii=False),
+                    tools_json=tools_json,
                 )
                 logger.warning("event %d diagnosis failed after %d attempts", event.id, attempt)
 

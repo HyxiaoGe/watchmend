@@ -1003,3 +1003,187 @@ async def test_alert_fans_out_to_feishu_and_telegram(tmp_path, monkeypatch):
     assert body["text"].startswith("🟠")  # warning 严重度前导 emoji
     await client.aclose()
     store.close()
+
+
+async def test_diag_tick_persists_tool_calls_on_done_and_failed(tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("LLM_BASE_URL", "http://llm.test/v1")
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+
+    from sentinel.app import build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    eid = store.insert_event(
+        ts=1700000000,
+        rule="container_down",
+        subject="pg",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="pending",
+        cooldown_until=0,
+    )
+    jobs = {n: t for n, _, t in build_jobs(Settings(_env_file=None), client, store)}
+
+    diag = {"summary": "OOM", "root_cause": "内存不足", "confidence": "high"}
+    final = "```json\n" + json.dumps(diag, ensure_ascii=False) + "\n```"
+    tool_call = [
+        {
+            "id": "c1",
+            "type": "function",
+            "function": {"name": "prom_query", "arguments": '{"query": "up"}'},
+        }
+    ]
+    with respx.mock:
+        respx.post("http://llm.test/v1/chat/completions").mock(
+            side_effect=[
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": None,
+                                    "tool_calls": tool_call,
+                                }
+                            }
+                        ]
+                    },
+                ),
+                httpx.Response(
+                    200,
+                    json={"choices": [{"message": {"role": "assistant", "content": final}}]},
+                ),
+            ]
+        )
+        respx.get("http://prometheus:9090/api/v1/query").mock(
+            return_value=httpx.Response(200, json={"status": "success", "data": {}})
+        )
+        respx.post("https://open.feishu.cn/hook/T").mock(
+            return_value=httpx.Response(200, json={"code": 0})
+        )
+        await jobs["diagnosis"]()
+    e = store.get_event(eid)
+    assert e.diagnosis_status == "done"
+    captured = json.loads(e.diagnosis_tools_json)
+    assert captured[0]["tool"] == "prom_query"
+    assert captured[0]["ok"] is True
+
+    # failed 路径:模型每轮给工具但最终给不出可解析 json → 两次尝试后 failed,证据链仍落库
+    eid2 = store.insert_event(
+        ts=1700000100,
+        rule="container_down",
+        subject="db",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="pending",
+        cooldown_until=0,
+    )
+    with respx.mock:
+        respx.post("http://llm.test/v1/chat/completions").mock(
+            side_effect=[
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": None,
+                                    "tool_calls": tool_call,
+                                }
+                            }
+                        ]
+                    },
+                ),
+                httpx.Response(
+                    200, json={"choices": [{"message": {"role": "assistant", "content": "说不清"}}]}
+                ),
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": None,
+                                    "tool_calls": tool_call,
+                                }
+                            }
+                        ]
+                    },
+                ),
+                httpx.Response(
+                    200,
+                    json={"choices": [{"message": {"role": "assistant", "content": "还是说不清"}}]},
+                ),
+            ]
+        )
+        respx.get("http://prometheus:9090/api/v1/query").mock(
+            return_value=httpx.Response(200, json={"status": "success", "data": {}})
+        )
+        await jobs["diagnosis"]()
+    e2 = store.get_event(eid2)
+    assert e2.diagnosis_status == "failed"
+    assert json.loads(e2.diagnosis_tools_json)[0]["tool"] == "prom_query"
+    await client.aclose()
+    store.close()
+
+
+async def test_post_diagnosis_accepts_optional_tools(tmp_path, monkeypatch):
+    import json
+
+    from fastapi import FastAPI
+
+    from sentinel.api import register_routes
+    from sentinel.config import Settings
+    from sentinel.notify.base import Broadcaster
+    from sentinel.store import Store
+
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    store = Store(str(tmp_path / "s.db"))
+    eid = store.insert_event(
+        ts=1700000000,
+        rule="container_down",
+        subject="pg",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="pending",
+        cooldown_until=0,
+    )
+    app = FastAPI()
+    register_routes(app)
+    app.state.store = store
+    app.state.settings = Settings(_env_file=None)
+    app.state.patrol_broadcaster = Broadcaster([])  # 无渠道,send→0,不发卡不出网
+    app.state.services = []
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        resp = await c.post(
+            f"/events/{eid}/diagnosis",
+            json={
+                "status": "done",
+                "diagnosis": {"summary": "s", "root_cause": "r"},
+                "tools": [{"tool": "docker_ps", "args": {}, "output": "x", "ok": True}],
+            },
+        )
+    assert resp.status_code == 200
+    e = store.get_event(eid)
+    assert json.loads(e.diagnosis_tools_json)[0]["tool"] == "docker_ps"
+    store.close()
