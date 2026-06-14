@@ -342,3 +342,102 @@ async def test_base_has_css_variables_and_light_palette(tmp_path, monkeypatch):
     assert "data-theme=" in r.text
     assert "prefers-color-scheme" in r.text  # system 跟随 OS 的 media query
     store.close()
+
+
+async def test_xss_service_and_detail_and_tooloutput_escaped(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm/v1", LLM_MODEL="m")
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    recent = int(datetime.now(tz).timestamp()) - 30
+    # 注入点:服务名(健康柱条)、事件 subject、event detail 文本、AI summary、tool output
+    store.add_probe_samples(
+        [
+            ProbeSample(
+                ts=recent,
+                service="<script>svc</script>",
+                ok=True,
+                status_code=200,
+                latency_ms=1.0,
+            )
+        ]
+    )
+    eid = store.insert_event(
+        ts=recent,
+        rule="container_down",
+        subject="<script>sub</script>",
+        severity="critical",
+        status="open",
+        detail="<img src=x onerror=alert(1)>",
+        payload_json="{}",
+        diagnosis_status="done",
+        cooldown_until=0,
+    )
+    store.set_diagnosis(
+        eid,
+        status="done",
+        diagnosis_json=json.dumps({"summary": "<b>x</b>"}),
+        tools_json=json.dumps(
+            [{"tool": "t", "args": {}, "output": "<script>out</script>", "ok": True}]
+        ),
+    )
+    app = _build_app(store, settings)
+    r_index = await _get(app, "/")
+    r_detail = await _get(app, f"/event/{eid}")
+    for body in (r_index.text, r_detail.text):
+        assert "<script>svc</script>" not in body
+        assert "<script>sub</script>" not in body
+        assert "<script>out</script>" not in body
+        assert "&lt;script&gt;" in body  # 实体化痕迹存在
+    assert "onerror=alert(1)" not in r_index.text  # index 不渲染 detail 文本
+    assert "&lt;img" in r_detail.text  # detail 文本被转义渲染
+    store.close()
+
+
+async def test_pagination_links_and_clamp(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    for i in range(20):  # > page_size(默认 8)→ 多页
+        store.insert_event(
+            ts=1700000000 + i,
+            rule="service_down",
+            subject="api",
+            severity="critical",
+            status="open",
+            detail="d",
+            payload_json="{}",
+            diagnosis_status="skipped",
+            cooldown_until=0,
+        )
+    app = _build_app(store, settings)
+    r1 = await _get(app, "/?ev_page=1")
+    assert "ev_page=2" in r1.text  # 有下一页链接
+    r_over = await _get(app, "/?ev_page=999")
+    assert r_over.status_code == 200  # 越界钳到末页,不崩
+    store.close()
+
+
+async def test_services_cap_expand_collapse(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch, SENTINEL_PANEL_SERVICES_CAP="2")
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    recent = int(datetime.now(tz).timestamp()) - 30
+    store.add_probe_samples(
+        [
+            ProbeSample(ts=recent, service=f"svc{i}", ok=True, status_code=200, latency_ms=1.0)
+            for i in range(5)  # 5 > cap 2
+        ]
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/")
+    assert "svc_all=1" in r.text  # 折叠态有「展开剩余」链接
+    r_all = await _get(app, "/?svc_all=1")
+    assert "svc4" in r_all.text  # 展开后全列
+    store.close()
