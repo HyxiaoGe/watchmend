@@ -8,8 +8,11 @@ LLMProfile;LLMConfig 负责从 llm.yaml(或回落老 LLM_* env)解析 active/fal
 
 from __future__ import annotations
 
+import argparse
 import logging
 import os
+import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -139,3 +142,157 @@ class LLMConfig:
     @property
     def enabled(self) -> bool:
         return self.current() is not None
+
+
+# ---- CLI(python -m sentinel.llm_config) ----
+
+_PRESETS = {
+    "openai": ("https://api.openai.com/v1", "gpt-5.5"),
+    "deepseek": ("https://api.deepseek.com/v1", "deepseek-chat"),
+    "kimi": ("https://api.moonshot.cn/v1", "kimi-k2-turbo-preview"),
+    "glm": ("https://open.bigmodel.cn/api/paas/v4", "glm-4"),
+    "ollama": ("http://localhost:11434/v1", "qwen3"),
+    "vllm": ("http://localhost:8000/v1", "your-served-model"),
+    "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/", "gemini-2.5-flash"),
+    "claude": ("https://api.anthropic.com/v1/", "claude-opus-4-8"),
+    "litellm": ("http://localhost:4000", "your-alias"),
+}
+
+
+def build_provider_entry(answers: dict) -> dict:
+    """把向导收集的答案构造成一个 provider 映射(纯函数,可单测)。
+    env 模式只落 api_key_env(变量名),绝不把真 key 写进返回值。"""
+    entry: dict = {"base_url": answers["base_url"], "model": answers["model"]}
+    if answers.get("key_mode") == "env":
+        entry["api_key_env"] = answers["api_key_env"]
+    else:
+        entry["api_key"] = answers.get("api_key", "")
+    return entry
+
+
+def _merge_provider(path: str, name: str, entry: dict, set_active: bool) -> None:
+    """把 provider 合并进 llm.yaml(无则建)。注:全量 round-trip,会丢已有注释——
+    向导生成/追加用足够;想保留手写注释请直接编辑文件(switch 不丢注释)。"""
+    p = Path(path)
+    raw = {}
+    if p.exists():
+        raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    raw.setdefault("providers", {})
+    raw["providers"][name] = entry
+    if set_active or "active" not in raw:
+        raw["active"] = name
+    p.write_text(
+        yaml.safe_dump(raw, allow_unicode=True, sort_keys=False, default_flow_style=False),
+        encoding="utf-8",
+    )
+
+
+def _key_status(spec: object) -> str:
+    if not isinstance(spec, dict):
+        return "✗"
+    if "api_key_env" in spec:
+        return "✓" if os.environ.get(spec["api_key_env"]) is not None else "✗"
+    return "✓"  # 内联(含空=无鉴权)
+
+
+def cmd_switch(path: str, name: str) -> int:
+    """改 active:校验 name 存在后定点重写 ^active 行,保留其余(含注释)。"""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        print(f"✗ {path} 不存在,先跑 make llm-init 生成", file=sys.stderr)
+        return 1
+    try:
+        providers = (yaml.safe_load(text) or {}).get("providers") or {}
+    except yaml.YAMLError as e:
+        print(f"✗ {path} 解析失败: {e}", file=sys.stderr)
+        return 1
+    if name not in providers:
+        avail = ", ".join(providers) or "(无)"
+        print(f"✗ provider '{name}' 不存在;可用: {avail}", file=sys.stderr)
+        return 1
+    out, replaced = [], False
+    for line in text.splitlines():
+        if not replaced and re.match(r"^active\s*:", line):
+            out.append(f"active: {name}")
+            replaced = True
+        else:
+            out.append(line)
+    if not replaced:
+        print(f"✗ {path} 没有顶层 active: 行,请手动编辑", file=sys.stderr)
+        return 1
+    Path(path).write_text("\n".join(out) + "\n", encoding="utf-8")
+    print(f"✓ active → {name}(下一轮诊断生效,无需重启)")
+    return 0
+
+
+def cmd_list(path: str, settings: Settings) -> int:
+    """印各 provider + active/fallback 标记 + key 是否解析得到。"""
+    try:
+        raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    except FileNotFoundError:
+        if settings.llm_base_url and settings.llm_model:
+            print(f"(无 llm.yaml,回落环境变量)  env  {settings.llm_base_url}  {settings.llm_model}")
+        else:
+            print("(无 llm.yaml,且 LLM_* 环境变量未配置 → LLM 层关闭)")
+        return 0
+    providers = raw.get("providers") or {}
+    if not providers:
+        print("(llm.yaml 无 providers)")
+        return 0
+    active, fb = raw.get("active"), raw.get("fallback")
+    for name, spec in providers.items():
+        tags = [t for t, on in (("active", name == active), ("fallback", name == fb)) if on]
+        model = spec.get("model", "?") if isinstance(spec, dict) else "?"
+        marker = f"[{','.join(tags)}]" if tags else ""
+        print(f"{name:14} {_key_status(spec)}  {model:24} {marker}")
+    return 0
+
+
+def cmd_init(path: str) -> int:
+    """交互向导:加一个 provider 并(可选)设为 active。"""
+    print("WatchMend LLM 配置向导。预设: " + ", ".join(_PRESETS) + ", custom")
+    choice = input("选平台 [deepseek]: ").strip() or "deepseek"
+    if choice in _PRESETS:
+        default_url, default_model = _PRESETS[choice]
+    else:
+        choice = input("provider 名: ").strip()
+        default_url, default_model = "", ""
+    base_url = input(f"base_url [{default_url}]: ").strip() or default_url
+    model = input(f"model [{default_model}]: ").strip() or default_model
+    mode = input("key 方式 env(引用环境变量)/inline(内联) [env]: ").strip() or "env"
+    answers = {"base_url": base_url, "model": model, "key_mode": mode}
+    if mode == "env":
+        env_name = input("环境变量名 [LLM_API_KEY]: ").strip() or "LLM_API_KEY"
+        answers["api_key_env"] = env_name
+        print(f"  → 记得 export {env_name}=... 或写进 .env(真 key 不会写进 llm.yaml)")
+    else:
+        answers["api_key"] = input("api_key(留空=无鉴权,会落盘): ").strip()
+        print("  ⚠ 内联 key 会明文写入 llm.yaml")
+    set_active = (input("设为 active? [Y/n]: ").strip().lower() or "y") == "y"
+    _merge_provider(path, choice, build_provider_entry(answers), set_active)
+    print(f"✓ 已写入 {path} 的 provider '{choice}'" + ("(active)" if set_active else ""))
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    settings = Settings()
+    parser = argparse.ArgumentParser(prog="python -m sentinel.llm_config")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("init")
+    sw = sub.add_parser("switch")
+    sw.add_argument("name")
+    sub.add_parser("list")
+    args = parser.parse_args(argv)
+    path = settings.sentinel_llm_config_file
+    if args.cmd == "init":
+        return cmd_init(path)
+    if args.cmd == "switch":
+        return cmd_switch(path, args.name)
+    if args.cmd == "list":
+        return cmd_list(path, settings)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
