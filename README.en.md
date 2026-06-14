@@ -123,6 +123,18 @@ Security boundaries (design stance, not afterthought patches):
 - Tool output is declared untrusted data, guarding against log-injection steering
 - Suggested commands are for humans only and are never executed automatically
 
+## Evidence Panel (read-only)
+
+WatchMend ships a **localhost-only read-only SSR panel** that turns its four disciplines (deterministic verdicts / assessment ≠ recovery / send-then-commit / read-only never-execute) into visible evidence:
+
+- **State-machine timeline**: currently open anomalies (triggered → investigating → diagnosed) plus recoveries in the last 24h; `scan_failed_*` is explicitly marked as a data-source failure, not a green "recovered" card.
+- **Diagnosis evidence chain**: for each diagnosed event you can expand the **read-only tools the LLM actually called and their raw output snippets** (`docker_inspect`/`docker_logs`/`prom_query`/`loki_logs`) — hard proof of the read-only, push-diagnosis loop.
+- **Security posture**: socket mode and read-only flag, redacted env-var counts, enabled layers, notification channels; suggested commands are always labelled "never auto-executed".
+
+Access: the container binds the panel to `127.0.0.1:8765` on the host (same port as the orchestration API); open `http://127.0.0.1:8765/`.
+
+**Security note**: the panel shares the bind with the orchestration API and is **read-only, has no write endpoints, and ships no auth** — it assumes localhost/intranet reachability only. Raw log snippets are stored in the localhost-only SQLite (same data already sent to your LLM endpoint, truncated to 4096 chars each). **To expose it publicly, put a reverse proxy with authentication in front**, or set `SENTINEL_PANEL_ENABLED=false` to disable the panel entirely.
+
 ## Design philosophy
 
 - **Not-evaluated ≠ recovered**: when a data source fails or is turned off, its
