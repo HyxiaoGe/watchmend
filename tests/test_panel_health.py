@@ -125,3 +125,54 @@ def test_service_health_bars_empty_store(tmp_path, monkeypatch):
     bars = _service_health_bars(store, s, now_ts=NOW_TS, tz=TZ, window_days=30, today_samples=[])
     assert bars == []
     store.close()
+
+
+def test_host_self_engine_liveness(monkeypatch):
+    from sentinel.panel.view import _host_self
+
+    s = _settings(monkeypatch)  # sentinel_probe_interval 默认 300 → 阈值 600s
+    llm_off = {"enabled": False, "pending_restart": False, "model": None}
+    live = _host_self(s, latest_probe_ts=NOW_TS - 100, now_ts=NOW_TS, llm_config=None, llm=llm_off)
+    assert live["probe_engine_live"] is True
+    assert live["llm"] == {"active": None, "fallback": None, "fallback_ready": False}
+    stale = _host_self(s, latest_probe_ts=NOW_TS - 700, now_ts=NOW_TS, llm_config=None, llm=llm_off)
+    assert stale["probe_engine_live"] is False
+    none = _host_self(s, latest_probe_ts=None, now_ts=NOW_TS, llm_config=None, llm=llm_off)
+    assert none["probe_engine_live"] is None  # 待确认
+
+
+def test_host_self_llm_from_env_posture(monkeypatch):
+    from sentinel.panel.view import _host_self
+
+    s = _settings(monkeypatch)
+    llm = {"enabled": True, "pending_restart": False, "model": "deepseek-chat"}
+    hs = _host_self(s, latest_probe_ts=NOW_TS, now_ts=NOW_TS, llm_config=None, llm=llm)
+    # env 路径无 fallback 概念
+    assert hs["llm"] == {"active": "deepseek-chat", "fallback": None, "fallback_ready": False}
+
+
+def test_host_self_llm_active_fallback_from_config(tmp_path, monkeypatch):
+    from sentinel.llm_config import LLMConfig
+    from sentinel.panel.view import _host_self
+
+    path = tmp_path / "llm.yaml"
+    path.write_text(
+        "active: deepseek\nfallback: kimi\nproviders:\n"
+        "  deepseek:\n    base_url: https://api.deepseek.com/v1\n"
+        "    model: deepseek-chat\n    api_key: ''\n"
+        "  kimi:\n    base_url: https://api.moonshot.cn/v1\n"
+        "    model: kimi-k2\n    api_key: ''\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_LLM_CONFIG_FILE", str(path))
+    s = Settings(_env_file=None)
+    cfg = LLMConfig(s)
+    hs = _host_self(
+        s,
+        latest_probe_ts=NOW_TS,
+        now_ts=NOW_TS,
+        llm_config=cfg,
+        llm={"enabled": True, "pending_restart": False, "model": "deepseek-chat"},
+    )
+    assert hs["llm"] == {"active": "deepseek-chat", "fallback": "kimi-k2", "fallback_ready": True}

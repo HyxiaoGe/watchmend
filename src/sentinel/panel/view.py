@@ -249,6 +249,35 @@ def _service_health_bars(
     return bars
 
 
+def _host_self(
+    settings: Settings,
+    *,
+    latest_probe_ts: int | None,
+    now_ts: int,
+    llm_config,
+    llm: dict,
+) -> dict:
+    """宿主 & 自身行的新增自省块：探针引擎活性 + LLM active/fallback。
+    宿主级 hygiene 告警另由 build_overview 的 hygiene.hygiene_alerts 提供，这里不重算。
+    llm 为 _llm_posture 结果（env 回退路径用其 model；llm_config 在时给 active+fallback）。"""
+    if latest_probe_ts is None:
+        engine_live: bool | None = None
+    else:
+        engine_live = (now_ts - latest_probe_ts) < 2 * settings.sentinel_probe_interval
+    active = fallback = None
+    if llm_config is not None:
+        cur = llm_config.current()
+        fb = llm_config.fallback()
+        active = cur.model if cur else None
+        fallback = fb.model if fb else None
+    else:
+        active = llm.get("model")
+    return {
+        "probe_engine_live": engine_live,
+        "llm": {"active": active, "fallback": fallback, "fallback_ready": fallback is not None},
+    }
+
+
 async def build_overview(
     store: Store,
     settings: Settings,
