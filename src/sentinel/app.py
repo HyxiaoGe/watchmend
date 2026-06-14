@@ -348,7 +348,7 @@ def build_jobs(
             diagnosis, raw = None, ""
             for attempt in range(1, _DIAG_ATTEMPTS + 1):
                 try:
-                    diagnosis, raw = await driver.diagnose(event)
+                    diagnosis, raw, tool_calls = await driver.diagnose(event)
                 except Exception as exc:
                     logger.exception("diagnose event %d attempt %d", event.id, attempt)
                     raw = f"llm error: {exc}"

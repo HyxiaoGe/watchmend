@@ -96,7 +96,7 @@ async def test_diagnose_runs_tool_loop(monkeypatch):
             respx.get("http://prometheus:9090/api/v1/query").mock(
                 return_value=httpx.Response(200, json={"status": "success", "data": {}})
             )
-            diagnosis, raw = await driver.diagnose(_event())
+            diagnosis, raw, _ = await driver.diagnose(_event())
 
     assert diagnosis == DIAG_JSON
     assert "```json" in raw
@@ -137,7 +137,7 @@ async def test_tool_failure_fed_back_not_raised(monkeypatch):
                 ]
             )
             respx.get("http://prometheus:9090/api/v1/query").mock(return_value=httpx.Response(500))
-            diagnosis, _ = await driver.diagnose(_event())
+            diagnosis, _, _ = await driver.diagnose(_event())
     assert diagnosis == DIAG_JSON
     second = json.loads(llm.calls[1].request.content)
     tool_msg = [m for m in second["messages"] if m["role"] == "tool"][0]
@@ -153,10 +153,10 @@ async def test_unknown_tool_and_bad_args(monkeypatch):
     )
     async with httpx.AsyncClient() as client:
         driver = LLMDriver(client, settings)
-        assert (await driver._run_tool("no_such", {})).startswith("unknown tool")
-        # 参数名不对 → TypeError 被捕获回喂,不抛
-        out = await driver._run_tool("prom_query", {"q": "up"})
-        assert out.startswith("tool prom_query failed")
+        out, ok = await driver._run_tool("no_such", {})
+        assert out.startswith("unknown tool") and ok is False
+        out, ok = await driver._run_tool("prom_query", {"q": "up"})  # 参数名不对 → TypeError 被吞
+        assert out.startswith("tool prom_query failed") and ok is False
 
 
 async def test_rounds_exhausted_forces_final_answer(monkeypatch):
@@ -184,7 +184,7 @@ async def test_rounds_exhausted_forces_final_answer(monkeypatch):
             respx.get("http://prometheus:9090/api/v1/query").mock(
                 return_value=httpx.Response(200, json={"status": "success"})
             )
-            diagnosis, _ = await driver.diagnose(_event())
+            diagnosis, _, _ = await driver.diagnose(_event())
     assert diagnosis == DIAG_JSON
     final = json.loads(llm.calls[1].request.content)
     assert "tools" not in final  # 催结论那轮不再给工具
@@ -287,3 +287,81 @@ def test_parse_diagnosis_fence_and_fallback():
     # 缺必须字段/非 json → None
     assert parse_diagnosis('{"foo": 1}') is None
     assert parse_diagnosis("没有结论") is None
+
+
+async def test_diagnose_captures_tool_calls(monkeypatch):
+    settings = _settings(
+        monkeypatch,
+        LLM_BASE_URL="http://llm.test/v1",
+        LLM_MODEL="m",
+        SENTINEL_PROMETHEUS_URL="http://prometheus:9090",
+    )
+    async with httpx.AsyncClient() as client:
+        driver = LLMDriver(client, settings)
+        with respx.mock:
+            respx.post(LLM_URL).mock(
+                side_effect=[
+                    _llm_message(
+                        tool_calls=[
+                            {
+                                "id": "c1",
+                                "type": "function",
+                                "function": {"name": "prom_query", "arguments": '{"query": "up"}'},
+                            }
+                        ]
+                    ),
+                    _llm_message(content=FINAL_TEXT),
+                ]
+            )
+            respx.get("http://prometheus:9090/api/v1/query").mock(
+                return_value=httpx.Response(200, json={"status": "success", "data": {}})
+            )
+            diagnosis, raw, tool_calls = await driver.diagnose(_event())
+    assert diagnosis == DIAG_JSON
+    assert "```json" in raw
+    assert len(tool_calls) == 1
+    tc = tool_calls[0]
+    assert tc["tool"] == "prom_query"
+    assert tc["args"] == {"query": "up"}
+    assert tc["ok"] is True
+    assert "success" in tc["output"]
+
+
+async def test_diagnose_captures_failed_tool_call(monkeypatch):
+    settings = _settings(
+        monkeypatch,
+        LLM_BASE_URL="http://llm.test/v1",
+        LLM_MODEL="m",
+        SENTINEL_PROMETHEUS_URL="http://prometheus:9090",
+    )
+    async with httpx.AsyncClient() as client:
+        driver = LLMDriver(client, settings)
+        with respx.mock:
+            respx.post(LLM_URL).mock(
+                side_effect=[
+                    _llm_message(
+                        tool_calls=[
+                            {
+                                "id": "c1",
+                                "type": "function",
+                                "function": {"name": "prom_query", "arguments": '{"query":"up"}'},
+                            }
+                        ]
+                    ),
+                    _llm_message(content=FINAL_TEXT),
+                ]
+            )
+            respx.get("http://prometheus:9090/api/v1/query").mock(return_value=httpx.Response(500))
+            _, _, tool_calls = await driver.diagnose(_event())
+    assert tool_calls[0]["ok"] is False
+    assert tool_calls[0]["output"].startswith("tool prom_query failed")
+
+
+def test_truncate_caps_output():
+    from sentinel.llm_driver import PANEL_TOOL_OUTPUT_CAP, _truncate
+
+    assert _truncate("abc", 10) == "abc"
+    long = "x" * (PANEL_TOOL_OUTPUT_CAP + 50)
+    out = _truncate(long, PANEL_TOOL_OUTPUT_CAP)
+    assert out.endswith("…(truncated)")
+    assert len(out) == PANEL_TOOL_OUTPUT_CAP + len("…(truncated)")
