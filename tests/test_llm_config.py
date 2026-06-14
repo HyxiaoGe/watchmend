@@ -239,3 +239,16 @@ def test_broken_at_startup_disables(tmp_path, monkeypatch):
     s = _settings(monkeypatch, SENTINEL_LLM_CONFIG_FILE=str(path))
     cfg = LLMConfig(s)
     assert cfg.current() is None  # 启动即坏 → 关层(fail-safe)
+
+
+def test_example_yaml_parses(monkeypatch):
+    from pathlib import Path
+
+    from sentinel.llm_config import _parse_and_resolve
+
+    monkeypatch.setenv("LLM_API_KEY_DEEPSEEK", "sk-fake-ds")
+    monkeypatch.setenv("LLM_API_KEY_KIMI", "sk-fake-kimi")
+    example = Path(__file__).resolve().parent.parent / "llm.example.yaml"
+    reg = _parse_and_resolve(str(example))
+    assert reg.active.name == "deepseek"
+    assert reg.fallback.name == "kimi"

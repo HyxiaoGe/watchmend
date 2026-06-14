@@ -9,6 +9,7 @@ data/
 demo/data/
 backups/
 services.yaml
+llm.yaml
 scripts/leak_patterns.local
 # 内部规划/竞品分析/宣发策略 —— 绝不入公开仓库
 docs/superpowers/

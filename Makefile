@@ -1,4 +1,4 @@
-.PHONY: demo demo-down demo-logs up down logs test lint leak-check check services-yaml-ready
+.PHONY: demo demo-down demo-logs up down logs test lint leak-check check services-yaml-ready llm-init llm-switch llm-list
 
 # ---- 全栈 demo:自带 prometheus/loki/示例服务,.env 里至少配一个通知渠道 ----
 demo: .env
@@ -57,3 +57,14 @@ services-yaml-ready:
 		cp services.example.yaml services.yaml; \
 		echo "✗ 已生成 services.yaml(示例内容):改成你自己的服务清单后重新 make up"; \
 		echo "  (不需要内部探针的话,删掉 services 列表里的条目、保留空列表即可)"; exit 1; fi
+
+# ---- LLM provider 配置(可选):改 llm.yaml 下一轮诊断生效,无需重启 ----
+llm-init:
+	uv run python -m sentinel.llm_config init
+
+llm-switch:
+	@if [ -z "$(name)" ]; then echo "用法: make llm-switch name=<provider>"; exit 1; fi
+	uv run python -m sentinel.llm_config switch $(name)
+
+llm-list:
+	uv run python -m sentinel.llm_config list
