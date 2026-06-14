@@ -91,6 +91,29 @@ async def _diagnose_with_fallback(
     return diagnosis, raw, tool_calls
 
 
+async def _summarize_with_fallback(
+    driver: LLMDriver,
+    data: dict,
+    profile: LLMProfile,
+    fallback: LLMProfile | None,
+) -> str | None:
+    """日报 AI 总结:active 失败/空则转 fallback(与诊断同口径,fallback 覆盖所有 LLM 调用)。
+    active+fallback 都拿不到则返回 None。"""
+    try:
+        text = await driver.summarize(data, profile=profile)
+        if text:
+            return text
+    except Exception:
+        logger.exception("daily summarize via active=%s", profile.name)
+    if fallback is not None:
+        logger.info("active=%s 日报总结失败,转 fallback=%s", profile.name, fallback.name)
+        try:
+            return await driver.summarize(data, profile=fallback)
+        except Exception:
+            logger.exception("daily summarize via fallback=%s", fallback.name)
+    return None
+
+
 async def _job_loop(name: str, interval: float, tick: Tick) -> None:
     """通用 Job 循环:单轮异常只记日志绝不退出;各 Job 独立任务互不影响。"""
     while True:
@@ -447,7 +470,7 @@ def build_jobs(
                     "open_events": [asdict(e) for e in store.get_open_events()],
                     "resolved_24h": store.count_resolved_since(now_ts - 24 * 3600),
                 }
-                text = await driver.summarize(data, profile=diag_profile)
+                text = await _summarize_with_fallback(driver, data, diag_profile, config.fallback())
                 if text:
                     await patrol_broadcaster.send(
                         summary_notification(
