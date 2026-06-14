@@ -181,6 +181,29 @@ async def test_event_detail_shows_tool_chain(tmp_path, monkeypatch):
     store.close()
 
 
+async def test_event_detail_i18n_and_theme(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm/v1", LLM_MODEL="m")
+    store = Store(str(tmp_path / "s.db"))
+    eid = store.insert_event(
+        ts=1700000000,
+        rule="container_down",
+        subject="postgres",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, f"/event/{eid}?lang=en&theme=light")
+    assert r.status_code == 200
+    assert 'data-theme="light"' in r.text and '<html lang="en"' in r.text
+    assert "Container down" in r.text  # rule_label en
+    assert "http-equiv" not in r.text  # 详情页不自动刷新
+    store.close()
+
+
 async def test_event_detail_404(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
