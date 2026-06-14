@@ -31,12 +31,17 @@ def resolve_theme(query: str | None, cookie: str | None, default: str) -> str:
     return default
 
 
-def resolve_window(query: str | None, cookie: str | None, *, history_days: int) -> int:
-    """允许集 = {30, history_days}；非法 query/cookie 落到默认 history_days。"""
+def resolve_window(
+    query: str | None, cookie: str | None, *, history_days: int, default: int | None = None
+) -> int:
+    """允许集 = {30, history_days}；非法 query/cookie 落到配置默认 default（仍须在允许集内，
+    否则回退 history_days）。不传 default 时回退 history_days（向后兼容老调用/单测）。"""
     allowed = {"30", str(history_days)}
     for cand in (query, cookie):
         if cand and cand.strip() in allowed:
             return int(cand.strip())
+    if default is not None and str(default) in allowed:
+        return default
     return history_days
 
 

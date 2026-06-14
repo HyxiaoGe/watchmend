@@ -35,6 +35,9 @@
   .banner .pulse { width:10px; height:10px; border-radius:50%; background:var(--st-ok); box-shadow:0 0 0 4px rgba(63,185,80,.18); }
   .banner.bad .pulse { background:var(--st-down); box-shadow:0 0 0 4px rgba(248,81,73,.18); }
   .banner .big { font-weight:700; } .banner.ok .big { color:var(--st-ok); }
+  .banner .metrics { display:flex; gap:14px; flex-wrap:wrap; margin-left:auto; align-items:center; color:var(--mut); font-size:11px; }
+  .banner .metrics b { color:var(--txt); font-size:13px; }
+  .diag-lang { color:var(--mut); font-size:11px; font-style:italic; margin:4px 0; }
   .secrow { display:flex; justify-content:space-between; align-items:center; margin:16px 0 8px; gap:10px; flex-wrap:wrap; }
   .sec { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.6px; }
   .right { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
@@ -49,7 +52,9 @@
   .upbar i { flex:1 1 0; min-width:2px; border-radius:2px; background:var(--st-ok); }
   .upbar i:hover { filter:brightness(1.35); }
   .upbar i.degraded{background:var(--st-degraded)} .upbar i.partial{background:var(--st-partial)}
-  .upbar i.down{background:var(--st-down)} .upbar i.nodata{background:var(--st-nodata)}
+  .upbar i.down{background:var(--st-down)}
+  /* No-data 降权:不与真实数据等高/等重——细矮居中基线,让有数据的天更醒目(issue #11 claim 1) */
+  .upbar i.nodata{background:var(--st-nodata); align-self:center; height:7px; opacity:.55}
   .comp-ax { display:flex; align-items:center; gap:10px; color:var(--mut); font-size:11px; margin-top:6px; }
   .comp-ax .ln { flex:1; height:1px; background:var(--line); }
   .self { border:1px solid var(--line); border-radius:var(--rad); background:var(--panel); padding:10px 14px; display:flex; flex-direction:column; gap:6px; }
@@ -94,7 +99,7 @@
     <a href="{{ qurl(lang='zh') }}" class="{{ 'on' if lang == 'zh' else '' }}">中</a>
     <a href="{{ qurl(lang='en') }}" class="{{ 'on' if lang == 'en' else '' }}">EN</a>
   </span>
-  <a href="/">{{ t('nav.latest') }}</a>
+  <a href="{{ qurl(ev_page=1) }}">{{ t('nav.latest') }}</a>
 </div>
 {% endif %}
 {% block body %}{% endblock %}

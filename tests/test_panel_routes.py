@@ -481,6 +481,166 @@ async def test_default_lang_overrides_accept_language(tmp_path, monkeypatch):
     store.close()
 
 
+async def test_overview_links_carry_prefs(tmp_path, monkeypatch):
+    # 事件详情链接与「最新」链接都携带 lang/theme/win，跳转不丢上下文（issue #11 claim 4）。
+    from datetime import datetime, timedelta, timezone
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    recent = int(datetime.now(tz).timestamp()) - 3600
+    eid = store.insert_event(
+        ts=recent,
+        rule="container_down",
+        subject="postgres",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    # 用 win=90(非默认 30)：链接里出现 90 只能来自"读取了 query"，而非默认回退，
+    # 否则该断言无法区分"honored query"与"fell back to default"。
+    r = await _get(app, "/?lang=en&theme=light&win=90")
+    # eurl 顺序 lang,theme,win；href 内 & 被 jinja 转义成 &amp;
+    assert f"/event/{eid}?lang=en&amp;theme=light&amp;win=90" in r.text
+    # 「最新」链接 qurl(ev_page=1) 沿用 lang/theme/win 再附 ev_page
+    assert "?lang=en&amp;theme=light&amp;win=90&amp;ev_page=1" in r.text
+    store.close()
+
+
+async def test_event_detail_back_url_carries_prefs(tmp_path, monkeypatch):
+    # 详情页「返回」链接携带 lang/theme/win，回到总览保持窗口/语言/主题（issue #11 claim 4）。
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    eid = store.insert_event(
+        ts=1700000000,
+        rule="container_down",
+        subject="postgres",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, f"/event/{eid}?lang=en&theme=light&win=30")
+    assert 'href="/?lang=en&amp;theme=light&amp;win=30"' in r.text
+    store.close()
+
+
+async def test_services_cap_default_is_six(tmp_path, monkeypatch):
+    # 不设 SENTINEL_PANEL_SERVICES_CAP 时默认仅展示 Top-6，第 7 个走「展开剩余」（issue #11）。
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)  # 用默认 cap，不覆盖
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    recent = int(datetime.now(tz).timestamp()) - 30
+    store.add_probe_samples(
+        [
+            ProbeSample(ts=recent, service=f"svc{i}", ok=True, status_code=200, latency_ms=1.0)
+            for i in range(7)  # 7 > 默认 cap 6
+        ]
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/")
+    assert "svc_all=1" in r.text  # 折叠态有展开链接
+    assert "展开剩余 1" in r.text  # n = 7 - 6，证明 cap 恰为 6
+    assert "svc6" not in r.text  # 第 7 个(字母序末位)被折叠
+    r_all = await _get(app, "/?svc_all=1")
+    assert "svc6" in r_all.text  # 展开后全列
+    store.close()
+
+
+async def test_problem_service_survives_cap(tmp_path, monkeypatch):
+    # D2 端到端守护：worst-first 排序 + cap 截断后,问题服务必须出现在首屏,
+    # 而非被字母序挤出。防"先截断后排序/模板内排序"这类回归(issue #11 A6)。
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)  # 默认 cap=6
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    recent = int(datetime.now(tz).timestamp()) - 30
+    samples = [
+        ProbeSample(ts=recent, service=f"ok{i}", ok=True, status_code=200, latency_ms=1.0)
+        for i in range(7)  # 7 个全绿服务
+    ]
+    # 一个 down 服务,服务名字母序排在最后(zdown):若按字母序它会被 cap 挤出,
+    # 但按现态最坏优先必须排到首位、留在首屏。
+    samples += [
+        ProbeSample(ts=recent, service="zdown", ok=True, status_code=200, latency_ms=1.0),
+        ProbeSample(ts=recent - 1, service="zdown", ok=False, status_code=500, latency_ms=None),
+        ProbeSample(ts=recent - 2, service="zdown", ok=False, status_code=500, latency_ms=None),
+    ]  # 1 ok / 3 = 33% < 50% → down
+    store.add_probe_samples(samples)
+    app = _build_app(store, settings)
+    r = await _get(app, "/")
+    assert "zdown" in r.text  # 问题服务穿过 cap 留在首屏
+    assert "ok6" not in r.text  # 字母序末位的健康服务被折叠掉
+    r_all = await _get(app, "/?svc_all=1")
+    assert "ok6" in r_all.text  # 展开后才出现
+    store.close()
+
+
+async def test_diag_lang_hint_shown_when_ui_lang_differs(tmp_path, monkeypatch):
+    # UI 语言 ≠ 诊断生成语言(默认 zh) 时,总览内联与详情页都提示"原始诊断不回溯翻译";
+    # 语言一致则不提示(issue #11 claim 5)。
+    from datetime import datetime, timedelta, timezone
+
+    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm/v1", LLM_MODEL="m")
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    recent = int(datetime.now(tz).timestamp()) - 3600
+    eid = store.insert_event(
+        ts=recent,
+        rule="container_down",
+        subject="postgres",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="done",
+        cooldown_until=0,
+    )
+    store.set_diagnosis(
+        eid,
+        status="done",
+        diagnosis_json=json.dumps({"summary": "OOM 摘要", "root_cause": "内存不足"}),
+        tools_json=None,
+    )
+    app = _build_app(store, settings)
+    # 总览:en UI vs zh 诊断 → 显示英文提示;zh UI 一致 → 不显示
+    r_en = await _get(app, "/?lang=en")
+    assert "back-translated" in r_en.text
+    r_zh = await _get(app, "/?lang=zh")
+    assert "不回溯翻译" not in r_zh.text
+    # 详情页同理
+    d_en = await _get(app, f"/event/{eid}?lang=en")
+    assert "back-translated" in d_en.text
+    d_zh = await _get(app, f"/event/{eid}?lang=zh")
+    assert "不回溯翻译" not in d_zh.text
+    store.close()
+
+
+async def test_default_window_is_30(tmp_path, monkeypatch):
+    # 首屏无 query/cookie 时默认窗口降噪为 30d，而非历史上限 90d（issue #11 claim 1）。
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))  # 空库 → 仅 banner metric 渲染窗口
+    app = _build_app(store, settings)
+    r = await _get(app, "/")
+    assert "窗口 30d" in r.text  # metric.window 显示 30
+    assert "窗口 90d" not in r.text
+    store.close()
+
+
 async def test_overview_today_nodata_tooltip(tmp_path, monkeypatch):
     from datetime import datetime, timedelta, timezone
 

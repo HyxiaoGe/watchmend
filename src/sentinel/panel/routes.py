@@ -50,7 +50,10 @@ def register_panel_routes(app: FastAPI) -> None:
             q.get("theme"), c.get("wm_theme"), settings.sentinel_panel_default_theme
         )
         window_days = prefs.resolve_window(
-            q.get("win"), c.get("wm_win"), history_days=settings.sentinel_panel_history_days
+            q.get("win"),
+            c.get("wm_win"),
+            history_days=settings.sentinel_panel_history_days,
+            default=settings.sentinel_panel_default_window,
         )
         page = prefs.resolve_page(q.get("ev_page"))
         svc_all = (q.get("svc_all") or "").strip().lower() in _TRUTHY
@@ -81,6 +84,12 @@ def register_panel_routes(app: FastAPI) -> None:
             clean = {k: v for k, v in params.items() if v is not None}
             return "?" + urlencode(clean)
 
+        def eurl(event_id: int) -> str:
+            # 事件详情链接携带当前 lang/theme/win,跳转后不丢上下文(issue #11 claim 4)
+            return f"/event/{event_id}?" + urlencode(
+                {"lang": lang, "theme": theme, "win": window_days}
+            )
+
         html = _env.get_template("panel.html").render(
             **overview,
             t=t,
@@ -88,9 +97,11 @@ def register_panel_routes(app: FastAPI) -> None:
             theme=theme,
             rule_label=i18n.rule_label,
             qurl=qurl,
+            eurl=eurl,
             svc_all=svc_all,
             history_days=settings.sentinel_panel_history_days,
             services_cap=settings.sentinel_panel_services_cap,
+            diag_lang=settings.sentinel_llm_lang,
         )
         resp = HTMLResponse(html)
         # 仅对出现在 querystring 的偏好写 cookie(cookie 跨页兜底,querystring 当次生效)
@@ -116,6 +127,12 @@ def register_panel_routes(app: FastAPI) -> None:
         theme = prefs.resolve_theme(
             q.get("theme"), c.get("wm_theme"), settings.sentinel_panel_default_theme
         )
+        window_days = prefs.resolve_window(
+            q.get("win"),
+            c.get("wm_win"),
+            history_days=settings.sentinel_panel_history_days,
+            default=settings.sentinel_panel_default_window,
+        )
         detail = view.build_event_detail(
             state.store,
             settings,
@@ -124,17 +141,22 @@ def register_panel_routes(app: FastAPI) -> None:
             diag_registered=getattr(state, "diag_job_registered", None),
         )
         status = 200 if detail is not None else 404
+        # 返回"最新"链接携带 lang/theme/win,跳回总览不丢上下文(issue #11 claim 4)
+        back_url = "/?" + urlencode({"lang": lang, "theme": theme, "win": window_days})
         html = _env.get_template("event.html").render(
             detail=detail,
             t=i18n.make_translator(lang),
             lang=lang,
             theme=theme,
             rule_label=i18n.rule_label,
+            back_url=back_url,
+            diag_lang=settings.sentinel_llm_lang,
         )  # 详情页不传 refresh_seconds → 不自动刷新(spec §3)
         resp = HTMLResponse(html, status_code=status)
         prefs.apply_pref_cookies(
             resp,
             lang=lang if q.get("lang") else None,
             theme=theme if q.get("theme") else None,
+            window=window_days if q.get("win") else None,
         )
         return resp
