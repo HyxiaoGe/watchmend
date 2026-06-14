@@ -10,7 +10,7 @@ from typing import Annotated, Literal
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from sentinel.feishu.cards import build_diagnosis_card, build_summary_card
+from sentinel.notify.build import diagnosis_notification, summary_notification
 from sentinel.report import build_daily_stats
 
 logger = logging.getLogger("sentinel")
@@ -41,7 +41,7 @@ def _check_token(request: Request, token: str | None) -> None:
 
 
 def register_routes(app: FastAPI) -> None:
-    """Phase 3 编排 API。依赖经 app.state 注入(store/settings/patrol_feishu/services),
+    """Phase 3 编排 API。依赖经 app.state 注入(store/settings/patrol_broadcaster/services),
     仅宿主机编排脚本调用;写端点按 settings.sentinel_diag_token 鉴权。"""
 
     # 两个 GET 必须 async def:同步 def 会被 FastAPI 丢进线程池,而 Store 的 sqlite
@@ -68,13 +68,14 @@ def register_routes(app: FastAPI) -> None:
         store.set_diagnosis(event_id, status=body.status, diagnosis_json=diagnosis_json)
         card_sent = False
         if body.status == "done" and body.diagnosis:
-            try:  # 卡片尽力而为:诊断已落库,发送失败只损失通知
-                now_str = _now_local(request).strftime("%Y-%m-%d %H:%M:%S")
-                card = build_diagnosis_card(event, body.diagnosis, now_str=now_str)
-                await request.app.state.patrol_feishu.send(card)
-                card_sent = True
-            except Exception:
-                logger.exception("diagnosis card send failed (event %d)", event_id)
+            now_local = _now_local(request)
+            n = diagnosis_notification(
+                event,
+                body.diagnosis,
+                now_ts=int(now_local.timestamp()),
+                now_str=now_local.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+            card_sent = await request.app.state.patrol_broadcaster.send(n) >= 1
         return {"ok": True, "card_sent": card_sent}
 
     @app.get("/report/daily-data")
@@ -101,10 +102,11 @@ def register_routes(app: FastAPI) -> None:
     ) -> dict:
         _check_token(request, x_sentinel_token)
         now_local = _now_local(request)
-        card = build_summary_card(
+        n = summary_notification(
             body.text,
             date_str=now_local.date().isoformat(),
+            now_ts=int(now_local.timestamp()),
             now_str=now_local.strftime("%Y-%m-%d %H:%M:%S"),
         )
-        await request.app.state.patrol_feishu.send(card)
+        await request.app.state.patrol_broadcaster.send(n)
         return {"ok": True}

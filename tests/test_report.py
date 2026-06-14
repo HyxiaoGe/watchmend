@@ -2,23 +2,21 @@
 from datetime import datetime, timedelta, timezone
 
 from sentinel.models import ProbeSample
+from sentinel.notify.message import Kind
 from sentinel.report import aggregate_window, build_daily_stats, percentile, run_daily_report
 from sentinel.store import Store
 
 TZ = timezone(timedelta(hours=8))
 
 
-class RecordingFeishu:
+class RecordingBroadcaster:
     def __init__(self, fail=False):
         self.fail = fail
         self.sent = []
 
-    async def send(self, card):
-        self.sent.append(card)
-        if self.fail:
-            from sentinel.feishu.client import FeishuError
-
-            raise FeishuError("boom")
+    async def send(self, n):
+        self.sent.append(n)
+        return 0 if self.fail else 1
 
 
 def _sample(ts, service="auth", ok=True, latency_ms=10.0):
@@ -94,18 +92,18 @@ def test_build_daily_stats_baseline_mean_of_recent_p95(tmp_path):
 
 async def test_run_daily_report_skips_before_hour(tmp_path):
     store = Store(str(tmp_path / "s.db"))
-    feishu = RecordingFeishu()
+    bc = RecordingBroadcaster()
     now = datetime(2026, 6, 12, 8, 59, tzinfo=TZ)
     sent = await run_daily_report(
         store=store,
-        feishu=feishu,
+        broadcaster=bc,
         services=["auth"],
         now_local=now,
         hour=9,
         retention_days=30,
     )
     assert sent is False
-    assert feishu.sent == []
+    assert bc.sent == []
 
 
 async def test_run_daily_report_sends_then_commits(tmp_path):
@@ -115,17 +113,18 @@ async def test_run_daily_report_sends_then_commits(tmp_path):
     store.add_probe_samples(
         [_sample(now_ts - 60), _sample(now_ts - 40 * 86400, service="auth")]  # 一条过期样本
     )
-    feishu = RecordingFeishu()
+    bc = RecordingBroadcaster()
     sent = await run_daily_report(
         store=store,
-        feishu=feishu,
+        broadcaster=bc,
         services=["auth"],
         now_local=now,
         hour=9,
         retention_days=30,
     )
     assert sent is True
-    assert len(feishu.sent) == 1
+    assert len(bc.sent) == 1
+    assert bc.sent[0].kind is Kind.REPORT
     assert store.get_meta("daily_report_last_date") == "2026-06-12"
     assert store.get_recent_daily_p95s("auth", before_date="2026-06-13") == [10.0]
     # 30 天前的样本已清理
@@ -133,50 +132,49 @@ async def test_run_daily_report_sends_then_commits(tmp_path):
     # 同日再调不重发
     again = await run_daily_report(
         store=store,
-        feishu=feishu,
+        broadcaster=bc,
         services=["auth"],
         now_local=now.replace(hour=11),
         hour=9,
         retention_days=30,
     )
     assert again is False
-    assert len(feishu.sent) == 1
+    assert len(bc.sent) == 1
 
 
 async def test_run_daily_report_send_failure_commits_nothing(tmp_path):
     store = Store(str(tmp_path / "s.db"))
     now = datetime(2026, 6, 12, 9, 0, tzinfo=TZ)
     store.add_probe_samples([_sample(int(now.timestamp()) - 60)])
-    feishu = RecordingFeishu(fail=True)
-    try:
-        await run_daily_report(
-            store=store,
-            feishu=feishu,
-            services=["auth"],
-            now_local=now,
-            hour=9,
-            retention_days=30,
-        )
-    except Exception:
-        pass  # FeishuError 向上抛由 Job 循环记日志
+    bc = RecordingBroadcaster(fail=True)
+    sent = await run_daily_report(
+        store=store,
+        broadcaster=bc,
+        services=["auth"],
+        now_local=now,
+        hour=9,
+        retention_days=30,
+    )
+    assert sent is False  # 全渠道失败 → 未发送
     assert store.get_meta("daily_report_last_date") is None  # 未 commit → 下一分钟重试
     assert store.get_recent_daily_p95s("auth", before_date="2026-06-13") == []
 
 
-async def test_daily_report_card_includes_open_events(tmp_path):
-    # 复用本文件现有的 fake feishu / store 构造方式;关键断言:卡片带未决事件区
+async def test_daily_report_notification_carries_open_events(tmp_path):
     from datetime import datetime, timedelta, timezone
 
     from sentinel.models import ProbeSample
+    from sentinel.notify.message import Kind
     from sentinel.report import run_daily_report
     from sentinel.store import Store
 
-    class FakeFeishu:
+    class FakeBroadcaster:
         def __init__(self):
-            self.cards = []
+            self.sent = []
 
-        async def send(self, card):
-            self.cards.append(card)
+        async def send(self, n):
+            self.sent.append(n)
+            return 1
 
     store = Store(str(tmp_path / "r.db"))
     now_local = datetime(2026, 6, 11, 9, 30, tzinfo=timezone(timedelta(hours=8)))
@@ -195,21 +193,20 @@ async def test_daily_report_card_includes_open_events(tmp_path):
         diagnosis_status="pending",
         cooldown_until=now_ts + 21600,
     )
-    feishu = FakeFeishu()
+    bc = FakeBroadcaster()
     sent = await run_daily_report(
         store=store,
-        feishu=feishu,
+        broadcaster=bc,
         services=["auth"],
         now_local=now_local,
         hour=9,
         retention_days=30,
     )
     assert sent
-    contents = [
-        e["text"]["content"] for e in feishu.cards[0]["card"]["elements"] if e.get("tag") == "div"
-    ]
-    assert any("未决事件 1 起" in c for c in contents)
-    assert any("内存压力 · swap" in c for c in contents)
+    n = bc.sent[0]
+    assert n.kind is Kind.REPORT
+    assert ("未决事件", "1 起") in n.fields
+    assert n.data["open_events"][0].subject == "swap"
     store.close()
 
 

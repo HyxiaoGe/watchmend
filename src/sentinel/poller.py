@@ -7,16 +7,19 @@ from datetime import UTC, datetime
 
 from sentinel.differ import diff
 from sentinel.events import EventType, TransitionEvent
-from sentinel.feishu.cards import build_card, build_heartbeat_card
+from sentinel.notify.build import heartbeat_notification, vendor_incident_notification
 
 logger = logging.getLogger("sentinel.poller")
 
 
 @dataclass
 class PollState:
-    """跨轮持有的可变状态:每 provider 连续失败计数。"""
+    """跨轮持有的可变状态:每 provider 连续失败计数 + 已成功送达 meta 的 provider 集。"""
 
     fail_counts: dict[str, int] = field(default_factory=dict)
+    # 已送达 meta 卡的 provider:达阈值后若全渠道宕,meta 未送达就不入此集,下轮继续重试;
+    # 送达一次即记下不再重复,抓取恢复时清除以便下次故障重新武装。
+    meta_sent: set[str] = field(default_factory=set)
 
 
 async def run_cycle(
@@ -24,13 +27,15 @@ async def run_cycle(
     *,
     fetcher,
     store,
-    feishu,
+    broadcaster,
     state: PollState,
     verbosity: str = "phase",
     fail_threshold: int = 3,
 ) -> None:
-    """一轮:每 provider fetch→diff→(有事件)send→仅成功才 commit。每家独立隔离。"""
-    now_str = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+    """一轮:每 provider fetch→diff→(有事件)广播→仅 ≥1 渠道成功才 commit。每家独立隔离。"""
+    now = datetime.now(UTC)
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S UTC")
+    now_ts = int(now.timestamp())
     for adapter in adapters:
         provider = adapter.provider
         try:
@@ -39,23 +44,28 @@ async def run_cycle(
             count = state.fail_counts.get(provider, 0) + 1
             state.fail_counts[provider] = count
             logger.warning("fetch %s failed (%d): %s", provider, count, err)
-            if count == fail_threshold:  # 仅在恰好到阈值时发一次 meta
-                await _safe_send(
-                    feishu,
-                    _meta_card(adapter.display_name, count, now_str),
-                    provider,
+            # 达阈值且尚未送达过 meta:尝试发,仅 ≥1 渠道成功才记为已送达,
+            # 否则(如阈值那一刻全渠道宕)下轮继续重试,不丢卡。
+            if count >= fail_threshold and provider not in state.meta_sent:
+                sent = await broadcaster.send(
+                    _meta_notification(adapter.display_name, count, now_ts, now_str)
                 )
+                if sent >= 1:
+                    state.meta_sent.add(provider)
             continue
 
         state.fail_counts[provider] = 0  # 成功则清零
+        state.meta_sent.discard(provider)  # 抓取恢复 → meta 重新武装
         old = store.get(provider)
         events = diff(old, snapshot, verbosity=verbosity)
 
         if events:
-            card = build_card(adapter.display_name, events, snapshot.status_url, now_str=now_str)
-            if not await _safe_send(feishu, card, provider):
-                continue  # 发送失败 -> 不 commit,下轮重试
-        store.put(provider, snapshot)  # send 成功 或 无事件 -> commit
+            n = vendor_incident_notification(
+                adapter.display_name, events, snapshot.status_url, now_ts=now_ts, now_str=now_str
+            )
+            if await broadcaster.send(n) < 1:
+                continue  # 全渠道失败 -> 不 commit,下轮重试
+        store.put(provider, snapshot)  # ≥1 成功 或 无事件 -> commit
 
 
 _HEARTBEAT_KEY = "heartbeat_last_date"
@@ -68,35 +78,29 @@ def should_send_heartbeat(now_local: datetime, last_date: str | None, hour: int)
 
 
 async def run_heartbeat(
-    providers: list[str], *, store, feishu, now_local: datetime, hour: int, interval: int
+    providers: list[str], *, store, broadcaster, now_local: datetime, hour: int, interval: int
 ) -> None:
-    """每轮调用:满足条件才发当日心跳。send-then-commit:发成功才记日期,失败下轮重试。"""
+    """每轮调用:满足条件才发当日心跳。send-then-commit:≥1 渠道成功才记日期,失败下轮重试。"""
     if not should_send_heartbeat(now_local, store.get_meta(_HEARTBEAT_KEY), hour):
         return
     snapshots = [s for p in providers if (s := store.get(p)) is not None]
-    card = build_heartbeat_card(
-        snapshots, now_str=now_local.strftime("%Y-%m-%d %H:%M"), interval=interval
+    n = heartbeat_notification(
+        snapshots,
+        now_ts=int(now_local.timestamp()),
+        now_str=now_local.strftime("%Y-%m-%d %H:%M"),
+        interval=interval,
     )
-    if await _safe_send(feishu, card, "heartbeat"):
+    if await broadcaster.send(n) >= 1:
         today = now_local.strftime("%Y-%m-%d")
         store.set_meta(_HEARTBEAT_KEY, today)
         logger.info("heartbeat sent for %s (%d providers)", today, len(snapshots))
 
 
-async def _safe_send(feishu, card: dict, provider: str) -> bool:
-    try:
-        await feishu.send(card)
-        return True
-    except Exception as err:
-        logger.error("feishu send failed for %s: %s", provider, err)
-        return False
-
-
-def _meta_card(display_name: str, count: int, now_str: str) -> dict:
+def _meta_notification(display_name: str, count: int, now_ts: int, now_str: str):
     ev = TransitionEvent(
         type=EventType.FETCH_FAILED,
         provider=display_name,
         title=f"⚠️ 无法获取 {display_name} 状态页 {count} 次",
         detail="可能是网络/隧道或对方状态页本身异常。",
     )
-    return build_card(display_name, [ev], status_url="", now_str=now_str)
+    return vendor_incident_notification(display_name, [ev], "", now_ts=now_ts, now_str=now_str)

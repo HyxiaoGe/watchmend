@@ -18,7 +18,6 @@ from sentinel.api import register_routes
 from sentinel.config import Settings
 from sentinel.docker_client import DockerClient
 from sentinel.engine import apply_findings
-from sentinel.feishu.cards import build_diagnosis_card, build_summary_card
 from sentinel.feishu.client import FeishuClient
 from sentinel.fetcher import Fetcher
 from sentinel.findings import (
@@ -31,6 +30,12 @@ from sentinel.findings import (
 )
 from sentinel.llm_driver import LLMDriver
 from sentinel.logql import LokiClient
+from sentinel.notify.base import Broadcaster
+from sentinel.notify.build import diagnosis_notification, summary_notification
+from sentinel.notify.feishu_channel import FeishuChannel
+from sentinel.notify.ntfy import NtfyChannel
+from sentinel.notify.telegram import TelegramChannel
+from sentinel.notify.webhook import WebhookChannel
 from sentinel.poller import PollState, run_cycle, run_heartbeat
 from sentinel.probe import load_targets, run_probe_cycle
 from sentinel.probe_rules import evaluate_probe_rules
@@ -89,6 +94,38 @@ def _load_targets_or_disable(path: str):
         return []
 
 
+def _new_channels(settings: Settings, client: httpx.AsyncClient) -> list:
+    """飞书之外的渠道(Telegram/ntfy/webhook),按配置启用。vendor/patrol 两流各建一份
+    (无状态、单事件只进一个流,等价共享)。ntfy URL 坏会在此抛 ValueError,启动响亮失败。"""
+    channels: list = []
+    if settings.telegram_enabled:
+        channels.append(
+            TelegramChannel(
+                client, settings.sentinel_telegram_bot_token, settings.sentinel_telegram_chat_id
+            )
+        )
+    if settings.ntfy_enabled:
+        channels.append(
+            NtfyChannel(
+                client, settings.sentinel_ntfy_url, token=settings.sentinel_ntfy_token or None
+            )
+        )
+    if settings.webhook_enabled:
+        channels.append(
+            WebhookChannel(
+                client, settings.sentinel_webhook_url, token=settings.sentinel_webhook_token or None
+            )
+        )
+    return channels
+
+
+def _broadcaster_for(
+    settings: Settings, client: httpx.AsyncClient, *, webhook: str, secret: str | None
+) -> Broadcaster:
+    feishu = [FeishuChannel(FeishuClient(client, webhook, secret=secret))] if webhook else []
+    return Broadcaster(feishu + _new_channels(settings, client))
+
+
 def build_jobs(
     settings: Settings,
     client: httpx.AsyncClient,
@@ -98,11 +135,21 @@ def build_jobs(
     """组装全部 Job:(名称, 周期秒, tick)。lifespan 据此为每个 Job 起独立任务。"""
     adapters = build_adapters(settings.providers_list)
     fetcher = Fetcher(client)
-    vendor_feishu = FeishuClient(
-        client, settings.feishu_vendor_webhook, secret=settings.feishu_vendor_sign_secret
+    # 启动校验:至少一个通知渠道(含飞书)。零渠道直接响亮失败,不静默静音运行。
+    if not (settings.feishu_enabled or _new_channels(settings, client)):
+        raise ValueError(
+            "至少配置一个通知渠道:FEISHU_VENDOR_WEBHOOK / "
+            "SENTINEL_TELEGRAM_BOT_TOKEN+SENTINEL_TELEGRAM_CHAT_ID / "
+            "SENTINEL_NTFY_URL / SENTINEL_WEBHOOK_URL"
+        )
+    vendor_broadcaster = _broadcaster_for(
+        settings,
+        client,
+        webhook=settings.vendor_webhook,
+        secret=settings.vendor_sign_secret,
     )
-    patrol_feishu = FeishuClient(
-        client, settings.patrol_webhook, secret=settings.patrol_sign_secret
+    patrol_broadcaster = _broadcaster_for(
+        settings, client, webhook=settings.patrol_webhook, secret=settings.patrol_sign_secret
     )
     state = PollState()
     targets = _load_targets_or_disable(settings.sentinel_services_file)
@@ -141,7 +188,7 @@ def build_jobs(
             adapters,
             fetcher=fetcher,
             store=store,
-            feishu=vendor_feishu,
+            broadcaster=vendor_broadcaster,
             state=state,
             verbosity=settings.sentinel_incident_verbosity,
             fail_threshold=settings.sentinel_fail_threshold,
@@ -151,7 +198,7 @@ def build_jobs(
                 await run_heartbeat(
                     settings.providers_list,
                     store=store,
-                    feishu=vendor_feishu,
+                    broadcaster=vendor_broadcaster,
                     now_local=datetime.now(_local_tz(settings)),
                     hour=settings.sentinel_heartbeat_hour,
                     interval=settings.sentinel_poll_interval,
@@ -169,7 +216,7 @@ def build_jobs(
             findings,
             scope=PROBE_RULES,
             store=store,
-            feishu=patrol_feishu,
+            broadcaster=patrol_broadcaster,
             now_ts=now_ts,
             now_str=now_str,
             cooldown_seconds=cooldown_seconds,
@@ -208,7 +255,7 @@ def build_jobs(
             findings,
             scope=scope,
             store=store,
-            feishu=patrol_feishu,
+            broadcaster=patrol_broadcaster,
             now_ts=now_ts,
             now_str=now_str,
             cooldown_seconds=cooldown_seconds,
@@ -239,7 +286,7 @@ def build_jobs(
             findings,
             scope=scope,
             store=store,
-            feishu=patrol_feishu,
+            broadcaster=patrol_broadcaster,
             now_ts=now_ts,
             now_str=now_str,
             cooldown_seconds=cooldown_seconds,
@@ -286,7 +333,7 @@ def build_jobs(
             findings,
             scope=scope,
             store=store,
-            feishu=patrol_feishu,
+            broadcaster=patrol_broadcaster,
             now_ts=now_ts,
             now_str=now_str,
             cooldown_seconds=cooldown_seconds,
@@ -314,11 +361,11 @@ def build_jobs(
                     status="done",
                     diagnosis_json=json.dumps(diagnosis, ensure_ascii=False),
                 )
-                try:  # 卡片尽力而为:诊断已落库,发卡失败不回滚
-                    card = build_diagnosis_card(event, diagnosis, now_str=now_str)
-                    await patrol_feishu.send(card)
-                except Exception:
-                    logger.exception("diagnosis card send failed (event %d)", event.id)
+                # 通知尽力而为:诊断已落库,广播失败不回滚(Broadcaster 内部已逐渠道记日志)
+                now_ts_diag, _, _ = _now()
+                await patrol_broadcaster.send(
+                    diagnosis_notification(event, diagnosis, now_ts=now_ts_diag, now_str=now_str)
+                )
             else:
                 store.set_diagnosis(
                     event.id,
@@ -338,7 +385,7 @@ def build_jobs(
                 findings,
                 scope=evaluated,
                 store=store,
-                feishu=patrol_feishu,
+                broadcaster=patrol_broadcaster,
                 now_ts=now_ts,
                 now_str=now_str,
                 cooldown_seconds=cooldown_seconds,
@@ -348,7 +395,7 @@ def build_jobs(
             logger.exception("hygiene failed")
         sent = await run_daily_report(
             store=store,
-            feishu=patrol_feishu,
+            broadcaster=patrol_broadcaster,
             services=service_names,
             now_local=now_local,
             hour=settings.sentinel_report_hour,
@@ -366,8 +413,11 @@ def build_jobs(
                 }
                 text = await driver.summarize(data)
                 if text:
-                    card = build_summary_card(text[:1000], date_str=date_str, now_str=now_str)
-                    await patrol_feishu.send(card)
+                    await patrol_broadcaster.send(
+                        summary_notification(
+                            text[:1000], date_str=date_str, now_ts=now_ts, now_str=now_str
+                        )
+                    )
             except Exception:
                 logger.exception("daily AI summary failed")
 
@@ -408,12 +458,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await docker.aclose()
         raise
     # Phase 3 API 依赖注入:编排脚本经宿主机 127.0.0.1:8765 调用。
-    # patrol_feishu 与 build_jobs 闭包内实例是两份(节流互不感知):诊断卡/总结卡
-    # 频次极低(<10/月+1/天),叠加突破飞书频控的风险可忽略,不为此重构 build_jobs。
+    # 此处 patrol_broadcaster 与 build_jobs 闭包内的是两份(各自的飞书渠道节流互不感知):
+    # 诊断卡/总结卡频次极低(<10/月+1/天),叠加突破飞书频控的风险可忽略,不为此重构 build_jobs。
     app.state.settings = settings
     app.state.store = store
-    app.state.patrol_feishu = FeishuClient(
-        client, settings.patrol_webhook, secret=settings.patrol_sign_secret
+    app.state.patrol_broadcaster = _broadcaster_for(
+        settings, client, webhook=settings.patrol_webhook, secret=settings.patrol_sign_secret
     )
     # load_targets 在此与 build_jobs 各调一次(读同一 yaml,幂等),可接受
     app.state.services = [t.name for t in _load_targets_or_disable(settings.sentinel_services_file)]

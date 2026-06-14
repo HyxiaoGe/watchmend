@@ -1,9 +1,11 @@
 .PHONY: demo demo-down demo-logs up down logs test lint leak-check check services-yaml-ready
 
-# ---- 全栈 demo:自带 prometheus/loki/示例服务,只需 .env 里一个飞书 webhook ----
+# ---- 全栈 demo:自带 prometheus/loki/示例服务,.env 里至少配一个通知渠道 ----
 demo: .env
 	@if grep -q REPLACE_ME .env; then \
-		echo "✗ .env 里 FEISHU_VENDOR_WEBHOOK 还是占位符,填好真实 webhook 再运行"; exit 1; fi
+		echo "✗ .env 里还有 REPLACE_ME 占位符,替换成真实值再运行"; exit 1; fi
+	@if ! grep -qE '^(FEISHU_VENDOR_WEBHOOK|FEISHU_PATROL_WEBHOOK|SENTINEL_TELEGRAM_BOT_TOKEN|SENTINEL_NTFY_URL|SENTINEL_WEBHOOK_URL)=..*' .env; then \
+		echo "✗ .env 未配置任何通知渠道:飞书/Telegram/ntfy/webhook 至少填一个再运行"; exit 1; fi
 	docker compose -f docker-compose.demo.yml up -d --build
 	@echo "✅ demo 已启动:curl http://127.0.0.1:8765/health 验活"
 	@echo "   看告警卡: docker compose -f docker-compose.demo.yml stop demo-app(约 15 分钟后出卡)"
@@ -18,7 +20,9 @@ demo-logs:
 # ---- 正式部署:接入你已有的 prometheus/loki 与服务清单 ----
 up: .env services-yaml-ready
 	@if grep -q REPLACE_ME .env; then \
-		echo "✗ .env 里 FEISHU_VENDOR_WEBHOOK 还是占位符,填好真实 webhook 再运行"; exit 1; fi
+		echo "✗ .env 里还有 REPLACE_ME 占位符,替换成真实值再运行"; exit 1; fi
+	@if ! grep -qE '^(FEISHU_VENDOR_WEBHOOK|FEISHU_PATROL_WEBHOOK|SENTINEL_TELEGRAM_BOT_TOKEN|SENTINEL_NTFY_URL|SENTINEL_WEBHOOK_URL)=..*' .env; then \
+		echo "✗ .env 未配置任何通知渠道:飞书/Telegram/ntfy/webhook 至少填一个再运行"; exit 1; fi
 	docker compose up -d --build
 
 down:
@@ -42,7 +46,7 @@ check: lint test leak-check
 # ---- 配置文件脚手架:首次生成后停下来,等用户填完再跑 ----
 .env:
 	@cp .env.example .env
-	@echo "✗ 已生成 .env:请填入 FEISHU_VENDOR_WEBHOOK(必填)后重新运行"
+	@echo "✗ 已生成 .env:至少配置一个通知渠道(飞书/Telegram/ntfy/webhook)后重新运行"
 	@exit 1
 
 services-yaml-ready:

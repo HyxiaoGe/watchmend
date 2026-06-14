@@ -7,31 +7,31 @@ import pytest
 from fastapi import FastAPI
 
 from sentinel.api import register_routes
+from sentinel.notify.message import Kind
 from sentinel.store import Store
 
 
-class FakeFeishu:
+class FakeBroadcaster:
     def __init__(self):
-        self.sent: list[dict] = []
+        self.sent: list = []
         self.fail = False
 
-    async def send(self, card: dict) -> None:
-        if self.fail:
-            raise RuntimeError("boom")
-        self.sent.append(card)
+    async def send(self, n) -> int:
+        self.sent.append(n)
+        return 0 if self.fail else 1
 
 
 @pytest.fixture
 def env(tmp_path):
     store = Store(str(tmp_path / "t.db"))
-    feishu = FakeFeishu()
+    bc = FakeBroadcaster()
     app = FastAPI()
     app.state.store = store
-    app.state.patrol_feishu = feishu
+    app.state.patrol_broadcaster = bc
     app.state.services = ["auth", "grafana"]
     app.state.settings = SimpleNamespace(sentinel_diag_token="", sentinel_heartbeat_utc_offset=8)
     register_routes(app)
-    yield app, store, feishu
+    yield app, store, bc
     store.close()
 
 
@@ -67,8 +67,8 @@ async def test_pending_lists_only_pending(env):
     assert events[0]["payload_json"] == json.dumps({"pct": 83.4})
 
 
-async def test_post_diagnosis_done_sends_card_and_updates(env):
-    app, store, feishu = env
+async def test_post_diagnosis_done_broadcasts_and_updates(env):
+    app, store, bc = env
     eid = _insert(store)
     body = {"status": "done", "diagnosis": {"summary": "s", "root_cause": "r"}}
     async with _client(app) as c:
@@ -76,30 +76,30 @@ async def test_post_diagnosis_done_sends_card_and_updates(env):
     assert r.status_code == 200
     assert r.json() == {"ok": True, "card_sent": True}
     assert store.get_event(eid).diagnosis_status == "done"
-    assert len(feishu.sent) == 1
-    assert feishu.sent[0]["card"]["header"]["template"] == "blue"
+    assert len(bc.sent) == 1
+    assert bc.sent[0].kind is Kind.DIAGNOSIS
 
 
-async def test_post_diagnosis_card_failure_still_persists(env):
-    app, store, feishu = env
-    feishu.fail = True
+async def test_post_diagnosis_broadcast_failure_still_persists(env):
+    app, store, bc = env
+    bc.fail = True
     eid = _insert(store)
     async with _client(app) as c:
         r = await c.post(
             f"/events/{eid}/diagnosis",
             json={"status": "done", "diagnosis": {"summary": "s"}},
         )
-    assert r.json() == {"ok": True, "card_sent": False}
-    assert store.get_event(eid).diagnosis_status == "done"
+    assert r.json() == {"ok": True, "card_sent": False}  # 全渠道失败 → card_sent False
+    assert store.get_event(eid).diagnosis_status == "done"  # 诊断仍落库
 
 
 async def test_post_diagnosis_failed_no_card(env):
-    app, store, feishu = env
+    app, store, bc = env
     eid = _insert(store)
     async with _client(app) as c:
         r = await c.post(f"/events/{eid}/diagnosis", json={"status": "failed"})
     assert r.json() == {"ok": True, "card_sent": False}
-    assert feishu.sent == []
+    assert bc.sent == []
 
 
 async def test_post_diagnosis_404(env):
@@ -120,7 +120,7 @@ async def test_token_required_when_configured(env):
             json={"status": "failed"},
             headers={"X-Sentinel-Token": "sek"},
         )
-        r3 = await c.get("/events/pending")  # 读端点不鉴权
+        r3 = await c.get("/events/pending")
     assert r1.status_code == 401
     assert r2.status_code == 200
     assert r3.status_code == 200
@@ -137,9 +137,10 @@ async def test_daily_data_shape(env):
         assert {"service", "total", "ok_count", "p50_ms", "p95_ms", "baseline_p95_ms"} <= set(s)
 
 
-async def test_post_summary_sends_card(env):
-    app, _, feishu = env
+async def test_post_summary_broadcasts(env):
+    app, _, bc = env
     async with _client(app) as c:
         r = await c.post("/report/summary", json={"text": "一切平稳"})
     assert r.status_code == 200
-    assert "一切平稳" in str(feishu.sent[0])
+    assert bc.sent[0].kind is Kind.SUMMARY
+    assert "一切平稳" in bc.sent[0].detail

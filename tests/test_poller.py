@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import pytest
 
 from sentinel.models import Incident, IncidentStatus, Indicator, Snapshot
+from sentinel.notify.message import Kind
 from sentinel.poller import PollState, run_cycle, run_heartbeat, should_send_heartbeat
 from sentinel.store import Store
 
@@ -22,17 +23,16 @@ class FakeAdapter:
         return self._snapshot
 
 
-class RecordingFeishu:
+class RecordingBroadcaster:
+    """记录收到的 Notification;fail=True 时返回 0(全渠道失败)。"""
+
     def __init__(self, fail=False):
         self.fail = fail
         self.sent = []
 
-    async def send(self, card):
-        self.sent.append(card)
-        if self.fail:
-            from sentinel.feishu.client import FeishuError
-
-            raise FeishuError("boom")
+    async def send(self, n):
+        self.sent.append(n)
+        return 0 if self.fail else 1
 
 
 def _snap(provider, indicator=Indicator.NONE, incidents=None):
@@ -63,16 +63,15 @@ def _inc(key):
 @pytest.mark.asyncio
 async def test_commit_only_after_successful_send(tmp_path):
     store = Store(str(tmp_path / "s.db"))
-    store.put("anthropic", _snap("anthropic"))  # 上次:无事件
+    store.put("anthropic", _snap("anthropic"))
     adapter = FakeAdapter("anthropic", _snap("anthropic", Indicator.MAJOR, [_inc("i1")]))
-    feishu = RecordingFeishu(fail=True)  # 发送失败
+    bc = RecordingBroadcaster(fail=True)  # 全渠道失败
     state = PollState()
 
-    await run_cycle([adapter], fetcher=None, store=store, feishu=feishu, state=state)
+    await run_cycle([adapter], fetcher=None, store=store, broadcaster=bc, state=state)
 
-    assert len(feishu.sent) == 1  # 试图发了
-    # 发送失败 -> 不 commit -> store 仍是旧的(无事件)
-    assert store.get("anthropic").incidents == []
+    assert len(bc.sent) == 1  # 试图广播了
+    assert store.get("anthropic").incidents == []  # 失败 → 不 commit
 
 
 @pytest.mark.asyncio
@@ -80,11 +79,12 @@ async def test_commit_when_send_succeeds(tmp_path):
     store = Store(str(tmp_path / "s.db"))
     store.put("anthropic", _snap("anthropic"))
     adapter = FakeAdapter("anthropic", _snap("anthropic", Indicator.MAJOR, [_inc("i1")]))
-    feishu = RecordingFeishu(fail=False)
+    bc = RecordingBroadcaster(fail=False)
     state = PollState()
 
-    await run_cycle([adapter], fetcher=None, store=store, feishu=feishu, state=state)
+    await run_cycle([adapter], fetcher=None, store=store, broadcaster=bc, state=state)
 
+    assert bc.sent[0].kind is Kind.VENDOR_INCIDENT
     assert len(store.get("anthropic").incidents) == 1  # 已 commit
 
 
@@ -92,10 +92,10 @@ async def test_commit_when_send_succeeds(tmp_path):
 async def test_no_events_commits_silently(tmp_path):
     store = Store(str(tmp_path / "s.db"))
     store.put("anthropic", _snap("anthropic"))
-    adapter = FakeAdapter("anthropic", _snap("anthropic"))  # 还是全绿,无翻转
-    feishu = RecordingFeishu()
-    await run_cycle([adapter], fetcher=None, store=store, feishu=feishu, state=PollState())
-    assert feishu.sent == []  # 无事件不发
+    adapter = FakeAdapter("anthropic", _snap("anthropic"))
+    bc = RecordingBroadcaster()
+    await run_cycle([adapter], fetcher=None, store=store, broadcaster=bc, state=PollState())
+    assert bc.sent == []
 
 
 @pytest.mark.asyncio
@@ -103,9 +103,8 @@ async def test_one_adapter_error_does_not_block_others(tmp_path):
     store = Store(str(tmp_path / "s.db"))
     good = FakeAdapter("github", _snap("github", Indicator.MAJOR, [_inc("g1")]))
     bad = FakeAdapter("openai", error=RuntimeError("network"))
-    feishu = RecordingFeishu()
-    await run_cycle([bad, good], fetcher=None, store=store, feishu=feishu, state=PollState())
-    # good 仍被处理并 commit
+    bc = RecordingBroadcaster()
+    await run_cycle([bad, good], fetcher=None, store=store, broadcaster=bc, state=PollState())
     assert store.get("github") is not None
 
 
@@ -113,14 +112,59 @@ async def test_one_adapter_error_does_not_block_others(tmp_path):
 async def test_meta_alert_fires_once_at_fail_threshold(tmp_path):
     store = Store(str(tmp_path / "s.db"))
     bad = FakeAdapter("openai", error=RuntimeError("network"))
-    feishu = RecordingFeishu()
+    bc = RecordingBroadcaster()
     state = PollState()
     for _ in range(5):
         await run_cycle(
-            [bad], fetcher=None, store=store, feishu=feishu, state=state, fail_threshold=3
+            [bad], fetcher=None, store=store, broadcaster=bc, state=state, fail_threshold=3
         )
-    meta = [c for c in feishu.sent if "无法获取" in c["card"]["elements"][0]["text"]["content"]]
+    meta = [n for n in bc.sent if "无法获取" in n.detail]
     assert len(meta) == 1  # 仅在第 3 次发一次
+
+
+async def test_meta_alert_retries_until_delivered(tmp_path):
+    # 阈值时全渠道失败,meta 卡不能丢:未送达就每轮重试,送达后才停(Codex P3)。
+    store = Store(str(tmp_path / "s.db"))
+    bad = FakeAdapter("openai", error=RuntimeError("network"))
+    bc = RecordingBroadcaster(fail=True)  # 全渠道宕
+    state = PollState()
+    for _ in range(4):  # 1、2 计数<阈值不发;3 达阈值发(失败);4 仍未送达继续重试(失败)
+        await run_cycle(
+            [bad], fetcher=None, store=store, broadcaster=bc, state=state, fail_threshold=3
+        )
+    attempts = [n for n in bc.sent if "无法获取" in n.detail]
+    assert len(attempts) == 2  # 第 3、4 轮都尝试了——没在阈值那轮之后把卡丢掉
+    bc.fail = False  # 渠道恢复
+    await run_cycle(
+        [bad], fetcher=None, store=store, broadcaster=bc, state=state, fail_threshold=3
+    )  # 第 5 轮:终于送达
+    await run_cycle(
+        [bad], fetcher=None, store=store, broadcaster=bc, state=state, fail_threshold=3
+    )  # 第 6 轮:已送达 → 不再重复
+    final = [n for n in bc.sent if "无法获取" in n.detail]
+    assert len(final) == 3  # 送达一次后即止
+
+
+async def test_meta_alert_rearms_after_recovery(tmp_path):
+    # 送达后状态页恢复又再次失败到阈值:meta 应能再发一次(meta_sent 在成功抓取时清除)。
+    store = Store(str(tmp_path / "s.db"))
+    bad = FakeAdapter("openai", error=RuntimeError("network"))
+    ok = FakeAdapter("openai", _snap("openai"))
+    bc = RecordingBroadcaster()
+    state = PollState()
+    for _ in range(3):  # 达阈值发一次
+        await run_cycle(
+            [bad], fetcher=None, store=store, broadcaster=bc, state=state, fail_threshold=3
+        )
+    await run_cycle(
+        [ok], fetcher=None, store=store, broadcaster=bc, state=state, fail_threshold=3
+    )  # 抓取成功 → 清计数与 meta_sent
+    for _ in range(3):  # 再次失败到阈值
+        await run_cycle(
+            [bad], fetcher=None, store=store, broadcaster=bc, state=state, fail_threshold=3
+        )
+    meta = [n for n in bc.sent if "无法获取" in n.detail]
+    assert len(meta) == 2  # 恢复后重新武装,可再发
 
 
 # ---- 心跳调度 ----
@@ -136,7 +180,7 @@ def test_should_send_heartbeat_before_hour_is_false():
 
 def test_should_send_heartbeat_after_hour_unsent_is_true():
     assert should_send_heartbeat(_dt(9), None, 9) is True
-    assert should_send_heartbeat(_dt(14), "2026-06-05", 9) is True  # 昨天发过,今天到点该发
+    assert should_send_heartbeat(_dt(14), "2026-06-05", 9) is True
 
 
 def test_should_send_heartbeat_already_sent_today_is_false():
@@ -147,26 +191,26 @@ def test_should_send_heartbeat_already_sent_today_is_false():
 async def test_run_heartbeat_sends_then_records_and_dedups(tmp_path):
     store = Store(str(tmp_path / "s.db"))
     store.put("anthropic", _snap("anthropic"))
-    feishu = RecordingFeishu()
+    bc = RecordingBroadcaster()
     await run_heartbeat(
-        ["anthropic"], store=store, feishu=feishu, now_local=_dt(9), hour=9, interval=60
+        ["anthropic"], store=store, broadcaster=bc, now_local=_dt(9), hour=9, interval=60
     )
-    assert len(feishu.sent) == 1
+    assert len(bc.sent) == 1
+    assert bc.sent[0].kind is Kind.HEARTBEAT
     assert store.get_meta("heartbeat_last_date") == "2026-06-06"
-    # 同日再调不重发
     await run_heartbeat(
-        ["anthropic"], store=store, feishu=feishu, now_local=_dt(11), hour=9, interval=60
+        ["anthropic"], store=store, broadcaster=bc, now_local=_dt(11), hour=9, interval=60
     )
-    assert len(feishu.sent) == 1
+    assert len(bc.sent) == 1
 
 
 @pytest.mark.asyncio
 async def test_run_heartbeat_failed_send_not_recorded(tmp_path):
     store = Store(str(tmp_path / "s.db"))
     store.put("anthropic", _snap("anthropic"))
-    feishu = RecordingFeishu(fail=True)
+    bc = RecordingBroadcaster(fail=True)
     await run_heartbeat(
-        ["anthropic"], store=store, feishu=feishu, now_local=_dt(9), hour=9, interval=60
+        ["anthropic"], store=store, broadcaster=bc, now_local=_dt(9), hour=9, interval=60
     )
-    assert len(feishu.sent) == 1  # 试图发了
+    assert len(bc.sent) == 1  # 试图发了
     assert store.get_meta("heartbeat_last_date") is None  # 失败不记 → 下轮重试

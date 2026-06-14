@@ -43,7 +43,7 @@ docker compose -f docker-compose.demo.yml start demo-app   # ✅ recovery card f
 ## Production deployment
 
 ```bash
-cp .env.example .env                      # webhook is the only required field
+cp .env.example .env                      # at least one notification channel required
 cp services.example.yaml services.yaml    # your own probe list
 make up                                   # or docker compose up -d --build
 ```
@@ -53,7 +53,10 @@ Most data sources are optional — leave one empty and that layer turns off clea
 
 | Config | Capability | When empty |
 |---|---|---|
-| `FEISHU_VENDOR_WEBHOOK` | alert/report cards (**only required field**) | — |
+| `FEISHU_VENDOR_WEBHOOK` | alert/report Feishu cards | that channel off |
+| `SENTINEL_TELEGRAM_BOT_TOKEN` + `SENTINEL_TELEGRAM_CHAT_ID` | Telegram push (both required to enable) | that channel off |
+| `SENTINEL_NTFY_URL` (optional `SENTINEL_NTFY_TOKEN`) | ntfy push, full topic URL | that channel off |
+| `SENTINEL_WEBHOOK_URL` (optional `SENTINEL_WEBHOOK_TOKEN`) | Generic webhook, structured JSON | that channel off |
 | `services.yaml` | HTTP probes + latency baselines | vendor-status-only mode |
 | `SENTINEL_PROMETHEUS_URL` | disk/memory/restart metric rules | metrics layer off |
 | `SENTINEL_LOKI_URL` | error-log spike detection | log layer off |
@@ -69,6 +72,8 @@ Most data sources are optional — leave one empty and that layer turns off clea
 > bare socket**. To turn the whole layer off: clear `SENTINEL_DOCKER_HOST` and comment out
 > the `docker-proxy` service plus sentinel's `depends_on`/`docker_proxy` network in compose
 > (the file has inline notes).
+
+> **Notification channels are a broadcast model**: every configured channel receives each alert/report/diagnosis; failures are isolated (one channel failing does not affect the others). **At least one channel must be configured** (Feishu `FEISHU_VENDOR_WEBHOOK` or any of the above) to start; `FEISHU_VENDOR_WEBHOOK` is no longer mandatory — overseas self-hosters can run with Telegram/ntfy/webhook only.
 
 All 40+ settings (thresholds, cooldowns, verbosity…) are documented inline in
 [.env.example](.env.example).
@@ -141,9 +146,12 @@ Security boundaries (design stance, not afterthought patches):
 
 ## FAQ
 
-**Why Feishu-only notifications?** The project grew out of the author's own
-setup. A notification-channel abstraction (Telegram / Slack / Discord / generic
-webhook) is top of the roadmap — PRs welcome.
+**Why does Feishu get rich cards?** Feishu was the project's first channel and
+has the most complete card ecosystem, so it receives native interactive cards;
+Telegram / ntfy receive rendered text and the generic webhook receives structured
+JSON (for machine consumption). Configure one or more channels and every alert
+broadcasts to all of them (see the config table above). More channels
+(Slack / Discord, …) are welcome via PR.
 
 **vs. Uptime Kuma / Gatus?** Those are probes + status pages. WatchMend focuses
 on the rule engine + incident lifecycle (cooldown/recovery/baselines) + LLM
