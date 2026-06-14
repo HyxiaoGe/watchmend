@@ -327,6 +327,49 @@ async def test_diagnose_captures_tool_calls(monkeypatch):
     assert "success" in tc["output"]
 
 
+async def test_evidence_capped_but_model_gets_full_output(monkeypatch):
+    """证据链落库/展示截断到 4096,但喂给模型的工具输出保持完整(≤8000),决策质量不受影响。
+    这是子项目③最易被未来重构破坏的不变量:截断只作用于持久化/展示副本,不作用于模型上下文。"""
+    settings = _settings(
+        monkeypatch,
+        LLM_BASE_URL="http://llm.test/v1",
+        LLM_MODEL="m",
+        SENTINEL_PROMETHEUS_URL="http://prometheus:9090",
+    )
+    big = "x" * 6000  # >4096(面板截断)且 <8000(_MAX_TOOL_OUT,不被它截)
+    async with httpx.AsyncClient() as client:
+        driver = LLMDriver(client, settings)
+        with respx.mock:
+            llm = respx.post(LLM_URL).mock(
+                side_effect=[
+                    _llm_message(
+                        tool_calls=[
+                            {
+                                "id": "c1",
+                                "type": "function",
+                                "function": {"name": "prom_query", "arguments": '{"query": "up"}'},
+                            }
+                        ]
+                    ),
+                    _llm_message(content=FINAL_TEXT),
+                ]
+            )
+            respx.get("http://prometheus:9090/api/v1/query").mock(
+                return_value=httpx.Response(200, text=big)
+            )
+            _, _, tool_calls = await driver.diagnose(_event())
+    # 模型在第二轮收到完整 6000 字符(未被面板的 4096 截断)
+    second = json.loads(llm.calls[1].request.content)
+    tool_msg = next(m for m in second["messages"] if m["role"] == "tool")
+    assert len(tool_msg["content"]) == 6000
+    assert "(truncated)" not in tool_msg["content"]
+    # 但落库/展示的证据链被截断到 4096 + 截断标记
+    out = tool_calls[0]["output"]
+    assert out.endswith("…(truncated)")
+    assert len(out) == 4096 + len("…(truncated)")
+    assert out[:4096] == big[:4096]
+
+
 async def test_diagnose_captures_failed_tool_call(monkeypatch):
     settings = _settings(
         monkeypatch,
