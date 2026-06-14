@@ -1,25 +1,103 @@
 <!doctype html>
-<html lang="zh">
+<html lang="{{ lang|default('zh') }}" data-theme="{{ theme|default('system') }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {% if refresh_seconds %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endif %}
-<title>{% block title %}WatchMend 证据台{% endblock %}</title>
+<title>{% block title %}{{ t('hdr.title') if t else 'WatchMend' }}{% endblock %}</title>
 <style>
-  body { background:#0d1117; color:#c9d1d9; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; margin:0; padding:1.2rem; }
-  a { color:#58a6ff; text-decoration:none; }
-  h1 { font-size:1.1rem; }
-  h2 { font-size:.95rem; border-bottom:1px solid #30363d; padding-bottom:.3rem; margin-top:1.4rem; }
-  .row { padding:.25rem 0; border-bottom:1px solid #161b22; }
-  .crit { color:#f85149; } .warn { color:#d29922; } .ok { color:#3fb950; } .muted { color:#8b949e; }
-  pre { background:#161b22; padding:.6rem; overflow:auto; white-space:pre-wrap; word-break:break-all; }
-  details { margin:.3rem 0; } summary { cursor:pointer; }
-  code { color:#79c0ff; }
-  .pill { display:inline-block; padding:0 .4rem; border:1px solid #30363d; border-radius:.5rem; margin-right:.3rem; }
+  :root {
+    --bg:#0d1117; --panel:#161b22; --line:#2a313c; --txt:#c9d1d9; --mut:#8b949e;
+    --link:#58a6ff; --vio:#a371f7; --viobg:#1d1633; --rad:8px;
+    --st-ok:#3fb950; --st-degraded:#d29922; --st-partial:#db6d28; --st-down:#f85149; --st-nodata:#30363d;
+  }
+  :root[data-theme="light"] {
+    --bg:#ffffff; --panel:#f6f8fa; --line:#d0d7de; --txt:#1f2328; --mut:#656d76;
+    --link:#0969da; --vio:#8250df; --viobg:#f3eefb; --st-nodata:#e5e7eb;
+  }
+  @media (prefers-color-scheme: light) {
+    :root[data-theme="system"] {
+      --bg:#ffffff; --panel:#f6f8fa; --line:#d0d7de; --txt:#1f2328; --mut:#656d76;
+      --link:#0969da; --vio:#8250df; --viobg:#f3eefb; --st-nodata:#e5e7eb;
+    }
+  }
+  body { background:var(--bg); color:var(--txt); font-family:ui-sans-serif,system-ui,'Segoe UI',sans-serif; font-size:13px; margin:0; padding:1.1rem; }
+  .mono { font-family:ui-monospace,Menlo,monospace; }
+  a { color:var(--link); text-decoration:none; }
+  .hdr { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; }
+  .hdr b { font-size:15px; } .hdr .sub { color:var(--mut); font-size:11px; }
+  .nav { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:10px 0; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+  .seg a { color:var(--mut); font-size:11px; padding:3px 10px; }
+  .seg a.on { background:var(--vio); color:#fff; }
+  .banner { display:flex; align-items:center; gap:10px; border:1px solid var(--line); border-radius:var(--rad); padding:11px 14px; margin:12px 0; background:var(--panel); }
+  .banner.ok { border-color:#1f6f33; }
+  .banner .pulse { width:10px; height:10px; border-radius:50%; background:var(--st-ok); box-shadow:0 0 0 4px rgba(63,185,80,.18); }
+  .banner.bad .pulse { background:var(--st-down); box-shadow:0 0 0 4px rgba(248,81,73,.18); }
+  .banner .big { font-weight:700; } .banner.ok .big { color:var(--st-ok); }
+  .secrow { display:flex; justify-content:space-between; align-items:center; margin:16px 0 8px; gap:10px; flex-wrap:wrap; }
+  .sec { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.6px; }
+  .right { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .lg { display:flex; gap:11px; color:var(--mut); font-size:11px; align-items:center; flex-wrap:wrap; }
+  .lg span { display:flex; gap:4px; align-items:center; }
+  .lg i { width:9px; height:9px; border-radius:2px; display:inline-block; }
+  .comps { border:1px solid var(--line); border-radius:var(--rad); background:var(--panel); padding:4px 14px; }
+  .comp { padding:12px 0; border-bottom:1px solid var(--line); } .comp:last-child { border-bottom:0; }
+  .comp-hd { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:7px; }
+  .comp-hd b { font-size:13px; } .comp-hd .new { color:var(--mut); font-size:11px; margin-left:6px; }
+  .upbar { display:flex; gap:1.5px; height:30px; align-items:stretch; }
+  .upbar i { flex:1 1 0; min-width:2px; border-radius:2px; background:var(--st-ok); }
+  .upbar i:hover { filter:brightness(1.35); }
+  .upbar i.degraded{background:var(--st-degraded)} .upbar i.partial{background:var(--st-partial)}
+  .upbar i.down{background:var(--st-down)} .upbar i.nodata{background:var(--st-nodata)}
+  .comp-ax { display:flex; align-items:center; gap:10px; color:var(--mut); font-size:11px; margin-top:6px; }
+  .comp-ax .ln { flex:1; height:1px; background:var(--line); }
+  .self { border:1px solid var(--line); border-radius:var(--rad); background:var(--panel); padding:10px 14px; display:flex; flex-direction:column; gap:6px; }
+  .self .ln1 { display:flex; gap:14px; flex-wrap:wrap; align-items:center; font-size:12px; }
+  .self .k { color:var(--mut); } .ok { color:var(--st-ok); } .warn { color:var(--st-degraded); } .crit { color:var(--st-down); } .muted { color:var(--mut); } .vio { color:var(--vio); }
+  .self .tag { font-size:10px; border:1px solid var(--line); border-radius:8px; padding:0 6px; color:var(--mut); }
+  .ev { background:var(--panel); border:1px solid var(--line); border-radius:var(--rad); padding:10px 12px; margin-bottom:8px; }
+  .ev .top { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .dot { width:8px; height:8px; border-radius:50%; display:inline-block; background:var(--st-down); } .dot.warning{background:var(--st-degraded)} .dot.ok{background:var(--st-ok)}
+  .chip { font-size:11px; padding:1px 7px; border-radius:10px; border:1px solid var(--line); color:var(--mut); }
+  .chip.ok { color:var(--st-ok); border-color:#1f6f33; }
+  .chip.ai { color:var(--vio); border-color:var(--vio); background:var(--viobg); cursor:pointer; font-weight:600; }
+  .when { color:var(--mut); font-size:11px; margin-left:auto; }
+  .diag { margin-top:9px; border-left:3px solid var(--vio); background:var(--viobg); border-radius:0 var(--rad) var(--rad) 0; padding:10px 12px; }
+  .diag .lbl { color:var(--vio); font-size:11px; text-transform:uppercase; letter-spacing:.4px; margin-top:8px; }
+  .diag .body { font-size:12px; line-height:1.5; }
+  .pager { display:flex; gap:14px; justify-content:center; align-items:center; color:var(--mut); font-size:11px; padding:8px; border:1px dashed var(--line); border-radius:7px; }
+  pre { background:var(--bg); border:1px solid var(--line); padding:.6rem; overflow:auto; white-space:pre-wrap; word-break:break-all; }
+  details { margin:.3rem 0; } summary { cursor:pointer; } code { color:var(--link); }
+  .footer { color:var(--mut); font-size:11px; border-top:1px solid var(--line); margin-top:14px; padding-top:8px; }
+  h1 { font-size:1.05rem; } h2 { font-size:.95rem; border-bottom:1px solid var(--line); padding-bottom:.3rem; margin-top:1.3rem; }
 </style>
 </head>
 <body>
+{% if qurl is defined %}
+<div class="hdr">
+  <b>{{ t('hdr.title') }}</b>
+  <span class="sub mono">{{ t('hdr.refreshed', ts=now_str) }} · {{ refresh_seconds|default(0) }}s ·
+    LLM:{% if posture and posture.llm.enabled %}{{ posture.llm.model }}{% if posture.llm.pending_restart %} {{ t('llm.pending_restart') }}{% else %} ✓{% endif %}{% else %}{{ t('host.llm.off') }}{% endif %}</span>
+</div>
+<div class="nav">
+  <span class="seg">
+    <a href="{{ qurl(win=30) }}" class="{{ 'on' if window_days == 30 else '' }}">{{ t('win.label', days=30) }}</a>
+    <a href="{{ qurl(win=history_days) }}" class="{{ 'on' if window_days == history_days else '' }}">{{ t('win.label', days=history_days) }}</a>
+  </span>
+  <span class="seg">
+    <a href="{{ qurl(theme='dark') }}" class="{{ 'on' if theme == 'dark' else '' }}">{{ t('theme.dark') }}</a>
+    <a href="{{ qurl(theme='light') }}" class="{{ 'on' if theme == 'light' else '' }}">{{ t('theme.light') }}</a>
+    <a href="{{ qurl(theme='system') }}" class="{{ 'on' if theme == 'system' else '' }}">{{ t('theme.system') }}</a>
+  </span>
+  <span class="seg">
+    <a href="{{ qurl(lang='zh') }}" class="{{ 'on' if lang == 'zh' else '' }}">中</a>
+    <a href="{{ qurl(lang='en') }}" class="{{ 'on' if lang == 'en' else '' }}">EN</a>
+  </span>
+  <a href="/">{{ t('nav.latest') }}</a>
+</div>
+{% endif %}
 {% block body %}{% endblock %}
-<p class="muted">WatchMend · 只读证据台 · localhost-only · 建议命令永不自动执行</p>
+<p class="footer mono">{% if t %}{{ t('footer.readonly') }}{% else %}WatchMend · 只读证据台 · localhost-only{% endif %}</p>
 </body>
 </html>

@@ -213,3 +213,28 @@ async def test_lang_cookie_survives_without_query(tmp_path, monkeypatch):
         resp = await c.get("/")
     assert resp.status_code == 200
     store.close()
+
+
+async def test_theme_and_lang_attrs_render(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    r = await _get(app, "/?theme=light&lang=en")
+    assert 'data-theme="light"' in r.text
+    assert '<html lang="en"' in r.text
+    # 切换链接:三主题 + 双语 + 30/90 窗口(qurl 把 lang 放首位,故不带 ? 前缀断言)
+    assert "theme=dark" in r.text and "theme=system" in r.text
+    assert "lang=zh" in r.text and "lang=en" in r.text
+    assert "win=30" in r.text
+    store.close()
+
+
+async def test_base_has_css_variables_and_light_palette(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    r = await _get(app, "/")
+    assert "--st-ok" in r.text and "--bg" in r.text  # CSS 变量存在
+    assert "data-theme=" in r.text
+    assert "prefers-color-scheme" in r.text  # system 跟随 OS 的 media query
+    store.close()
