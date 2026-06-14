@@ -24,6 +24,7 @@ logger = logging.getLogger("sentinel")
 _MAX_TOOL_OUT = 8000  # 单个工具结果截断,防把上下文挤爆
 _MAX_LOG_LINES = 200
 _REQUIRED_ANY = ("summary", "root_cause")
+PANEL_TOOL_OUTPUT_CAP = 4096  # 证据链单工具输出截断(面板/存储用),比 _MAX_TOOL_OUT 更紧
 
 _DIAG_SYSTEM = """你是这台服务器的只读运维诊断助手。一个确定性巡检规则刚命中了异常事件,\
 请你用可用工具自主调查并给出根因诊断。
@@ -50,6 +51,25 @@ _SUMMARY_TEMPLATE = (
     "如实说明、不要夸大。直接输出总结文本,不要任何前后缀、不要列表、不要 json。\n\n"
     "日期: {date}\n数据: {data}"
 )
+
+
+def _truncate(text: str, cap: int) -> str:
+    return text if len(text) <= cap else text[:cap] + "…(truncated)"
+
+
+def cap_tool_outputs(tools: list[dict]) -> list[dict]:
+    """对证据链每项的 output 套用 PANEL_TOOL_OUTPUT_CAP(面板/存储统一上限)。
+    用于 API 回填路径(host 编排),与容器内 _tool_loop 的逐项截断同一口径。"""
+    out: list[dict] = []
+    for t in tools:
+        if isinstance(t, dict):
+            item = dict(t)
+            if isinstance(item.get("output"), str):
+                item["output"] = _truncate(item["output"], PANEL_TOOL_OUTPUT_CAP)
+            out.append(item)
+        else:
+            out.append(t)
+    return out
 
 
 def parse_diagnosis(text: str) -> dict | None:
@@ -95,14 +115,15 @@ class LLMDriver:
 
     # ---- 对外入口 ----
 
-    async def diagnose(self, event: EventRecord) -> tuple[dict | None, str]:
-        """返回 (诊断 dict 或 None, 模型最终原文)。网络/HTTP 异常向上抛,由调用方决定重试。"""
+    async def diagnose(self, event: EventRecord) -> tuple[dict | None, str, list[dict]]:
+        """返回 (诊断 dict 或 None, 模型最终原文, 工具调用证据链)。
+        网络/HTTP 异常向上抛,由调用方决定重试。诊断决策逻辑不变,纯增量捕获。"""
         messages = [
             {"role": "system", "content": _DIAG_SYSTEM},
             {"role": "user", "content": _diag_user_prompt(event)},
         ]
-        text = await self._tool_loop(messages)
-        return parse_diagnosis(text), text
+        text, tool_calls = await self._tool_loop(messages)
+        return parse_diagnosis(text), text, tool_calls
 
     async def summarize(self, data: dict) -> str | None:
         """日报 AI 总结:数据全部内联,单轮无工具。"""
@@ -131,20 +152,30 @@ class LLMDriver:
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]
 
-    async def _tool_loop(self, messages: list[dict]) -> str:
+    async def _tool_loop(self, messages: list[dict]) -> tuple[str, list[dict]]:
         tools = self._tool_specs()
+        tool_log: list[dict] = []  # 证据链:每次工具调用一项(子项目③),不影响决策
         for _ in range(self._settings.llm_max_tool_rounds):
             msg = await self._chat(messages, tools)
             tool_calls = msg.get("tool_calls") or []
             if not tool_calls:
-                return msg.get("content") or ""
+                return msg.get("content") or "", tool_log
             messages.append(msg)
             for call in tool_calls:
                 try:
                     args = json.loads(call["function"].get("arguments") or "{}")
                 except json.JSONDecodeError:
                     args = {}
-                result = await self._run_tool(call["function"]["name"], args)
+                name = call["function"]["name"]
+                result, ok = await self._run_tool(name, args)
+                tool_log.append(
+                    {
+                        "tool": name,
+                        "args": args,
+                        "output": _truncate(result, PANEL_TOOL_OUTPUT_CAP),
+                        "ok": ok,
+                    }
+                )
                 messages.append(
                     {"role": "tool", "tool_call_id": call.get("id", ""), "content": result}
                 )
@@ -153,18 +184,18 @@ class LLMDriver:
             {"role": "user", "content": "工具轮数已用完,基于已有证据直接给出最终结论。"}
         )
         msg = await self._chat(messages, tools=[])
-        return msg.get("content") or ""
+        return msg.get("content") or "", tool_log
 
-    async def _run_tool(self, name: str, args: dict) -> str:
-        """工具失败不崩整轮:错误文本回给模型让它换路推理。"""
+    async def _run_tool(self, name: str, args: dict) -> tuple[str, bool]:
+        """工具失败不崩整轮:错误文本回给模型让它换路推理。返回 (文本, 是否成功)。"""
         handler = self._handlers().get(name)
         if handler is None:
-            return f"unknown tool: {name}"
+            return f"unknown tool: {name}", False
         try:
             out = await handler(**args)
         except Exception as exc:  # 含参数错误(TypeError)/网络错/校验错
-            return f"tool {name} failed: {exc}"
-        return out[:_MAX_TOOL_OUT]
+            return f"tool {name} failed: {exc}", False
+        return out[:_MAX_TOOL_OUT], True
 
     # ---- 工具集:按可用数据源装配 ----
 

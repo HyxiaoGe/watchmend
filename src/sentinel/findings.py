@@ -65,3 +65,4 @@ class EventRecord:
     diagnosis_json: str | None
     cooldown_until: int
     resolved_ts: int | None
+    diagnosis_tools_json: str | None = None

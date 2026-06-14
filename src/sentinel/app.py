@@ -36,6 +36,7 @@ from sentinel.notify.feishu_channel import FeishuChannel
 from sentinel.notify.ntfy import NtfyChannel
 from sentinel.notify.telegram import TelegramChannel
 from sentinel.notify.webhook import WebhookChannel
+from sentinel.panel.routes import register_panel_routes
 from sentinel.poller import PollState, run_cycle, run_heartbeat
 from sentinel.probe import load_targets, run_probe_cycle
 from sentinel.probe_rules import evaluate_probe_rules
@@ -345,21 +346,24 @@ def build_jobs(
         # 同抢 pending 队列,两条路径都开会重复诊断
         for event in store.get_pending_diagnosis_events()[:_DIAG_MAX_PER_TICK]:
             _, now_str, _ = _now()
-            diagnosis, raw = None, ""
+            diagnosis, raw, tool_calls = None, "", []
             for attempt in range(1, _DIAG_ATTEMPTS + 1):
                 try:
-                    diagnosis, raw = await driver.diagnose(event)
+                    diagnosis, raw, tool_calls = await driver.diagnose(event)
                 except Exception as exc:
                     logger.exception("diagnose event %d attempt %d", event.id, attempt)
                     raw = f"llm error: {exc}"
                     continue
                 if diagnosis:
                     break
+            # done 与 failed 都落证据链(失败时证据链更值钱:看出查了什么仍判不出)
+            tools_json = json.dumps(tool_calls, ensure_ascii=False) if tool_calls else None
             if diagnosis:
                 store.set_diagnosis(
                     event.id,
                     status="done",
                     diagnosis_json=json.dumps(diagnosis, ensure_ascii=False),
+                    tools_json=tools_json,
                 )
                 # 通知尽力而为:诊断已落库,广播失败不回滚(Broadcaster 内部已逐渠道记日志)
                 now_ts_diag, _, _ = _now()
@@ -371,6 +375,7 @@ def build_jobs(
                     event.id,
                     status="failed",
                     diagnosis_json=json.dumps({"raw": raw[:2000]}, ensure_ascii=False),
+                    tools_json=tools_json,
                 )
                 logger.warning("event %d diagnosis failed after %d attempts", event.id, attempt)
 
@@ -467,6 +472,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     # load_targets 在此与 build_jobs 各调一次(读同一 yaml,幂等),可接受
     app.state.services = [t.name for t in _load_targets_or_disable(settings.sentinel_services_file)]
+    app.state.docker = docker  # 面板「在监容器」计数用(可为 None)
     # 环境自动发现(MVP:仅日志建议):扫描容器镜像指纹,提示未启用的数据源接法。
     for msg in await discover.probe(docker, settings):
         logger.info(msg)
@@ -489,6 +495,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="WatchMend", lifespan=lifespan)
 
 register_routes(app)
+register_panel_routes(app)
 
 
 @app.get("/health")

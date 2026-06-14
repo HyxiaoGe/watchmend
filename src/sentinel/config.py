@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     sentinel_webhook_url: str = ""  # 通用 webhook 端点(机器消费 JSON)
     sentinel_webhook_token: str = ""  # 可选 Bearer
 
+    # 证据台只读面板(子项目③):SSR 零 JS,仅本机访问无鉴权。默认开,部署可关。
+    sentinel_panel_enabled: bool = True
+
     @property
     def providers_list(self) -> list[str]:
         return [p.strip() for p in self.sentinel_providers.split(",") if p.strip()]

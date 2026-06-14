@@ -123,6 +123,18 @@ Security boundaries (design stance, not afterthought patches):
 - Tool output is declared untrusted data, guarding against log-injection steering
 - Suggested commands are for humans only and are never executed automatically
 
+## Evidence Panel (read-only)
+
+WatchMend ships a **localhost-only read-only SSR panel** that turns its four disciplines (deterministic verdicts / assessment ≠ recovery / send-then-commit / read-only never-execute) into visible evidence:
+
+- **State-machine timeline**: currently open anomalies (triggered → investigating → diagnosed) plus recoveries in the last 24h; `scan_failed_*` is explicitly marked as a data-source failure, not a green "recovered" card.
+- **Diagnosis evidence chain**: for each diagnosed event you can expand the **read-only tools the LLM actually called and their raw output snippets** (`docker_inspect`/`docker_logs`/`prom_query`/`loki_logs`) — hard proof of the read-only, push-diagnosis loop.
+- **Security posture**: socket mode and read-only flag, redacted env-var counts, enabled layers, notification channels; suggested commands are always labelled "never auto-executed".
+
+Access: the container binds the panel to `127.0.0.1:8765` on the host (same port as the orchestration API); open `http://127.0.0.1:8765/`.
+
+**Security note**: the panel routes (`/`, `/event/*`) themselves are **read-only**, but the **same `127.0.0.1:8765` port also hosts the orchestration WRITE API** (`POST /events/{id}/diagnosis`, `POST /report/summary`), which is authenticated only when `SENTINEL_DIAG_TOKEN` is set — it defaults to empty, i.e. **no auth**. The whole thing assumes localhost/intranet reachability only. Raw log snippets are stored in the localhost-only SQLite (same data already sent to your LLM endpoint, truncated to 4096 chars each). **To expose it publicly**: either put a reverse proxy with authentication in front of the entire 8765 upstream, or only allow `/` and `/event/*` through the proxy (blocking the write API), **and set `SENTINEL_DIAG_TOKEN`**; or set `SENTINEL_PANEL_ENABLED=false` to disable the panel entirely.
+
 ## Design philosophy
 
 - **Not-evaluated ≠ recovered**: when a data source fails or is turned off, its

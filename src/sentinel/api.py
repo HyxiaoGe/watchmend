@@ -10,6 +10,7 @@ from typing import Annotated, Literal
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from sentinel.llm_driver import cap_tool_outputs
 from sentinel.notify.build import diagnosis_notification, summary_notification
 from sentinel.report import build_daily_stats
 
@@ -23,6 +24,8 @@ _TokenHeader = Annotated[str | None, Header(alias="X-Sentinel-Token")]
 class DiagnosisIn(BaseModel):
     status: Literal["done", "failed", "skipped"]
     diagnosis: dict = Field(default_factory=dict)
+    # 子项目③:可选证据链回填(host 编排路径)。省略=不动该列;显式 [] 或 null=清空。
+    tools: list[dict] | None = None
 
 
 class SummaryIn(BaseModel):
@@ -65,7 +68,11 @@ def register_routes(app: FastAPI) -> None:
         if event is None:
             raise HTTPException(status_code=404, detail="event not found")
         diagnosis_json = json.dumps(body.diagnosis, ensure_ascii=False) if body.diagnosis else None
-        store.set_diagnosis(event_id, status=body.status, diagnosis_json=diagnosis_json)
+        set_kwargs = {"status": body.status, "diagnosis_json": diagnosis_json}
+        if "tools" in body.model_fields_set:  # 显式提供(含 [] / null)才动该列;省略=不动
+            capped = cap_tool_outputs(body.tools) if body.tools else None
+            set_kwargs["tools_json"] = json.dumps(capped, ensure_ascii=False) if capped else None
+        store.set_diagnosis(event_id, **set_kwargs)
         card_sent = False
         if body.status == "done" and body.diagnosis:
             now_local = _now_local(request)
