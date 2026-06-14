@@ -915,6 +915,28 @@ async def test_lifespan_constructs_and_closes_docker_client(tmp_path, monkeypatc
     assert closed == [True]  # finally 中被 aclose
 
 
+async def test_lifespan_sets_diag_job_registered(tmp_path, monkeypatch):
+    # lifespan 据 build_jobs 结果落 app.state.diag_job_registered,供面板区分"在跑/待重启"
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+
+    import sentinel.app as app_mod
+
+    async def _noop_tick() -> None:
+        return None
+
+    monkeypatch.setattr(app_mod, "build_jobs", lambda *a, **k: [("diagnosis", 3600.0, _noop_tick)])
+    app = app_mod.FastAPI()
+    async with app_mod.lifespan(app):
+        assert app.state.diag_job_registered is True
+
+    monkeypatch.setattr(app_mod, "build_jobs", lambda *a, **k: [("statuspage", 3600.0, _noop_tick)])
+    app2 = app_mod.FastAPI()
+    async with app_mod.lifespan(app2):
+        assert app2.state.diag_job_registered is False
+
+
 async def test_build_jobs_requires_at_least_one_channel(tmp_path, monkeypatch):
     # 零渠道:不配飞书也不配任何新渠道 → build_jobs 响亮失败
     import pytest

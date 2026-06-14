@@ -67,6 +67,11 @@ def test_lifecycle_branches():
     assert _lifecycle(rec("open", "container_down", "failed")) == "diagnosed_failed"
     assert _lifecycle(rec("open", "disk_usage", "skipped")) == "open"
     assert _lifecycle(rec("resolved", "container_down", "done")) == "recovered"
+    # diag 未在运行(LLM 关或已配置待重启)时,pending 事件无人调查 → open,不是"调查中"
+    assert _lifecycle(rec("open", "container_down", "pending"), diag_active=False) == "open"
+    # 已诊断/恢复不受 diag_active 影响(不是 pending)
+    assert _lifecycle(rec("open", "container_down", "done"), diag_active=False) == "diagnosed"
+    assert _lifecycle(rec("resolved", "container_down", "done"), diag_active=False) == "recovered"
 
 
 def test_channels_derivation(monkeypatch):
@@ -126,7 +131,7 @@ async def test_build_overview_anomalies_and_posture(tmp_path, monkeypatch):
     assert rules["scan_failed_loki"]["lifecycle"] == "scan_failed"
     p = ov["posture"]
     assert p["layers"] == {"prometheus": True, "loki": True, "docker": False, "llm": True}
-    assert p["llm"] == {"enabled": True, "model": "deepseek-chat"}
+    assert p["llm"] == {"enabled": True, "pending_restart": False, "model": "deepseek-chat"}
     assert p["docker"] == {"mode": "off", "read_only": True}
     assert p["channels"] == ["飞书"]
     assert p["env_redaction"] == [{"subject": "postgres", "count": 3}]
@@ -226,7 +231,7 @@ async def test_build_overview_empty_store_degrades(tmp_path, monkeypatch):
     ov = await view.build_overview(store, settings, now=NOW, docker=None)
     assert ov["anomalies"] == [] and ov["recoveries"] == []
     assert ov["hygiene"]["services"] == [] and ov["hygiene"]["hygiene_alerts"] == []
-    assert ov["posture"]["llm"] == {"enabled": False, "model": None}
+    assert ov["posture"]["llm"] == {"enabled": False, "pending_restart": False, "model": None}
     assert ov["posture"]["docker"]["mode"] == "off"
     assert ov["posture"]["channels"] == ["飞书"]
     assert ov["posture"]["env_redaction"] == []
@@ -315,7 +320,11 @@ async def test_build_overview_llm_from_config_overrides_env(tmp_path, monkeypatc
     cfg = LLMConfig(settings)
     store = Store(str(tmp_path / "s.db"))
     ov = await view.build_overview(store, settings, now=NOW, docker=None, llm_config=cfg)
-    assert ov["posture"]["llm"] == {"enabled": True, "model": "deepseek-chat"}
+    assert ov["posture"]["llm"] == {
+        "enabled": True,
+        "pending_restart": False,
+        "model": "deepseek-chat",
+    }
     assert ov["posture"]["layers"]["llm"] is True
     store.close()
 
@@ -348,4 +357,63 @@ def test_build_event_detail_llm_from_config(tmp_path, monkeypatch):
     )
     d = view.build_event_detail(store, settings, eid, llm_config=cfg)
     assert d["llm_enabled"] is True
+    store.close()
+
+
+def _llm_cfg(tmp_path, monkeypatch):
+    """构造一个 active 有效的 LLMConfig(供 pending_restart 用例)。"""
+    from sentinel.config import Settings
+    from sentinel.llm_config import LLMConfig
+
+    path = tmp_path / "llm.yaml"
+    path.write_text(
+        "active: deepseek\nproviders:\n  deepseek:\n"
+        "    base_url: https://api.deepseek.com/v1\n    model: deepseek-chat\n    api_key: ''\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_LLM_CONFIG_FILE", str(path))
+    settings = Settings(_env_file=None)
+    return LLMConfig(settings), settings
+
+
+async def test_pending_restart_when_configured_but_diag_unregistered(tmp_path, monkeypatch):
+    # 启动后才配 LLM(current() 非空)但 diag job 启动时未注册 → 已配置·待重启,
+    # 且 pending 事件显示 open(没人在查),不是"调查中"。
+    cfg, settings = _llm_cfg(tmp_path, monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    _seed_open(store, "container_down", "postgres")  # pending,未诊断
+    ov = await view.build_overview(
+        store, settings, now=NOW, docker=None, llm_config=cfg, diag_registered=False
+    )
+    assert ov["posture"]["llm"] == {
+        "enabled": True,
+        "pending_restart": True,
+        "model": "deepseek-chat",
+    }
+    assert ov["posture"]["layers"]["llm"] is True  # 层仍算"已配置"
+    assert {a["rule"]: a for a in ov["anomalies"]}["container_down"]["lifecycle"] == "open"
+    store.close()
+
+
+async def test_no_pending_restart_when_diag_registered(tmp_path, monkeypatch):
+    # 启动时就配好 LLM → diag job 已注册 → 不待重启,pending 正常显示"调查中"。
+    cfg, settings = _llm_cfg(tmp_path, monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    _seed_open(store, "container_down", "postgres")
+    ov = await view.build_overview(
+        store, settings, now=NOW, docker=None, llm_config=cfg, diag_registered=True
+    )
+    assert ov["posture"]["llm"]["pending_restart"] is False
+    assert {a["rule"]: a for a in ov["anomalies"]}["container_down"]["lifecycle"] == "investigating"
+    store.close()
+
+
+def test_event_detail_pending_restart_marks_open(tmp_path, monkeypatch):
+    # 详情页同样:待重启时 pending 事件生命周期显示 open。
+    cfg, settings = _llm_cfg(tmp_path, monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    eid = _seed_open(store, "container_down", "postgres")
+    d = view.build_event_detail(store, settings, eid, llm_config=cfg, diag_registered=False)
+    assert d["event"]["lifecycle"] == "open"
     store.close()

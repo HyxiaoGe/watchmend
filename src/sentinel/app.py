@@ -529,6 +529,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.services = [t.name for t in _load_targets_or_disable(settings.sentinel_services_file)]
     app.state.docker = docker  # 面板「在监容器」计数用(可为 None)
     app.state.llm_config = LLMConfig(settings)  # 面板 LLM 姿态真源(与 build_jobs 各持一份,均热加载)
+    # 诊断 job 是否在启动时注册(④ 条件注册):面板据此区分"已配置在跑" vs"已配置·待重启"
+    app.state.diag_job_registered = any(name == "diagnosis" for name, _, _ in jobs)
     # 环境自动发现(MVP:仅日志建议):扫描容器镜像指纹,提示未启用的数据源接法。
     for msg in await discover.probe(docker, settings):
         logger.info(msg)

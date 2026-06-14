@@ -36,6 +36,7 @@ def register_panel_routes(app: FastAPI) -> None:
             now=datetime.now(tz),
             docker=getattr(state, "docker", None),
             llm_config=getattr(state, "llm_config", None),
+            diag_registered=getattr(state, "diag_job_registered", None),
         )
         return HTMLResponse(_env.get_template("panel.html").render(**overview))
 
@@ -43,7 +44,11 @@ def register_panel_routes(app: FastAPI) -> None:
     async def panel_event(event_id: int, request: Request) -> HTMLResponse:
         state = request.app.state
         detail = view.build_event_detail(
-            state.store, state.settings, event_id, llm_config=getattr(state, "llm_config", None)
+            state.store,
+            state.settings,
+            event_id,
+            llm_config=getattr(state, "llm_config", None),
+            diag_registered=getattr(state, "diag_job_registered", None),
         )
         status = 200 if detail is not None else 404
         return HTMLResponse(

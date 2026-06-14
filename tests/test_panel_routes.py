@@ -138,3 +138,38 @@ async def test_overview_llm_pill_from_config(tmp_path, monkeypatch):
     assert resp.status_code == 200
     assert "deepseek-chat" in resp.text  # 面板 LLM 标识反映 llm.yaml(env 留空也对)
     store.close()
+
+
+async def test_overview_pending_restart_badge_and_open_lifecycle(tmp_path, monkeypatch):
+    # 已配置(llm.yaml current 非空)但 diag job 启动时未注册 → 面板显示"诊断待重启",
+    # 且 pending 事件标"open"(没人在查),不误标"调查中"。
+    from sentinel.llm_config import LLMConfig
+
+    path = tmp_path / "llm.yaml"
+    path.write_text(
+        "active: deepseek\nproviders:\n  deepseek:\n"
+        "    base_url: https://api.deepseek.com/v1\n    model: deepseek-chat\n    api_key: ''\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SENTINEL_LLM_CONFIG_FILE", str(path))
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.insert_event(
+        ts=1700000000,
+        rule="container_down",
+        subject="postgres",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="pending",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    app.state.llm_config = LLMConfig(settings)
+    app.state.diag_job_registered = False  # 启动后才配 → 未注册
+    resp = await _get(app, "/")
+    assert resp.status_code == 200
+    assert "诊断待重启" in resp.text
+    assert "investigating" not in resp.text  # pending 生命周期标 open,不是 investigating
+    store.close()
