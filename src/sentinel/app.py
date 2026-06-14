@@ -226,7 +226,8 @@ def build_jobs(
             "SENTINEL_MIDDLEWARE_METRICS 已配置但 SENTINEL_PROMETHEUS_URL 为空,"
             "中间件兜底检查不会运行"
         )
-    if bool(settings.llm_base_url) != bool(settings.llm_model):
+    if bool(settings.llm_base_url) != bool(settings.llm_model) and not config.enabled:
+        # 仅当 llm.yaml 未在管时才提醒 env 半配置;有效 llm.yaml 已接管,env LLM_* 无关
         logger.warning(
             "LLM_BASE_URL 和 LLM_MODEL 必须同时配置,当前只有一个非空:LLM 诊断/总结层不会启用"
         )

@@ -584,6 +584,35 @@ async def test_build_jobs_warns_llm_half_config(tmp_path, monkeypatch, caplog):
     store.close()
 
 
+async def test_build_jobs_no_half_config_warning_when_yaml_active(tmp_path, monkeypatch, caplog):
+    # 有效 llm.yaml 在管 → env LLM_* 半配置无关紧要,不该误报半配警告;且 diagnosis 正常装配
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("LLM_BASE_URL", "http://llm.test/v1")  # 半配:只有 base_url,无 model
+    yaml_path = tmp_path / "llm.yaml"
+    yaml_path.write_text(
+        "active: a\nproviders:\n  a:\n    base_url: http://x/v1\n    model: m\n    api_key: ''\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SENTINEL_LLM_CONFIG_FILE", str(yaml_path))
+
+    from sentinel.app import build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    with caplog.at_level("WARNING", logger="sentinel"):
+        jobs = build_jobs(Settings(_env_file=None), client, store)
+    assert not any("LLM_MODEL" in r.message for r in caplog.records)  # llm.yaml 在管,不误报
+    assert "diagnosis" in [n for n, _, _ in jobs]
+    await client.aclose()
+    store.close()
+
+
 class _FakeDocker:
     """build_jobs 的 docker 注入桩:只要 truthy 即触发 docker_scan 装配。
     docker_tick 经 monkeypatch 的 run_docker_scan 取数据,ps/aclose 兜空实现。"""
