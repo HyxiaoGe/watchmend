@@ -15,6 +15,8 @@ from pathlib import Path
 
 import yaml
 
+from sentinel.config import Settings
+
 logger = logging.getLogger("sentinel")
 
 
@@ -86,3 +88,54 @@ def _parse_and_resolve(path: str) -> _Registry:
             except LLMConfigError as e:
                 logger.warning("fallback=%s 无效,忽略: %s", fb_name, e)
     return _Registry(active=active, fallback=fallback)
+
+
+class LLMConfig:
+    """持有 llm.yaml/env 来源,按 mtime 热加载,出错保留 last-good。
+
+    current()/fallback() 每次调用先看文件 mtime:变了才重解析,坏了保留上一份有效配置。
+    yaml 缺席时回落老 LLM_* env(零 breaking);env 也空则整层关闭(current()=None)。
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._path = settings.sentinel_llm_config_file
+        self._last_mtime: float | None = None
+        self._last_good: _Registry | None = None
+
+    def _env_registry(self) -> _Registry | None:
+        s = self._settings
+        if not (s.llm_base_url and s.llm_model):
+            return None
+        profile = LLMProfile(
+            name="env", base_url=s.llm_base_url, api_key=s.llm_api_key, model=s.llm_model
+        )
+        return _Registry(active=profile, fallback=None)
+
+    def _reload_if_changed(self) -> None:
+        try:
+            mtime = os.stat(self._path).st_mtime
+        except FileNotFoundError:
+            self._last_good = self._env_registry()  # yaml 缺席 → env 回落
+            self._last_mtime = None
+            return
+        if mtime == self._last_mtime:
+            return
+        self._last_mtime = mtime
+        try:
+            self._last_good = _parse_and_resolve(self._path)
+            logger.info("llm.yaml 已加载,active=%s", self._last_good.active.name)
+        except Exception as e:
+            logger.warning("llm.yaml 无效,保留上一份有效配置: %s", e)
+
+    def current(self) -> LLMProfile | None:
+        self._reload_if_changed()
+        return self._last_good.active if self._last_good else None
+
+    def fallback(self) -> LLMProfile | None:
+        self._reload_if_changed()
+        return self._last_good.fallback if self._last_good else None
+
+    @property
+    def enabled(self) -> bool:
+        return self.current() is not None
