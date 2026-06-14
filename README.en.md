@@ -81,14 +81,37 @@ All 40+ settings (thresholds, cooldowns, verbosity…) are documented inline in
 ## LLM diagnosis (optional)
 
 **Not locked to one platform.** WatchMend speaks the standard OpenAI
-`chat/completions` + function-calling protocol, so any service exposing an
-OpenAI-compatible endpoint is plug-and-play — change three `.env` lines, zero code:
+`chat/completions` + function-calling protocol, so any OpenAI-compatible endpoint is
+plug-and-play. Multiple providers coexist in `llm.yaml`, selected by the `active`
+pointer; edits **hot-reload on the next diagnosis round — no restart**:
+
+```yaml
+# llm.yaml (gitignored; see llm.example.yaml)
+active: deepseek       # current diagnoser
+fallback: kimi         # optional: tried once after active exhausts its retries
+providers:
+  deepseek:
+    base_url: https://api.deepseek.com/v1
+    model: deepseek-chat
+    api_key_env: LLM_API_KEY_DEEPSEEK   # real key stays in env, never on disk
+  kimi:
+    base_url: https://api.moonshot.cn/v1
+    model: kimi-k2-turbo-preview
+    api_key_env: LLM_API_KEY_KIMI
+```
 
 ```bash
-LLM_BASE_URL=https://api.deepseek.com/v1   # see table below for each platform
-LLM_API_KEY=sk-...                          # any value for local endpoints
-LLM_MODEL=deepseek-chat
+make llm-init              # interactive wizard to add a provider
+make llm-switch name=kimi  # switch active (next round, no restart)
+make llm-list              # show providers and whether keys are ready
 ```
+
+> **Backward compatible**: with no `llm.yaml`, it falls back to the legacy three env
+> vars `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL` (zero breaking). Bad config is always
+> fail-safe: a broken config at startup only disables the LLM layer (deterministic
+> patrol keeps running); breaking `llm.yaml` while running keeps the last good config
+> and never interrupts monitoring. **Enabling the LLM from scratch needs one restart**;
+> after that, switching provider/model is hot-reloaded.
 
 | Platform | `LLM_BASE_URL` | `LLM_MODEL` (example) | Notes |
 |---|---|---|---|
