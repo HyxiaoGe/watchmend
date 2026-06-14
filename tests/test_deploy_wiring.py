@@ -80,7 +80,9 @@ def test_channel_gate_rejects_telegram_token_without_chat_id(tmp_path):
 def test_channel_gate_accepts_telegram_token_with_chat_id(tmp_path):
     blocks = _channel_gate_blocks()
     for block in blocks:
-        rc = _run_gate(block, "SENTINEL_TELEGRAM_BOT_TOKEN=fake\nSENTINEL_TELEGRAM_CHAT_ID=123\n", tmp_path)
+        rc = _run_gate(
+            block, "SENTINEL_TELEGRAM_BOT_TOKEN=fake\nSENTINEL_TELEGRAM_CHAT_ID=123\n", tmp_path
+        )
         assert rc == 0, "token+chat_id 成对应放行"
 
 
