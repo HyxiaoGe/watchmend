@@ -126,7 +126,8 @@ async def test_build_overview_anomalies_and_posture(tmp_path, monkeypatch):
     assert rules["container_down"]["lifecycle"] == "diagnosed"
     assert rules["container_down"]["has_evidence"] is True
     assert rules["container_down"]["summary"] == "OOM 被杀"
-    assert rules["container_down"]["rule_label"] == "容器停止"
+    assert "rule_label" not in rules["container_down"]
+    assert rules["container_down"]["rule"] == "container_down"
     assert rules["scan_failed_loki"]["is_scan_failure"] is True
     assert rules["scan_failed_loki"]["lifecycle"] == "scan_failed"
     p = ov["posture"]

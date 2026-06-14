@@ -53,6 +53,26 @@ MESSAGES: dict[str, dict[str, str]] = {
         "life.scan_failed": "巡检失败",
         "sev.critical": "严重",
         "sev.warning": "警告",
+        "banner.issues": "{open} 个开放异常待处理 · {probes} 探针在线",
+        "llm.pending_restart": "诊断待重启",
+        "win.label": "{days} 天",
+        "comp.uptime": "{uptime}% uptime · p95 {p95}ms",
+        "comp.expand": "展开剩余 {n}",
+        "comp.collapse": "收起",
+        "host.host": "宿主机",
+        "host.self": "WatchMend 自身",
+        "host.host.ok": "无宿主级告警",
+        "ev.ai": "AI 诊断",
+        "ev.summary": "AI 根因",
+        "ev.detail": "证据详情 →",
+        "ev.scanfail": "数据源故障·非恢复绿卡",
+        "footer.notify": "通知:{channels}",
+        "footer.none": "无",
+        "footer.docker_readonly": "(只读)",
+        "footer.env": "env 遮蔽 ",
+        "ev.notfound": "事件不存在",
+        "ev.notfound_hint": "没有找到该事件,可能已被清理或 id 有误。",
+        "ev.commands": "建议命令(永不自动执行)",
         "footer.readonly": "只读 · localhost-only · env 值全遮蔽 · 建议命令永不自动执行",
     },
     "en": {
@@ -101,6 +121,26 @@ MESSAGES: dict[str, dict[str, str]] = {
         "life.scan_failed": "Scan failed",
         "sev.critical": "Critical",
         "sev.warning": "Warning",
+        "banner.issues": "{open} open anomalies · {probes} probes online",
+        "llm.pending_restart": "diag restart pending",
+        "win.label": "{days}d",
+        "comp.uptime": "{uptime}% uptime · p95 {p95}ms",
+        "comp.expand": "Show {n} more",
+        "comp.collapse": "Collapse",
+        "host.host": "Host",
+        "host.self": "WatchMend itself",
+        "host.host.ok": "No host-level alerts",
+        "ev.ai": "AI diagnosis",
+        "ev.summary": "AI root cause",
+        "ev.detail": "Evidence →",
+        "ev.scanfail": "data-source failure · not a recovery",
+        "footer.notify": "Channels: {channels}",
+        "footer.none": "none",
+        "footer.docker_readonly": "(read-only)",
+        "footer.env": "env redacted ",
+        "ev.notfound": "Event not found",
+        "ev.notfound_hint": "No such event — it may have been pruned, or the id is wrong.",
+        "ev.commands": "Suggested commands (never auto-run)",
         "footer.readonly": "read-only · localhost-only · env values redacted · "
         "suggested commands never auto-run",
     },
@@ -131,12 +171,21 @@ _SUPPORTED = ("zh", "en")
 _DEFAULT_LANG = "zh"
 
 
-def resolve_lang(query: str | None, cookie: str | None, accept_language: str | None) -> str:
-    """query > cookie > Accept-Language（zh* → zh，否则 en）> 默认 zh。
-    query/cookie 仅当显式为受支持语言时采用，否则落到下一优先级。"""
+def resolve_lang(
+    query: str | None,
+    cookie: str | None,
+    accept_language: str | None,
+    *,
+    default: str | None = None,
+) -> str:
+    """query > cookie > 配置默认(zh|en) > Accept-Language(zh*→zh,否则 en) > 默认 zh。
+    query/cookie/default 仅当显式为受支持语言时采用;default 空/非法(=auto)则跳过,
+    落到 Accept-Language。"""
     for cand in (query, cookie):
         if cand and cand.strip().lower() in _SUPPORTED:
             return cand.strip().lower()
+    if default and default.strip().lower() in _SUPPORTED:
+        return default.strip().lower()
     if accept_language and accept_language.strip():
         return "zh" if accept_language.strip().lower().startswith("zh") else "en"
     return _DEFAULT_LANG

@@ -14,8 +14,14 @@ _THEMES = ("dark", "light", "system")
 _COOKIE_MAX_AGE = 365 * 24 * 3600  # 1 年
 
 
-def resolve_lang(query: str | None, cookie: str | None, accept_language: str | None) -> str:
-    return _i18n_resolve_lang(query, cookie, accept_language)
+def resolve_lang(
+    query: str | None,
+    cookie: str | None,
+    accept_language: str | None,
+    *,
+    default: str | None = None,
+) -> str:
+    return _i18n_resolve_lang(query, cookie, accept_language, default=default)
 
 
 def resolve_theme(query: str | None, cookie: str | None, default: str) -> str:

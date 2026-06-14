@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from sentinel.config import Settings
-from sentinel.findings import HYGIENE_RULES, RULE_NAMES, EventRecord
+from sentinel.findings import HYGIENE_RULES, EventRecord
 from sentinel.report import aggregate_window
 from sentinel.store import Store
 
@@ -58,7 +58,6 @@ def _event_view(e: EventRecord, tz: timezone, *, diag_active: bool = True) -> di
         "id": e.id,
         "ts_str": _hhmm(e.ts, tz),
         "rule": e.rule,
-        "rule_label": RULE_NAMES.get(e.rule, e.rule),
         "subject": e.subject,
         "severity": e.severity,
         "lifecycle": _lifecycle(e, diag_active=diag_active),
