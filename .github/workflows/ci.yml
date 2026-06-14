@@ -43,7 +43,10 @@ jobs:
       - name: Create dummy .env
         run: |
           cp .env.example .env
-          sed -i 's|hook/REPLACE_ME|hook/smoke-test-not-real|' .env
+          # .env.example now ships every channel empty; set a dummy Feishu webhook so the
+          # demo stack satisfies the any-channel startup gate and boots. Delivery 404s are
+          # fine — this smoke test only checks /health readiness and the crash-loop count.
+          sed -i 's|^FEISHU_VENDOR_WEBHOOK=$|FEISHU_VENDOR_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/smoke-test-not-real|' .env
 
       - name: Start demo stack
         run: docker compose -f docker-compose.demo.yml up -d --build
