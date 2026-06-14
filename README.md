@@ -99,8 +99,10 @@ make llm-list            # 看各 provider 与 key 是否就绪
 ```
 
 > **Docker 部署**:`llm.yaml` 经 compose 挂进容器(`./llm.yaml:/app/llm.yaml:ro`),
-> `make up`/`make demo` 会自动预置一个空占位。宿主机上 `make llm-init/switch` 改的就是
-> 容器读的同一份文件,**下一轮诊断热加载生效——无需进容器、无需重启**。
+> `make up`/`make demo` 会自动预置一个空占位;宿主机上 `make llm-init`(先加 provider)、
+> `make llm-switch`(再切 active)改的就是容器读的同一份文件。**LLM 已启用后**,切 provider /
+> 改 model 都**下一轮诊断热加载生效——无需进容器、无需重启**;但**首次**在空占位上从零启用
+> 诊断仍需重启一次容器(诊断 job 在启动时按是否启用注册,见下条)。
 
 > **向后兼容**:没有 `llm.yaml`(或它为空/纯注释,如 `make up` 预置的占位)时回落老三
 > 环境变量 `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL`(零 breaking)。坏配置一律 fail-safe:

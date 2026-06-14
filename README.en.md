@@ -108,8 +108,12 @@ make llm-list              # show providers and whether keys are ready
 
 > **Docker deployment**: `llm.yaml` is bind-mounted into the container via compose
 > (`./llm.yaml:/app/llm.yaml:ro`), and `make up`/`make demo` scaffold a blank placeholder
-> for you. Running `make llm-init/switch` on the host edits the very file the container
-> reads — it **hot-reloads on the next diagnosis round, no exec into the container, no restart**.
+> for you. Running `make llm-init` (add a provider first) / `make llm-switch` (then switch
+> active) on the host edits the very file the container reads. **Once the LLM is enabled**,
+> switching provider/model **hot-reloads on the next diagnosis round — no exec into the
+> container, no restart**; but **enabling diagnosis from scratch** over the blank placeholder
+> still needs one container restart (the diagnosis job is registered at startup by whether
+> the LLM is enabled — see the next note).
 
 > **Backward compatible**: with no `llm.yaml` (or a blank/comments-only one, like the
 > placeholder `make up` scaffolds), it falls back to the legacy three env vars
