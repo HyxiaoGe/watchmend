@@ -194,3 +194,79 @@ def test_rule_sets_cover_rule_names():
         | {"scan_failed_prometheus", "scan_failed_loki", "scan_failed_docker"}
     )
     assert covered == findings.RULE_NAMES.keys()
+
+
+def test_ensure_column_idempotent_migration(tmp_path):
+    import sqlite3
+
+    from sentinel.store import _ensure_column
+
+    conn = sqlite3.connect(str(tmp_path / "old.db"))
+    conn.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, rule TEXT)")
+    _ensure_column(conn, "events", "diagnosis_tools_json", "TEXT")
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(events)").fetchall()]
+    assert "diagnosis_tools_json" in cols
+    # 重复执行无副作用（不重复加列、不抛）
+    _ensure_column(conn, "events", "diagnosis_tools_json", "TEXT")
+    cols2 = [r[1] for r in conn.execute("PRAGMA table_info(events)").fetchall()]
+    assert cols2.count("diagnosis_tools_json") == 1
+    conn.close()
+
+
+def test_set_diagnosis_tools_json_roundtrip(tmp_path):
+    store = Store(str(tmp_path / "s.db"))
+    eid = store.insert_event(
+        ts=1000,
+        rule="container_down",
+        subject="pg",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="pending",
+        cooldown_until=0,
+    )
+    tools = '[{"tool": "docker_inspect", "args": {"name": "pg"}, "output": "{}", "ok": true}]'
+    store.set_diagnosis(eid, status="done", diagnosis_json='{"summary": "s"}', tools_json=tools)
+    e = store.get_event(eid)
+    assert e.diagnosis_tools_json == tools
+    assert e.diagnosis_status == "done"
+
+
+def test_set_diagnosis_defaults_tools_json_none(tmp_path):
+    store = Store(str(tmp_path / "s.db"))
+    eid = store.insert_event(
+        ts=1000,
+        rule="disk_usage",
+        subject="/",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="pending",
+        cooldown_until=0,
+    )
+    store.set_diagnosis(eid, status="skipped")  # 不传 tools_json → NULL
+    assert store.get_event(eid).diagnosis_tools_json is None
+
+
+def test_get_resolved_since_orders_and_limits(tmp_path):
+    store = Store(str(tmp_path / "s.db"))
+    for ts in (1000, 2000, 3000):
+        rid = store.insert_event(
+            ts=ts,
+            rule="disk_usage",
+            subject=f"/{ts}",
+            severity="warning",
+            status="open",
+            detail="d",
+            payload_json="{}",
+            diagnosis_status="skipped",
+            cooldown_until=0,
+        )
+        store.resolve_event(rid, resolved_ts=ts + 100)
+    got = store.get_resolved_since(0)
+    assert [e.resolved_ts for e in got] == [3100, 2100, 1100]  # 最近在前
+    assert [e.subject for e in store.get_resolved_since(2500)] == ["/3000"]  # >= 闭边界
+    assert len(store.get_resolved_since(0, limit=2)) == 2  # limit 生效
+    store.close()

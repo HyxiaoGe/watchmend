@@ -9,6 +9,14 @@ from sentinel.findings import EventRecord
 from sentinel.models import ProbeSample, Snapshot, snapshot_from_dict, snapshot_to_dict
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
+    """幂等迁移:列不存在才 ALTER TABLE ADD COLUMN。应对升级前已建库的实例。
+    table/column/decl 均为代码内字面量,不接受外部输入,无注入面。"""
+    cols = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
 class Store:
     """SQLite 持久层(WAL)。snapshots/meta 供状态页轮询;probe_* 供内部探针与体检日报。"""
 
@@ -44,11 +52,14 @@ class Store:
             "rule TEXT NOT NULL, subject TEXT NOT NULL, severity TEXT NOT NULL, "
             "status TEXT NOT NULL, detail TEXT NOT NULL, payload_json TEXT NOT NULL, "
             "diagnosis_status TEXT NOT NULL, diagnosis_json TEXT, "
-            "cooldown_until INTEGER NOT NULL, resolved_ts INTEGER)"
+            "cooldown_until INTEGER NOT NULL, resolved_ts INTEGER, "
+            "diagnosis_tools_json TEXT)"
         )
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_events_rule_subject ON events (rule, subject)"
         )
+        # 旧库(升级前已建 events 表)补列:CREATE TABLE IF NOT EXISTS 不会改既有表
+        _ensure_column(self._conn, "events", "diagnosis_tools_json", "TEXT")
         self._conn.commit()
 
     def get(self, provider: str) -> Snapshot | None:
@@ -141,7 +152,7 @@ class Store:
 
     _EVENT_COLS = (
         "id, ts, rule, subject, severity, status, detail, payload_json, "
-        "diagnosis_status, diagnosis_json, cooldown_until, resolved_ts"
+        "diagnosis_status, diagnosis_json, cooldown_until, resolved_ts, diagnosis_tools_json"
     )
 
     def insert_event(
@@ -213,6 +224,16 @@ class Store:
         ).fetchone()
         return row[0]
 
+    def get_resolved_since(self, since_ts: int, *, limit: int = 50) -> list[EventRecord]:
+        """面板「最近恢复」区:已 resolved 且 resolved_ts >= since_ts,最近在前。
+        现有 count_resolved_since 只给计数,此处给列表。"""
+        rows = self._conn.execute(
+            f"SELECT {self._EVENT_COLS} FROM events "
+            "WHERE status = 'resolved' AND resolved_ts >= ? ORDER BY resolved_ts DESC LIMIT ?",
+            (since_ts, limit),
+        ).fetchall()
+        return [EventRecord(*r) for r in rows]
+
     def get_event(self, event_id: int) -> EventRecord | None:
         row = self._conn.execute(
             f"SELECT {self._EVENT_COLS} FROM events WHERE id = ?", (event_id,)
@@ -220,14 +241,21 @@ class Store:
         return EventRecord(*row) if row else None
 
     def set_diagnosis(
-        self, event_id: int, *, status: str, diagnosis_json: str | None = None
+        self,
+        event_id: int,
+        *,
+        status: str,
+        diagnosis_json: str | None = None,
+        tools_json: str | None = None,
     ) -> bool:
-        """诊断回写(Phase 3)。status 仅限终态;返回是否真的更新了一行(False=事件不存在)。"""
+        """诊断回写(Phase 3)。status 仅限终态;返回是否真的更新了一行(False=事件不存在)。
+        tools_json=证据链 JSON 数组(子项目③),默认 None 不破坏现有调用。"""
         if status not in ("done", "failed", "skipped"):
             raise ValueError(f"invalid diagnosis status: {status}")
         cur = self._conn.execute(
-            "UPDATE events SET diagnosis_status = ?, diagnosis_json = ? WHERE id = ?",
-            (status, diagnosis_json, event_id),
+            "UPDATE events SET diagnosis_status = ?, diagnosis_json = ?, diagnosis_tools_json = ? "
+            "WHERE id = ?",
+            (status, diagnosis_json, tools_json, event_id),
         )
         self._conn.commit()
         return cur.rowcount > 0
