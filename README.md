@@ -128,8 +128,9 @@ LLM_MODEL=deepseek-chat
 
 ## FAQ
 
-**为什么通知只有飞书?** 项目从作者自用长出来,飞书卡片生态最完整。
-通知渠道抽象(Telegram / Slack / Discord / 通用 webhook)在 roadmap 首位,欢迎 PR。
+**为什么飞书是富卡片?** 飞书是项目最早的自用渠道,卡片生态最完整,所以它收到的是
+原生交互式卡片;Telegram / ntfy 收到渲染后的文本,通用 webhook 收到结构化 JSON(供机器消费)。
+配置任一或多个渠道即广播到全部(见上方配置表)。Slack / Discord 等更多渠道欢迎 PR。
 
 **和 Uptime Kuma / Gatus 什么区别?** 它们是探针 + 状态页;WatchMend 的重心是
 规则引擎 + 事件机(冷却/恢复/基线)+ LLM 根因诊断,并把你已有的

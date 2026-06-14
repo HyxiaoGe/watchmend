@@ -146,9 +146,12 @@ Security boundaries (design stance, not afterthought patches):
 
 ## FAQ
 
-**Why Feishu-only notifications?** The project grew out of the author's own
-setup. A notification-channel abstraction (Telegram / Slack / Discord / generic
-webhook) is top of the roadmap — PRs welcome.
+**Why does Feishu get rich cards?** Feishu was the project's first channel and
+has the most complete card ecosystem, so it receives native interactive cards;
+Telegram / ntfy receive rendered text and the generic webhook receives structured
+JSON (for machine consumption). Configure one or more channels and every alert
+broadcasts to all of them (see the config table above). More channels
+(Slack / Discord, …) are welcome via PR.
 
 **vs. Uptime Kuma / Gatus?** Those are probes + status pages. WatchMend focuses
 on the rule engine + incident lifecycle (cooldown/recovery/baselines) + LLM
