@@ -118,7 +118,7 @@ WatchMend 内置一个 **localhost-only 的只读 SSR 面板**，把“确定性
 
 访问：容器默认把面板绑在宿主机 `127.0.0.1:8765`（与编排 API 同端口），浏览器开 `http://127.0.0.1:8765/` 即可。
 
-**安全说明**：面板与编排 API 共用绑定，**只读、无写端点、不带鉴权**——它假设只在本机/内网可达。原始日志片段会落到 localhost-only 的 SQLite（与现有 LLM 调用同源数据，每段截断 4096 字符）。**要对外暴露，请自行在前面加反向代理 + 鉴权**；或设 `SENTINEL_PANEL_ENABLED=false` 整体关闭面板。
+**安全说明**：面板路由（`/`、`/event/*`）本身是**只读**的；但**同一个 `127.0.0.1:8765` 端口还挂着编排写 API**（`POST /events/{id}/diagnosis`、`POST /report/summary`），它们仅在 `SENTINEL_DIAG_TOKEN` 非空时才鉴权——默认留空 = **无鉴权**。整体假设只在本机/内网可达。原始日志片段会落到 localhost-only 的 SQLite（与现有 LLM 调用同源数据，每段截断 4096 字符）。**要对外暴露**：要么在前面加反向代理 + 鉴权把整个 8765 上游保护起来，要么只放行 `/` 与 `/event/*`（挡掉写 API），**并设好 `SENTINEL_DIAG_TOKEN`**；或设 `SENTINEL_PANEL_ENABLED=false` 整体关闭面板。
 
 ## 设计哲学
 

@@ -133,7 +133,7 @@ WatchMend ships a **localhost-only read-only SSR panel** that turns its four dis
 
 Access: the container binds the panel to `127.0.0.1:8765` on the host (same port as the orchestration API); open `http://127.0.0.1:8765/`.
 
-**Security note**: the panel shares the bind with the orchestration API and is **read-only, has no write endpoints, and ships no auth** — it assumes localhost/intranet reachability only. Raw log snippets are stored in the localhost-only SQLite (same data already sent to your LLM endpoint, truncated to 4096 chars each). **To expose it publicly, put a reverse proxy with authentication in front**, or set `SENTINEL_PANEL_ENABLED=false` to disable the panel entirely.
+**Security note**: the panel routes (`/`, `/event/*`) themselves are **read-only**, but the **same `127.0.0.1:8765` port also hosts the orchestration WRITE API** (`POST /events/{id}/diagnosis`, `POST /report/summary`), which is authenticated only when `SENTINEL_DIAG_TOKEN` is set — it defaults to empty, i.e. **no auth**. The whole thing assumes localhost/intranet reachability only. Raw log snippets are stored in the localhost-only SQLite (same data already sent to your LLM endpoint, truncated to 4096 chars each). **To expose it publicly**: either put a reverse proxy with authentication in front of the entire 8765 upstream, or only allow `/` and `/event/*` through the proxy (blocking the write API), **and set `SENTINEL_DIAG_TOKEN`**; or set `SENTINEL_PANEL_ENABLED=false` to disable the panel entirely.
 
 ## Design philosophy
 
