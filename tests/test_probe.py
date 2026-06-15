@@ -65,6 +65,10 @@ services:
     host: audio-ui.dev.local
     path: /
     label: ""
+  - name: search
+    host: search.dev.local
+    path: /health
+    label: "   "
 """
 
 
@@ -75,6 +79,7 @@ def test_load_targets_parses_optional_label(tmp_path):
     assert by_name["audio"].label == "Audio API"  # 显式 label
     assert by_name["auth"].label is None  # 缺省 → None
     assert by_name["audio-ui"].label is None  # 空串 → None(不当显示名,渲染回退 name)
+    assert by_name["search"].label is None  # 纯空白 → None(strip 后为空,回退 name)
     # label 纯展示:不影响 name(DB key)
     assert by_name["audio"].name == "audio"
 

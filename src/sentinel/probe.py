@@ -46,7 +46,8 @@ def load_targets(path: str) -> list[ProbeTarget]:
                 host=host,
                 expect_status=expect,
                 timeout=timeout,
-                label=(item.get("label") or None),  # 空串/缺省归一为 None
+                # 空串/纯空白/缺省/非字符串假值一律归一为 None(回退 name);str() 防非字符串崩 strip
+                label=(str(item.get("label") or "").strip() or None),
             )
         )
     return targets
