@@ -64,7 +64,7 @@ Most data sources are optional — leave one empty and that layer turns off clea
 | `SENTINEL_CERT_DOMAINS` | TLS certificate expiry check | check skipped |
 | backup dir mount | pg_dump freshness check | check skipped |
 | `LLM_BASE_URL` + `LLM_MODEL` | root-cause diagnosis + AI report summary | LLM layer off |
-| `SENTINEL_DOCKER_HOST` | container down/unhealthy/OOM detection + docker diagnosis tools | docker layer off † |
+| `SENTINEL_DOCKER_HOST` | container down/unhealthy/OOM/crash-loop detection + docker diagnosis tools | docker layer off † |
 
 > † Unlike the other layers, the docker layer is **on by default**: `docker-compose.yml`
 > ships a read-only `docker-socket-proxy` sidecar (`CONTAINERS=1`, POST denied by
