@@ -45,7 +45,7 @@ from sentinel.probe_rules import evaluate_probe_rules
 from sentinel.promql import PromClient
 from sentinel.registry import build_adapters
 from sentinel.report import build_daily_stats, report_due, run_daily_report
-from sentinel.scan_docker import run_docker_scan
+from sentinel.scan_docker import detect_crashloops, run_docker_scan
 from sentinel.scan_hygiene import run_hygiene
 from sentinel.scan_logs import run_log_scan
 from sentinel.scan_metrics import run_metrics_scan
@@ -364,7 +364,11 @@ def build_jobs(
         # 失败,docker 立刻接管 OOM(宁可重不可漏)。scan_fails["metrics"] 是粗信号——任何
         # metrics 失败(含 node-exporter/瞬时抖动)都会让 docker 接管,极端下可能与 prom 出一次
         # 瞬时双卡(两类不同点卡,自消解),这是刻意偏向"不漏 OOM"的取舍。
-        emit_oom = not (_prom_enabled and scan_fails["metrics"] == 0)
+        metrics_covering = _prom_enabled and scan_fails["metrics"] == 0
+        emit_oom = not metrics_covering
+        # crash-loop 与 OOM 共用同一去重门禁:prom 健康时交 container_restart 覆盖,
+        # metrics 一失败 docker 立即接管(同上 fail-open 取舍)。
+        emit_crashloop = not metrics_covering
         try:
             findings, active, restart_counts = await run_docker_scan(
                 docker, settings, now_ts=now_ts, emit_oom=emit_oom
@@ -374,6 +378,8 @@ def build_jobs(
             for e in store.get_open_events():
                 if e.rule in DOCKER_OPEN_RULES and e.subject not in active:
                     hold.add((e.rule, e.subject))
+            if emit_crashloop:
+                findings += detect_crashloops(store, settings, restart_counts, now_ts=now_ts)
         except Exception:
             scan_fails["docker"] += 1
             logger.exception("docker scan failed (consecutive=%d)", scan_fails["docker"])
