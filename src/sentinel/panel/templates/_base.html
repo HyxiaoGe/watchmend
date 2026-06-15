@@ -10,15 +10,22 @@
     --bg:#0d1117; --panel:#161b22; --line:#2a313c; --txt:#c9d1d9; --mut:#8b949e;
     --link:#58a6ff; --vio:#a371f7; --viobg:#1d1633; --rad:8px;
     --st-ok:#3fb950; --st-degraded:#d29922; --st-partial:#db6d28; --st-down:#f85149; --st-nodata:#30363d;
+    /* Phase 1 重设计新增 */
+    --rad-lg:14px; --p50-fill:rgba(88,166,255,.08);
+    --hero-glow:radial-gradient(120% 120% at 50% 0%, rgba(163,113,247,.10), transparent 60%);
+    --fz-hero:clamp(2.6rem,7vw,4.2rem); --fz-display:clamp(1.4rem,3vw,2rem);
+    --ring-sz:clamp(120px,18vw,168px);
   }
   :root[data-theme="light"] {
     --bg:#ffffff; --panel:#f6f8fa; --line:#d0d7de; --txt:#1f2328; --mut:#656d76;
     --link:#0969da; --vio:#8250df; --viobg:#f3eefb; --st-nodata:#e5e7eb;
+    --hero-glow:radial-gradient(120% 120% at 50% 0%, rgba(130,80,223,.06), transparent 60%);
   }
   @media (prefers-color-scheme: light) {
     :root[data-theme="system"] {
       --bg:#ffffff; --panel:#f6f8fa; --line:#d0d7de; --txt:#1f2328; --mut:#656d76;
       --link:#0969da; --vio:#8250df; --viobg:#f3eefb; --st-nodata:#e5e7eb;
+      --hero-glow:radial-gradient(120% 120% at 50% 0%, rgba(130,80,223,.06), transparent 60%);
     }
   }
   body { background:var(--bg); color:var(--txt); font-family:ui-sans-serif,system-ui,'Segoe UI',sans-serif; font-size:13px; margin:0; padding:1.1rem; }
@@ -30,13 +37,6 @@
   .seg { display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
   .seg a { color:var(--mut); font-size:11px; padding:3px 10px; }
   .seg a.on { background:var(--vio); color:#fff; }
-  .banner { display:flex; align-items:center; gap:10px; border:1px solid var(--line); border-radius:var(--rad); padding:11px 14px; margin:12px 0; background:var(--panel); }
-  .banner.ok { border-color:#1f6f33; }
-  .banner .pulse { width:10px; height:10px; border-radius:50%; background:var(--st-ok); box-shadow:0 0 0 4px rgba(63,185,80,.18); }
-  .banner.bad .pulse { background:var(--st-down); box-shadow:0 0 0 4px rgba(248,81,73,.18); }
-  .banner .big { font-weight:700; } .banner.ok .big { color:var(--st-ok); }
-  .banner .metrics { display:flex; gap:14px; flex-wrap:wrap; margin-left:auto; align-items:center; color:var(--mut); font-size:11px; }
-  .banner .metrics b { color:var(--txt); font-size:13px; }
   .diag-lang { color:var(--mut); font-size:11px; font-style:italic; margin:4px 0; }
   .secrow { display:flex; justify-content:space-between; align-items:center; margin:16px 0 8px; gap:10px; flex-wrap:wrap; }
   .sec { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.6px; }
@@ -76,6 +76,31 @@
   details { margin:.3rem 0; } summary { cursor:pointer; } code { color:var(--link); }
   .footer { color:var(--mut); font-size:11px; border-top:1px solid var(--line); margin-top:14px; padding-top:8px; }
   h1 { font-size:1.05rem; } h2 { font-size:.95rem; border-bottom:1px solid var(--line); padding-bottom:.3rem; margin-top:1.3rem; }
+  /* —— Phase 1 重设计:导航壳 + 英雄区 + sparkline —— */
+  .tabs { display:flex; gap:4px; margin:2px 0 10px; flex-wrap:wrap; }
+  .tabs a, .tabs .tab-soon { font-size:13px; padding:5px 12px; border-radius:7px; color:var(--mut); }
+  .tabs a:hover { background:var(--panel); }
+  .tabs a.tab-on { background:var(--vio); color:#fff; }
+  .tabs .tab-soon { opacity:.5; cursor:default; }
+  .hero { display:grid; grid-template-columns:auto 1fr; gap:clamp(16px,3vw,32px); align-items:center;
+    border:1px solid var(--line); border-radius:var(--rad-lg); background:var(--panel) var(--hero-glow);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.04); padding:clamp(20px,4vw,36px); margin:12px 0; }
+  .hero-ring { position:relative; width:var(--ring-sz); height:var(--ring-sz); }
+  .hero-ring svg { width:100%; height:100%; display:block; }
+  .ring-center { position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; }
+  .ring-center .num { font-family:ui-monospace,Menlo,monospace; font-variant-numeric:tabular-nums;
+    font-size:var(--fz-display); font-weight:700; color:var(--st-ok); }
+  .ring-center.bad .num { color:var(--st-down); }
+  .ring-center .pct { font-size:.55em; color:var(--mut); }
+  .hero-stats { display:flex; gap:clamp(20px,5vw,56px); flex-wrap:wrap; align-items:flex-end; }
+  .hstat .num { display:block; font-family:ui-monospace,Menlo,monospace; font-variant-numeric:tabular-nums;
+    font-size:var(--fz-hero); line-height:1; color:var(--st-ok); }
+  .hstat.bad .num { color:var(--st-down); }
+  .hstat .cap { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+  .hero-trend { grid-column:1 / -1; margin-top:8px; }
+  .hero-trend svg { width:100%; height:64px; display:block; }
+  .spark { width:120px; height:40px; display:block; align-self:center; }
 </style>
 </head>
 <body>
@@ -85,6 +110,12 @@
   <span class="sub mono">{{ t('hdr.refreshed', ts=now_str) }} · {{ refresh_seconds|default(0) }}s ·
     LLM:{% if posture and posture.llm.enabled %}{{ posture.llm.model }}{% if posture.llm.pending_restart %} {{ t('llm.pending_restart') }}{% else %} ✓{% endif %}{% else %}{{ t('host.llm.off') }}{% endif %}</span>
 </div>
+<nav class="tabs">
+  <a href="{{ qurl() }}" class="{{ 'tab-on' if active_tab|default('') == 'overview' else '' }}">{{ t('tab.overview') }}</a>
+  <span class="tab-soon">{{ t('tab.services') }}</span>
+  <span class="tab-soon">{{ t('tab.events') }}</span>
+  <span class="tab-soon">{{ t('tab.hygiene') }}</span>
+</nav>
 <div class="nav">
   <span class="seg">
     <a href="{{ qurl(win=30) }}" class="{{ 'on' if window_days == 30 else '' }}">{{ t('win.label', days=30) }}</a>

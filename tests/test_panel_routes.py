@@ -50,7 +50,7 @@ async def test_overview_renders(tmp_path, monkeypatch):
     assert resp.status_code == 200
     assert "证据台" in resp.text  # hdr.title
     assert "永不自动执行" in resp.text  # footer.readonly
-    assert "组件健康" in resp.text  # sec.health
+    assert "服务一览" in resp.text  # sec.services (renamed from sec.health in Task 7)
     assert "事件" in resp.text  # sec.events
     assert "Loki 巡检失败" in resp.text  # rule_label(scan_failed_loki, zh)
     store.close()
@@ -120,7 +120,7 @@ async def test_overview_en_light_smoke(tmp_path, monkeypatch):
     r = await _get(app, "/?lang=en&theme=light")
     assert r.status_code == 200
     assert 'data-theme="light"' in r.text and '<html lang="en"' in r.text
-    assert "Component Health" in r.text  # sec.health en
+    assert "Services" in r.text  # sec.services en (renamed from sec.health in Task 7)
     assert "Events" in r.text  # sec.events en
     assert "证据台" not in r.text  # 外壳标题区已全英文
     store.close()
@@ -656,12 +656,51 @@ async def test_diag_lang_hint_shown_when_ui_lang_differs(tmp_path, monkeypatch):
 
 async def test_default_window_is_30(tmp_path, monkeypatch):
     # 首屏无 query/cookie 时默认窗口降噪为 30d，而非历史上限 90d（issue #11 claim 1）。
+    from datetime import datetime, timedelta, timezone
+
     settings = _settings(monkeypatch)
-    store = Store(str(tmp_path / "s.db"))  # 空库 → 仅 banner metric 渲染窗口
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    yest = (datetime.now(tz).date() - timedelta(days=1)).isoformat()
+    # 出一个服务才会渲染逐日柱条的窗口轴
+    store.upsert_probe_daily("api", yest, total=10, ok_count=10, p50=1.0, p95=2.0)
     app = _build_app(store, settings)
     r = await _get(app, "/")
-    assert "窗口 30d" in r.text  # metric.window 显示 30
-    assert "窗口 90d" not in r.text
+    assert "30 天前" in r.text  # 逐日柱条窗口轴 axis.window(days=30)
+    assert "90 天前" not in r.text  # 未回落到历史上限 90
+    store.close()
+
+
+async def test_hero_label_is_today_not_window(tmp_path, monkeypatch):
+    # 回归 Codex P2:hero 大号与值同口径=今日(标签"今日可用率",不冒充"30 天可用率")。
+    # 历史 29 天 100% + 今天单失败样本时,标签仍是今日;窗口历史由趋势线/逐日柱条承载。
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    today = datetime.now(tz).date()
+    for i in range(1, 30):
+        store.upsert_probe_daily(
+            "api",
+            (today - timedelta(days=i)).isoformat(),
+            total=100,
+            ok_count=100,
+            p50=10.0,
+            p95=20.0,
+        )
+    now_ts = int(datetime.now(tz).timestamp())
+    store.add_probe_samples(
+        [ProbeSample(ts=now_ts - 60, service="api", ok=False, status_code=500, latency_ms=None)]
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/?win=30")
+    assert r.status_code == 200
+    assert "今日可用率" in r.text  # 标签=今日口径
+    assert "30 天可用率" not in r.text  # 不再冒充窗口可用率
+    assert "30 天前" in r.text  # 窗口故事仍在(逐日柱条窗口轴)
     store.close()
 
 
@@ -677,4 +716,114 @@ async def test_overview_today_nodata_tooltip(tmp_path, monkeypatch):
     app = _build_app(store, settings)
     r = await _get(app, "/")
     assert "暂无样本" in r.text  # tip.today_nodata zh,今日无数据专属提示
+    store.close()
+
+
+async def test_nav_tabs_render_with_overview_active(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/")
+    assert resp.status_code == 200
+    assert 'class="tabs"' in resp.text  # 四标签导航壳已渲染
+    assert "总览" in resp.text and "体检" in resp.text  # tab 文案
+    # 总览高亮(tab-on),服务/事件/体检 Phase 1 置灰(tab-soon span,非链接)
+    assert "tab-on" in resp.text
+    assert "tab-soon" in resp.text
+    store.close()
+
+
+async def test_badge_operational_when_no_open(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/badge.svg")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("image/svg+xml")
+    assert "operational" in resp.text
+    assert "WatchMend" in resp.text
+    store.close()
+
+
+async def test_badge_incidents_when_open(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.insert_event(
+        ts=1700000000,
+        rule="service_down",
+        subject="api",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    resp = await _get(app, "/badge.svg")
+    assert resp.status_code == 200
+    assert "1 incident" in resp.text
+    store.close()
+
+
+async def test_badge_not_registered_when_panel_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("SENTINEL_PANEL_ENABLED", "false")
+    settings = _settings(monkeypatch)  # 门控自读 env,不被 _settings 覆盖
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)  # register_panel_routes 自读 Settings() → 见 disabled
+    resp = await _get(app, "/badge.svg")
+    assert resp.status_code == 404
+    store.close()
+
+
+def test_badge_template_autoescapes_hostile_value():
+    # 纵深防御:徽标 .svg 模板已纳入 autoescape——即便未来把不可信值(服务名/事件 subject)
+    # 接进徽标,注入标签也会被转义而非破坏 SVG 结构。当前 handler 只喂服务端可控值,无活漏洞;
+    # 本测试钉住 select_autoescape(["html","svg"]) 配置不被回退。
+    from sentinel.panel.routes import _env
+
+    out = _env.get_template("badge.svg").render(
+        status_text='"/><script>alert(1)</script>',
+        color="#3fb950",
+        left_w=72,
+        right_w=80,
+        total_w=152,
+        left_x=36.0,
+        right_x=112.0,
+    )
+    assert "<script>" not in out
+    assert "&lt;script&gt;" in out
+
+
+async def test_overview_renders_hero_and_service_sparkline(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=8))
+    today = datetime.now(tz).date()
+    now_ts = int(datetime.now(tz).timestamp())
+    # 两天历史 + 今日样本,保证 health 非空、趋势线有 ≥2 个非空点
+    store.upsert_probe_daily(
+        "api", (today - timedelta(days=2)).isoformat(), total=100, ok_count=100, p50=10.0, p95=20.0
+    )
+    store.upsert_probe_daily(
+        "api", (today - timedelta(days=1)).isoformat(), total=100, ok_count=98, p50=10.0, p95=22.0
+    )
+    store.add_probe_samples(
+        [ProbeSample(ts=now_ts - 30, service="api", ok=True, status_code=200, latency_ms=11.0)]
+    )
+
+    app = _build_app(store, settings)
+    resp = await _get(app, "/")
+    assert resp.status_code == 200
+    assert 'class="hero"' in resp.text  # 英雄区卡
+    assert "ring-center" in resp.text  # 状态环中心数字
+    assert "hero-trend" in resp.text  # 整体趋势线
+    assert 'class="spark"' in resp.text  # 服务行迷你趋势线
+    assert "服务一览" in resp.text  # sec.services
+    # HERO 下方既有区块未丢(Phase 1 保留)
+    assert "事件" in resp.text  # sec.events
     store.close()

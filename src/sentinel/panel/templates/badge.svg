@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="{{ total_w }}" height="20" role="img" aria-label="WatchMend: {{ status_text }}">
+  <linearGradient id="g" x2="0" y2="100%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient>
+  <clipPath id="r"><rect width="{{ total_w }}" height="20" rx="3" fill="#fff"/></clipPath>
+  <g clip-path="url(#r)">
+    <rect width="{{ total_w }}" height="20" fill="#555"/>
+    <rect x="{{ left_w }}" width="{{ right_w }}" height="20" fill="{{ color }}"/>
+    <rect width="{{ total_w }}" height="20" fill="url(#g)"/>
+  </g>
+  <g fill="#fff" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11" text-anchor="middle">
+    <text x="{{ left_x }}" y="14">WatchMend</text>
+    <text x="{{ right_x }}" y="14">{{ status_text }}</text>
+  </g>
+</svg>

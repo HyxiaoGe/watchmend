@@ -22,6 +22,96 @@ _SELF_IMAGE_SUBSTR = "watchmend"
 _SOCKET_PROXY_IMAGE = "tecnativa/docker-socket-proxy"
 
 
+def _svg_line(values: list[float | None], *, w: float, h: float, pad_frac: float = 0.08) -> dict:
+    """把一条可能含 None 缺口的序列归一成 SVG 路径(零 JS 可视化基元)。
+    返回 {"line_d", "area_d"}:line_d 在 None 处用 M 断开折线;
+    area_d 仅当序列无缺口时自底边闭合填充,否则为空串。
+    y 轴留 pad_frac 余量,避免 99%+ 的微小波动被压成直线。"""
+    nums = [v for v in values if v is not None]
+    n = len(values)
+    if n < 2 or len(nums) < 2:
+        return {"line_d": "", "area_d": ""}
+    lo, hi = min(nums), max(nums)
+    span = (hi - lo) or 1.0
+    pad = span * pad_frac
+    lo -= pad
+    hi += pad
+    rng = (hi - lo) or 1.0
+
+    def x_of(i: int) -> float:
+        return i / (n - 1) * w
+
+    def y_of(v: float) -> float:
+        return h - (v - lo) / rng * h
+
+    parts: list[str] = []
+    gap = True
+    for i, v in enumerate(values):
+        if v is None:
+            gap = True
+            continue
+        parts.append(f"{'M' if gap else 'L'}{x_of(i):.1f},{y_of(v):.1f}")
+        gap = False
+    line_d = " ".join(parts)
+
+    if None in values:
+        area_d = ""
+    else:
+        seg = " ".join(f"{x_of(i):.1f},{y_of(v):.1f}" for i, v in enumerate(values))
+        area_d = f"M{x_of(0):.1f},{h:.1f} L{seg} L{x_of(n - 1):.1f},{h:.1f} Z"
+    return {"line_d": line_d, "area_d": area_d}
+
+
+def overall_uptime_pct(health: list[dict]) -> float | None:
+    """各服务今日 uptime 等权均值,排除 nodata(uptime_pct is None)。
+    全 nodata / 空 → None。英雄区中心大号数字(标签 "今日可用率")。
+    刻意取今日而非窗口:大号数字渲染在状态环正中,而环(overall_ring)反映今日态,
+    二者须同口径才不自相矛盾(否则"历史好、今天坏"时会出现绿数字嵌在红环里);
+    窗口历史由下方趋势线与逐日柱条承载。"""
+    vals = [r["uptime_pct"] for r in health if r.get("uptime_pct") is not None]
+    if not vals:
+        return None
+    return round(sum(vals) / len(vals), 1)
+
+
+def overall_ring(health: list[dict]) -> dict:
+    """按各服务今日格状态计数归一成 {ok,degraded,partial,down} 占比(%),
+    分母为服务总数;nodata 不计入四段(留作状态环底色余量)。空 → 全 0。"""
+    counts = {"ok": 0, "degraded": 0, "partial": 0, "down": 0}
+    for r in health:
+        days = r.get("days") or []
+        state = days[-1]["state"] if days else "nodata"
+        if state in counts:
+            counts[state] += 1
+    total = len(health) or 1
+    return {k: round(counts[k] / total * 100, 2) for k in counts}
+
+
+def _days_clean(latest_event_ts: int | None, now_ts: int) -> int | None:
+    """距今最后一次事件的整天数(下取整,钳 ≥0)。latest_event_ts=None(从无事件)→ None。
+    英雄区"连续 N 天 0 事件"正向里程碑;调用方传入全表最新事件 ts。"""
+    if latest_event_ts is None:
+        return None
+    return max(0, (now_ts - latest_event_ts) // _DAY_SECONDS)
+
+
+def _overall_trend_series(health: list[dict]) -> list[float | None]:
+    """逐日把各服务 days[i].uptime_pct 等权均值,得整体可用率时间序列(左早右今)。
+    某天全服务无数据 → 该点 None(由 _svg_line 断开)。"""
+    if not health:
+        return []
+    n = len(health[0].get("days") or [])
+    series: list[float | None] = []
+    for i in range(n):
+        vals = [
+            r["days"][i]["uptime_pct"]
+            for r in health
+            if i < len(r.get("days") or []) and r["days"][i]["uptime_pct"] is not None
+        ]
+        series.append(round(sum(vals) / len(vals), 2) if vals else None)
+    return series
+
+
 def _hhmm(ts: int, tz: timezone) -> str:
     return datetime.fromtimestamp(ts, tz).strftime("%H:%M")
 
@@ -378,6 +468,19 @@ async def build_overview(
         today_samples=today_samples,
         service_labels=service_labels,
     )
+    # 英雄区数据(纯函数派生,零新取数):每服务迷你趋势线 + 整体指标。
+    for row in health:
+        row["mini_pts"] = _svg_line([d["uptime_pct"] for d in row["days"]], w=120.0, h=40.0)[
+            "line_d"
+        ]
+    latest_events = store.get_events_since(0, limit=1)  # 全表最新一条,事件稀疏 → 廉价
+    latest_event_ts = latest_events[0].ts if latest_events else None
+    hero = {
+        "uptime_pct": overall_uptime_pct(health),
+        "ring": overall_ring(health),
+        "days_clean": _days_clean(latest_event_ts, now_ts),
+        "trend": _svg_line(_overall_trend_series(health), w=300.0, h=64.0),
+    }
     # 引擎活性看全表最新样本(不限今日):午夜后最新样本可能落在昨日,
     # 复用 today_samples 会把"刚探测过"误判成 unknown。
     latest_probe_ts = store.get_latest_probe_ts()
@@ -427,6 +530,7 @@ async def build_overview(
         },
         "window_days": window_days,
         "health": health,
+        "hero": hero,
         "host_self": host_self,
         "events": events,
     }

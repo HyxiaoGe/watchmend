@@ -61,12 +61,6 @@ def test_messages_zh_en_parity():
 
 def test_new_template_keys_present():
     needed = {
-        "banner.issues",
-        "banner.ok",
-        "metric.probes",
-        "metric.open",
-        "metric.recovered",
-        "metric.window",
         "ev.diag_lang",
         "llm.pending_restart",
         "win.label",
@@ -95,8 +89,6 @@ def test_new_template_keys_present():
     t = i18n.make_translator("en")
     assert t("win.label", days=30) == "30d"
     assert t("comp.expand", n=5) == "Show 5 more"
-    assert "7" in t("banner.issues", open=7, probes=16)
-    assert t("metric.window", days=30) == "window 30d"
     assert "back-translated" in t("ev.diag_lang", lang="zh")
 
 
@@ -110,3 +102,31 @@ def test_crashloop_rule_registered():
     assert "container_crashloop" not in findings.DOCKER_OPEN_RULES
     assert i18n.RULE_LABELS["container_crashloop"]["zh"] == "容器频繁重启"
     assert i18n.RULE_LABELS["container_crashloop"]["en"] == "Container crash-looping"
+
+
+def test_phase1_panel_keys_present_both_langs():
+    from sentinel.panel.i18n import MESSAGES
+
+    keys = [
+        "tab.overview",
+        "tab.services",
+        "tab.events",
+        "tab.hygiene",
+        "hero.uptime_label",
+        "hero.days_clean",
+        "hero.open",
+        "hero.no_events",
+        "sec.services",
+    ]
+    for lang in ("zh", "en"):
+        for k in keys:
+            assert k in MESSAGES[lang], f"{lang} 缺 key {k}"
+
+
+def test_phase1_format_keys_accept_params():
+    from sentinel.panel.i18n import make_translator
+
+    t = make_translator("zh")
+    assert t("hero.uptime_label") == "今日可用率"  # 今日口径,无窗口占位
+    assert "5" in t("hero.days_clean", n=5)
+    assert "2" in t("hero.open", open=2)

@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from sentinel.config import Settings
@@ -20,7 +20,9 @@ from sentinel.panel import i18n, prefs, view
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _env = Environment(
     loader=FileSystemLoader(str(_TEMPLATES_DIR)),
-    autoescape=select_autoescape(["html"]),  # 所有动态值 HTML 转义,原始日志作纯文本
+    # 动态值 HTML 转义,原始日志作纯文本;徽标 .svg 模板亦纳入(纵深防御:未来若把
+    # 服务名/事件 subject 接进徽标也不会破坏 SVG 结构)
+    autoescape=select_autoescape(["html", "svg"]),
 )
 
 _TRUTHY = ("1", "true", "yes", "on")
@@ -103,6 +105,7 @@ def register_panel_routes(app: FastAPI) -> None:
             history_days=settings.sentinel_panel_history_days,
             services_cap=settings.sentinel_panel_services_cap,
             diag_lang=settings.sentinel_llm_lang,
+            active_tab="overview",
         )
         resp = HTMLResponse(html)
         # 仅对出现在 querystring 的偏好写 cookie(cookie 跨页兜底,querystring 当次生效)
@@ -161,3 +164,27 @@ def register_panel_routes(app: FastAPI) -> None:
             window=window_days if q.get("win") else None,
         )
         return resp
+
+    @app.get("/badge.svg")
+    async def panel_badge(request: Request) -> Response:
+        # 可嵌徽标(README/外部页 <img src> 引用)。只暴露 open_count——面板本就可见的聚合,
+        # 无敏感面;受 SENTINEL_PANEL_ENABLED 同门控(register 关则整体不注册)。
+        open_count = len(request.app.state.store.get_open_events())
+        if open_count == 0:
+            status_text, color = "operational", "#3fb950"
+        else:
+            status_text = f"{open_count} incident" + ("s" if open_count != 1 else "")
+            color = "#f85149"
+        left_w = 72
+        right_w = int(len(status_text) * 6.5 + 20)
+        total_w = left_w + right_w
+        svg = _env.get_template("badge.svg").render(
+            status_text=status_text,
+            color=color,
+            left_w=left_w,
+            right_w=right_w,
+            total_w=total_w,
+            left_x=round(left_w / 2, 1),
+            right_x=round(left_w + right_w / 2, 1),
+        )
+        return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "max-age=60"})

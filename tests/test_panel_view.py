@@ -556,3 +556,156 @@ async def test_build_overview_event_feed_pagination(tmp_path, monkeypatch):
     # 事件项沿用 _event_view 结构（含原始 rule）
     assert ev["items"][0]["rule"] == "service_down"
     store.close()
+
+
+def test_svg_line_maps_series_to_path_with_padding():
+    from sentinel.panel.view import _svg_line
+
+    out = _svg_line([100.0, 50.0, 100.0], w=100.0, h=40.0, pad_frac=0.0)
+    # 3 点等距:x = 0,50,100;无 padding 时 max→y=0,min→y=h
+    assert out["line_d"] == "M0.0,0.0 L50.0,40.0 L100.0,0.0"
+    # 无缺口 → area_d 自底边闭合
+    assert out["area_d"] == "M0.0,40.0 L0.0,0.0 50.0,40.0 100.0,0.0 L100.0,40.0 Z"
+
+
+def test_svg_line_breaks_on_none_gap_and_omits_area():
+    from sentinel.panel.view import _svg_line
+
+    out = _svg_line([100.0, None, 50.0], w=100.0, h=40.0, pad_frac=0.0)
+    # 中间 None → 用 M 断开,缺口两侧不连线
+    assert out["line_d"] == "M0.0,0.0 M100.0,40.0"
+    # 有缺口 → 不画面积
+    assert out["area_d"] == ""
+
+
+def test_svg_line_too_few_points_returns_empty():
+    from sentinel.panel.view import _svg_line
+
+    assert _svg_line([], w=100.0, h=40.0) == {"line_d": "", "area_d": ""}
+    assert _svg_line([42.0], w=100.0, h=40.0) == {"line_d": "", "area_d": ""}
+    assert _svg_line([None, None], w=100.0, h=40.0) == {"line_d": "", "area_d": ""}
+
+
+def test_svg_line_flat_series_does_not_divide_by_zero():
+    from sentinel.panel.view import _svg_line
+
+    out = _svg_line([100.0, 100.0, 100.0], w=100.0, h=40.0, pad_frac=0.08)
+    # 全等值:span=0 → 用 1.0 兜底,不抛异常,line 落在中线附近
+    assert out["line_d"].startswith("M0.0,")
+    assert "L" in out["line_d"]
+
+
+def _health_row(service, uptime_pct, today_state):
+    # 模拟 _service_health_bars 输出的一行(只放本测用得到的字段)
+    return {
+        "service": service,
+        "label": service,
+        "uptime_pct": uptime_pct,
+        "p95_ms": None,
+        "days": [
+            {"date": "2026-06-14", "state": today_state, "is_today": True, "uptime_pct": uptime_pct}
+        ],
+    }
+
+
+def test_overall_uptime_pct_equal_weight_excludes_nodata():
+    from sentinel.panel.view import overall_uptime_pct
+
+    health = [
+        _health_row("a", 100.0, "ok"),
+        _health_row("b", 98.0, "degraded"),
+        _health_row("c", None, "nodata"),  # nodata 排除
+    ]
+    assert overall_uptime_pct(health) == 99.0  # (100+98)/2
+
+
+def test_overall_uptime_pct_all_nodata_returns_none():
+    from sentinel.panel.view import overall_uptime_pct
+
+    assert overall_uptime_pct([_health_row("a", None, "nodata")]) is None
+    assert overall_uptime_pct([]) is None
+
+
+def test_overall_ring_counts_today_state_normalized():
+    from sentinel.panel.view import overall_ring
+
+    health = [
+        _health_row("a", 100.0, "ok"),
+        _health_row("b", 100.0, "ok"),
+        _health_row("c", 80.0, "down"),
+        _health_row("d", None, "nodata"),  # nodata = 环底色余量,不计入四段
+    ]
+    ring = overall_ring(health)
+    assert ring == {"ok": 50.0, "degraded": 0.0, "partial": 0.0, "down": 25.0}
+
+
+def test_overall_ring_empty_health_is_all_zero():
+    from sentinel.panel.view import overall_ring
+
+    assert overall_ring([]) == {"ok": 0.0, "degraded": 0.0, "partial": 0.0, "down": 0.0}
+
+
+def test_days_clean_floor_division():
+    from sentinel.panel.view import _days_clean
+
+    now_ts = 1_000_000
+    assert _days_clean(now_ts - 3 * 86400 - 10, now_ts) == 3  # 3 天多 → 3
+    assert _days_clean(now_ts - 100, now_ts) == 0  # 不足 1 天 → 0
+    assert _days_clean(now_ts + 500, now_ts) == 0  # 未来 ts(时钟漂移)→ 钳 0
+    assert _days_clean(None, now_ts) is None  # 从无事件
+
+
+def test_overall_trend_series_per_day_equal_weight():
+    from sentinel.panel.view import _overall_trend_series
+
+    health = [
+        {"days": [{"uptime_pct": 100.0}, {"uptime_pct": 90.0}, {"uptime_pct": None}]},
+        {"days": [{"uptime_pct": 80.0}, {"uptime_pct": None}, {"uptime_pct": None}]},
+    ]
+    # 第0天 (100+80)/2=90;第1天 仅90;第2天 全 None → None
+    assert _overall_trend_series(health) == [90.0, 90.0, None]
+
+
+def test_overall_trend_series_empty_health():
+    from sentinel.panel.view import _overall_trend_series
+
+    assert _overall_trend_series([]) == []
+
+
+async def test_build_overview_exposes_hero_and_mini(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    # 今日样本:api 全 ok(4/4),db 半数失败(1/2)
+    store.add_probe_samples(
+        [
+            ProbeSample(ts=NOW_TS - 400, service="api", ok=True, status_code=200, latency_ms=10.0),
+            ProbeSample(ts=NOW_TS - 300, service="api", ok=True, status_code=200, latency_ms=10.0),
+            ProbeSample(ts=NOW_TS - 200, service="api", ok=True, status_code=200, latency_ms=10.0),
+            ProbeSample(ts=NOW_TS - 100, service="api", ok=True, status_code=200, latency_ms=10.0),
+            ProbeSample(ts=NOW_TS - 80, service="db", ok=True, status_code=200, latency_ms=10.0),
+            ProbeSample(ts=NOW_TS - 40, service="db", ok=False, status_code=500, latency_ms=None),
+        ]
+    )
+    # 全表最新事件 = 2 天前(已恢复,open_count==0)→ days_clean=2
+    rid = store.insert_event(
+        ts=NOW_TS - 2 * 86400,
+        rule="service_down",
+        subject="db",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    store.resolve_event(rid, resolved_ts=NOW_TS - 2 * 86400 + 600)
+    overview = await view.build_overview(store, settings, now=NOW)
+
+    hero = overview["hero"]
+    assert hero["uptime_pct"] == view.overall_uptime_pct(overview["health"])
+    assert set(hero["ring"]) == {"ok", "degraded", "partial", "down"}
+    assert hero["days_clean"] == 2
+    assert set(hero["trend"]) == {"line_d", "area_d"}
+    # 每个 health 行都带 mini_pts 字符串
+    assert all(isinstance(r["mini_pts"], str) for r in overview["health"])
+    store.close()
