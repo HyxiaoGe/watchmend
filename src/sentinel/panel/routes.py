@@ -32,6 +32,24 @@ def _tz(settings: Settings) -> timezone:
     return timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
 
 
+def _nav_helpers(path: str, *, lang: str, theme: str, window_days: int, **transient):
+    """跨页导航壳 URL 助手(spec §7:qurl 提为跨路由通用 helper)。
+    qurl(**override):重建当前页 path,带 lang/theme/win + 该页瞬时态(transient)+ 覆盖项;
+      None 值一律剔除(svc_all/filter 关闭即不出现在 querystring)。
+    tab_url(p):构造他页 URL,只带 lang/theme/win —— 四标签主导航跨页跳转保留偏好。"""
+    base: dict[str, object] = {"lang": lang, "theme": theme, "win": window_days, **transient}
+
+    def qurl(**override) -> str:
+        params = {**base, **override}
+        clean = {k: v for k, v in params.items() if v is not None}
+        return path + "?" + urlencode(clean) if clean else path
+
+    def tab_url(p: str) -> str:
+        return p + "?" + urlencode({"lang": lang, "theme": theme, "win": window_days})
+
+    return qurl, tab_url
+
+
 def register_panel_routes(app: FastAPI) -> None:
     # flag 在注册期决定(此刻 app.state.settings 尚未就绪);env 优先于 .env
     if not Settings().sentinel_panel_enabled:
@@ -74,18 +92,14 @@ def register_panel_routes(app: FastAPI) -> None:
 
         t = i18n.make_translator(lang)
 
-        def qurl(**override) -> str:
-            params: dict[str, object] = {
-                "lang": lang,
-                "theme": theme,
-                "win": window_days,
-                "ev_page": overview["events"]["page"],  # 用钳后的真实页码
-            }
-            if svc_all:
-                params["svc_all"] = 1
-            params.update(override)
-            clean = {k: v for k, v in params.items() if v is not None}
-            return "?" + urlencode(clean)
+        qurl, tab_url = _nav_helpers(
+            "/",
+            lang=lang,
+            theme=theme,
+            window_days=window_days,
+            ev_page=overview["events"]["page"],  # 用钳后的真实页码
+            svc_all=1 if svc_all else None,
+        )
 
         def eurl(event_id: int) -> str:
             # 事件详情链接携带当前 lang/theme/win,跳转后不丢上下文(issue #11 claim 4)
@@ -100,6 +114,7 @@ def register_panel_routes(app: FastAPI) -> None:
             theme=theme,
             rule_label=i18n.rule_label,
             qurl=qurl,
+            tab_url=tab_url,
             eurl=eurl,
             svc_all=svc_all,
             history_days=settings.sentinel_panel_history_days,
@@ -145,15 +160,23 @@ def register_panel_routes(app: FastAPI) -> None:
             diag_registered=getattr(state, "diag_job_registered", None),
         )
         status = 200 if detail is not None else 404
-        # 返回"最新"链接携带 lang/theme/win,跳回总览不丢上下文(issue #11 claim 4)
-        back_url = "/?" + urlencode({"lang": lang, "theme": theme, "win": window_days})
+        qurl, tab_url = _nav_helpers(
+            f"/event/{event_id}", lang=lang, theme=theme, window_days=window_days
+        )
+        # 面包屑回到父标签「事件」,携带 lang/theme/win 不丢上下文(issue #11 claim 4)
+        back_url = "/events?" + urlencode({"lang": lang, "theme": theme, "win": window_days})
         html = _env.get_template("event.html").render(
             detail=detail,
             t=i18n.make_translator(lang),
             lang=lang,
             theme=theme,
+            window_days=window_days,
+            history_days=settings.sentinel_panel_history_days,
             rule_label=i18n.rule_label,
+            qurl=qurl,
+            tab_url=tab_url,
             back_url=back_url,
+            active_tab="events",
             diag_lang=settings.sentinel_llm_lang,
         )  # 详情页不传 refresh_seconds → 不自动刷新(spec §3)
         resp = HTMLResponse(html, status_code=status)

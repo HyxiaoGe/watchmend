@@ -727,9 +727,13 @@ async def test_nav_tabs_render_with_overview_active(tmp_path, monkeypatch):
     assert resp.status_code == 200
     assert 'class="tabs"' in resp.text  # 四标签导航壳已渲染
     assert "总览" in resp.text and "体检" in resp.text  # tab 文案
-    # 总览高亮(tab-on),服务/事件/体检 Phase 1 置灰(tab-soon span,非链接)
+    # 四标签现均为真实跨页链接(Phase 2),不再有 tab-soon 占位
+    assert "tab-soon" not in resp.text
+    assert 'href="/services?' in resp.text  # 跨页链接
+    assert 'href="/events?' in resp.text
+    assert 'href="/hygiene?' in resp.text
+    # 总览标签高亮
     assert "tab-on" in resp.text
-    assert "tab-soon" in resp.text
     store.close()
 
 

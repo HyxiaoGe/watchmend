@@ -78,10 +78,9 @@
   h1 { font-size:1.05rem; } h2 { font-size:.95rem; border-bottom:1px solid var(--line); padding-bottom:.3rem; margin-top:1.3rem; }
   /* —— Phase 1 重设计:导航壳 + 英雄区 + sparkline —— */
   .tabs { display:flex; gap:4px; margin:2px 0 10px; flex-wrap:wrap; }
-  .tabs a, .tabs .tab-soon { font-size:13px; padding:5px 12px; border-radius:7px; color:var(--mut); }
+  .tabs a { font-size:13px; padding:5px 12px; border-radius:7px; color:var(--mut); }
   .tabs a:hover { background:var(--panel); }
   .tabs a.tab-on { background:var(--vio); color:#fff; }
-  .tabs .tab-soon { opacity:.5; cursor:default; }
   .hero { display:grid; grid-template-columns:auto 1fr; gap:clamp(16px,3vw,32px); align-items:center;
     border:1px solid var(--line); border-radius:var(--rad-lg); background:var(--panel) var(--hero-glow);
     box-shadow:inset 0 1px 0 rgba(255,255,255,.04); padding:clamp(20px,4vw,36px); margin:12px 0; }
@@ -104,17 +103,16 @@
 </style>
 </head>
 <body>
-{% if qurl is defined %}
+{% if active_tab is defined %}
 <div class="hdr">
   <b>{{ t('hdr.title') }}</b>
-  <span class="sub mono">{{ t('hdr.refreshed', ts=now_str) }} · {{ refresh_seconds|default(0) }}s ·
-    LLM:{% if posture and posture.llm.enabled %}{{ posture.llm.model }}{% if posture.llm.pending_restart %} {{ t('llm.pending_restart') }}{% else %} ✓{% endif %}{% else %}{{ t('host.llm.off') }}{% endif %}</span>
+  <span class="sub mono">{% if refresh_seconds %}{{ t('hdr.refreshed', ts=now_str) }} · {{ refresh_seconds }}s{% endif %}{% if posture %} · LLM:{% if posture.llm.enabled %}{{ posture.llm.model }}{% if posture.llm.pending_restart %} {{ t('llm.pending_restart') }}{% else %} ✓{% endif %}{% else %}{{ t('host.llm.off') }}{% endif %}{% endif %}</span>
 </div>
 <nav class="tabs">
-  <a href="{{ qurl() }}" class="{{ 'tab-on' if active_tab|default('') == 'overview' else '' }}">{{ t('tab.overview') }}</a>
-  <span class="tab-soon">{{ t('tab.services') }}</span>
-  <span class="tab-soon">{{ t('tab.events') }}</span>
-  <span class="tab-soon">{{ t('tab.hygiene') }}</span>
+  <a href="{{ tab_url('/') }}" class="{{ 'tab-on' if active_tab == 'overview' else '' }}">{{ t('tab.overview') }}</a>
+  <a href="{{ tab_url('/services') }}" class="{{ 'tab-on' if active_tab == 'services' else '' }}">{{ t('tab.services') }}</a>
+  <a href="{{ tab_url('/events') }}" class="{{ 'tab-on' if active_tab == 'events' else '' }}">{{ t('tab.events') }}</a>
+  <a href="{{ tab_url('/hygiene') }}" class="{{ 'tab-on' if active_tab == 'hygiene' else '' }}">{{ t('tab.hygiene') }}</a>
 </nav>
 <div class="nav">
   <span class="seg">
@@ -130,7 +128,7 @@
     <a href="{{ qurl(lang='zh') }}" class="{{ 'on' if lang == 'zh' else '' }}">中</a>
     <a href="{{ qurl(lang='en') }}" class="{{ 'on' if lang == 'en' else '' }}">EN</a>
   </span>
-  <a href="{{ qurl(ev_page=1) }}">{{ t('nav.latest') }}</a>
+  {% if active_tab in ('overview', 'events') %}<a href="{{ qurl(ev_page=1) }}">{{ t('nav.latest') }}</a>{% endif %}
 </div>
 {% endif %}
 {% block body %}{% endblock %}
