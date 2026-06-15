@@ -168,6 +168,7 @@ RULE_LABELS: dict[str, dict[str, str]] = {
     "container_down": {"zh": "容器停止", "en": "Container down"},
     "container_unhealthy": {"zh": "容器健康检查异常", "en": "Container unhealthy"},
     "container_oom": {"zh": "容器 OOM", "en": "Container OOM"},
+    "container_crashloop": {"zh": "容器频繁重启", "en": "Container crash-looping"},
     "backup_stale": {"zh": "备份缺失", "en": "Backup stale"},
     "cert_expiry": {"zh": "证书临期", "en": "Cert expiring"},
     "scan_failed_prometheus": {"zh": "Prometheus 巡检失败", "en": "Prometheus scan failed"},

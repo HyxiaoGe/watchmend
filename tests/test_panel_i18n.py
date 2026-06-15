@@ -98,3 +98,15 @@ def test_new_template_keys_present():
     assert "7" in t("banner.issues", open=7, probes=16)
     assert t("metric.window", days=30) == "window 30d"
     assert "back-translated" in t("ev.diag_lang", lang="zh")
+
+
+def test_crashloop_rule_registered():
+    from sentinel import findings
+    from sentinel.panel import i18n
+
+    assert findings.RULE_NAMES.get("container_crashloop") == "容器频繁重启"
+    # point 事件,镜像 container_oom:进 DOCKER_RULES(成功评估时进 scope),不进 OPEN 集
+    assert "container_crashloop" in findings.DOCKER_RULES
+    assert "container_crashloop" not in findings.DOCKER_OPEN_RULES
+    assert i18n.RULE_LABELS["container_crashloop"]["zh"] == "容器频繁重启"
+    assert i18n.RULE_LABELS["container_crashloop"]["en"] == "Container crash-looping"
