@@ -708,7 +708,7 @@ async def test_docker_tick_holds_then_recovers(tmp_path, monkeypatch):
 
     # 第 1 轮:扫描无 finding,但 active 不含 web(web 消失/被过滤)→ hold,不发恢复卡
     async def scan_held(docker, settings, *, now_ts, emit_oom):
-        return [], {"db", "cache"}
+        return [], {"db", "cache"}, {}
 
     monkeypatch.setattr(app_mod, "run_docker_scan", scan_held)
     with respx.mock:
@@ -721,7 +721,7 @@ async def test_docker_tick_holds_then_recovers(tmp_path, monkeypatch):
 
     # 第 2 轮:active 含 web 且无 finding(容器恢复 running)→ 发恢复卡 + resolved
     async def scan_recovered(docker, settings, *, now_ts, emit_oom):
-        return [], {"web", "db"}
+        return [], {"web", "db"}, {}
 
     monkeypatch.setattr(app_mod, "run_docker_scan", scan_recovered)
     with respx.mock:
@@ -822,7 +822,7 @@ async def test_docker_tick_emit_oom_follows_prom_disabled(tmp_path, monkeypatch)
 
     async def scan_capture(docker, settings, *, now_ts, emit_oom):
         seen["emit_oom"] = emit_oom
-        return [], set()
+        return [], set(), {}
 
     monkeypatch.setattr(app_mod, "run_docker_scan", scan_capture)
     with respx.mock:
@@ -867,7 +867,7 @@ async def test_docker_tick_emit_oom_failopen_when_metrics_unhealthy(tmp_path, mo
 
     async def scan_capture(docker, settings, *, now_ts, emit_oom):
         seen["emit_oom"] = emit_oom
-        return [], set()
+        return [], set(), {}
 
     monkeypatch.setattr(app_mod, "run_docker_scan", scan_capture)
     with respx.mock:

@@ -30,11 +30,12 @@ async def run_docker_scan(
     *,
     now_ts: int,
     emit_oom: bool,
-) -> tuple[list[Finding], set[str]]:
+) -> tuple[list[Finding], set[str], dict[str, int]]:
     """Docker 容器规则:container_down / container_unhealthy / container_oom。
 
-    返回 (findings, active_subjects):active_subjects 是"本轮真正评估过"的容器名集合,
-    供 tick 层判断 open 事件是否该 hold(容器消失 ≠ 恢复)。
+    返回 (findings, active_subjects, restart_counts):active_subjects 是"本轮真正评估
+    过"的容器名集合,供 tick 层判断 open 事件是否该 hold(容器消失 ≠ 恢复);restart_counts
+    是受巡检+active 容器的 RestartCount(crash-loop 检测输入,纯读)。
 
     docker.ps() 失败直接向上抛(数据源故障,由 docker_tick 当连续失败处理);
     单容器 inspect_safe() 失败仅记日志并跳过该容器(竞态容忍:扫描期间被删很常见,
@@ -47,6 +48,7 @@ async def run_docker_scan(
     """
     findings: list[Finding] = []
     active_subjects: set[str] = set()
+    restart_counts: dict[str, int] = {}  # 受巡检+active 容器的 RestartCount(crash-loop 输入)
     exclude = settings.docker_exclude_list
     inspect_candidates = 0  # 通过自身/代理/排除过滤、本该 inspect 的容器数
     inspect_ok = 0  # 其中 inspect 成功的数;全失败(候选>=2)= 系统性故障,见函数尾
@@ -83,6 +85,9 @@ async def run_docker_scan(
             continue  # 正在删除:视作即将消失,既不评估也不入 active(否则会被误判"消失=恢复")
 
         active_subjects.add(name)
+        rc = info.get("RestartCount")
+        if rc is not None:
+            restart_counts[name] = rc
 
         restart_policy = info.get("RestartPolicy")
         status = state.get("Status")
@@ -156,7 +161,7 @@ async def run_docker_scan(
             f"all {inspect_candidates} container inspects failed; treating as docker scan failure"
         )
 
-    return findings, active_subjects
+    return findings, active_subjects, restart_counts
 
 
 # 基线行过期剪枝阈值(秒):消失/长期不更新的容器基线自然清理,表不膨胀。无 knob(YAGNI)。

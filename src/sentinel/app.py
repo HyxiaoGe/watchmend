@@ -366,7 +366,7 @@ def build_jobs(
         # 瞬时双卡(两类不同点卡,自消解),这是刻意偏向"不漏 OOM"的取舍。
         emit_oom = not (_prom_enabled and scan_fails["metrics"] == 0)
         try:
-            findings, active = await run_docker_scan(
+            findings, active, restart_counts = await run_docker_scan(
                 docker, settings, now_ts=now_ts, emit_oom=emit_oom
             )
             scan_fails["docker"] = 0

@@ -82,7 +82,10 @@ class FakeDocker:
 
 async def _scan(settings, ps_rows, inspects, *, now_ts=1_780_000_000, emit_oom=True):
     docker = FakeDocker(ps_rows, inspects)
-    return await run_docker_scan(docker, settings, now_ts=now_ts, emit_oom=emit_oom)
+    findings, active, _restart_counts = await run_docker_scan(
+        docker, settings, now_ts=now_ts, emit_oom=emit_oom
+    )
+    return findings, active
 
 
 # A recent FinishedAt relative to now_ts=1_780_000_000 (epoch -> RFC3339 UTC).
@@ -394,3 +397,58 @@ async def test_oom_future_finished_at_no_finding(settings):
         },
     )
     assert not any(f.rule == "container_oom" for f in findings)
+
+
+# --- restart_counts (crash-loop input) ---
+
+
+async def test_restart_counts_reports_watched_active(settings):
+    docker = FakeDocker(
+        [_ps_row("web")],
+        {"web": _inspect(name="web", status="running", restart_count=5)},
+    )
+    findings, active, restart_counts = await run_docker_scan(
+        docker, settings, now_ts=1_780_000_000, emit_oom=True
+    )
+    assert active == {"web"}
+    assert restart_counts == {"web": 5}
+
+
+async def test_restart_counts_excludes_unwatched_policy(settings):
+    docker = FakeDocker(
+        [_ps_row("batch")],
+        {"batch": _inspect(name="batch", restart_policy="no", restart_count=9)},
+    )
+    findings, active, restart_counts = await run_docker_scan(
+        docker, settings, now_ts=1_780_000_000, emit_oom=True
+    )
+    assert active == set()  # not watched
+    assert restart_counts == {}
+
+
+async def test_restart_counts_excludes_removing(settings):
+    docker = FakeDocker(
+        [_ps_row("web")],
+        {"web": _inspect(name="web", status="removing", restart_count=4)},
+    )
+    findings, active, restart_counts = await run_docker_scan(
+        docker, settings, now_ts=1_780_000_000, emit_oom=True
+    )
+    assert active == set()
+    assert restart_counts == {}
+
+
+async def test_restart_counts_excludes_inspect_failed(settings):
+    # one good + one failing inspect: scan tolerates the failure (candidates>=2 but
+    # not all fail), good still recorded, bad excluded from restart_counts.
+    docker = FakeDocker(
+        [_ps_row("good"), _ps_row("bad")],
+        {
+            "good": _inspect(name="good", status="running", restart_count=2),
+            "bad": RuntimeError("inspect boom"),
+        },
+    )
+    findings, active, restart_counts = await run_docker_scan(
+        docker, settings, now_ts=1_780_000_000, emit_oom=True
+    )
+    assert restart_counts == {"good": 2}
