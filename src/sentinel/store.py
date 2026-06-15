@@ -68,6 +68,12 @@ class Store:
         )
         # 旧库(升级前已建 events 表)补列:CREATE TABLE IF NOT EXISTS 不会改既有表
         _ensure_column(self._conn, "events", "diagnosis_tools_json", "TEXT")
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS container_restart_baseline ("
+            "subject TEXT PRIMARY KEY, "
+            "restart_count INTEGER NOT NULL, "
+            "window_start_ts INTEGER NOT NULL)"
+        )
         self._conn.commit()
 
     def get(self, provider: str) -> Snapshot | None:
@@ -96,6 +102,38 @@ class Store:
             "INSERT INTO meta (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, value),
+        )
+        self._conn.commit()
+
+    # ---- 容器 crash-loop 基线(docker-only 检测,见设计稿 §4)----
+
+    def get_restart_baseline(self, subject: str) -> tuple[int, int] | None:
+        """返回 (restart_count, window_start_ts);无行则 None。"""
+        row = self._conn.execute(
+            "SELECT restart_count, window_start_ts FROM container_restart_baseline "
+            "WHERE subject = ?",
+            (subject,),
+        ).fetchone()
+        return (row[0], row[1]) if row else None
+
+    def upsert_restart_baseline(
+        self, subject: str, restart_count: int, window_start_ts: int
+    ) -> None:
+        self._conn.execute(
+            "INSERT INTO container_restart_baseline (subject, restart_count, window_start_ts) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(subject) DO UPDATE SET "
+            "restart_count = excluded.restart_count, "
+            "window_start_ts = excluded.window_start_ts",
+            (subject, restart_count, window_start_ts),
+        )
+        self._conn.commit()
+
+    def prune_restart_baselines(self, older_than_ts: int) -> None:
+        """删除 window_start_ts < older_than_ts 的基线行(消失/长期不更新的容器)。"""
+        self._conn.execute(
+            "DELETE FROM container_restart_baseline WHERE window_start_ts < ?",
+            (older_than_ts,),
         )
         self._conn.commit()
 

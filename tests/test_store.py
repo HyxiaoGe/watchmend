@@ -270,3 +270,38 @@ def test_get_resolved_since_orders_and_limits(tmp_path):
     assert [e.subject for e in store.get_resolved_since(2500)] == ["/3000"]  # >= 闭边界
     assert len(store.get_resolved_since(0, limit=2)) == 2  # limit 生效
     store.close()
+
+
+def test_restart_baseline_roundtrip(tmp_path):
+    from sentinel.store import Store
+
+    store = Store(str(tmp_path / "s.db"))
+    assert store.get_restart_baseline("web") is None
+    store.upsert_restart_baseline("web", 3, 1000)
+    assert store.get_restart_baseline("web") == (3, 1000)
+    # ON CONFLICT(subject) DO UPDATE: second upsert overwrites
+    store.upsert_restart_baseline("web", 7, 2000)
+    assert store.get_restart_baseline("web") == (7, 2000)
+    store.close()
+
+
+def test_prune_restart_baselines(tmp_path):
+    from sentinel.store import Store
+
+    store = Store(str(tmp_path / "s.db"))
+    store.upsert_restart_baseline("old", 1, 1000)
+    store.upsert_restart_baseline("new", 1, 5000)
+    store.prune_restart_baselines(older_than_ts=3000)  # window_start < 3000 deleted
+    assert store.get_restart_baseline("old") is None
+    assert store.get_restart_baseline("new") == (1, 5000)
+    store.close()
+
+
+def test_prune_restart_baselines_boundary_keeps_equal(tmp_path):
+    from sentinel.store import Store
+
+    store = Store(str(tmp_path / "s.db"))
+    store.upsert_restart_baseline("edge", 1, 3000)
+    store.prune_restart_baselines(older_than_ts=3000)  # strict < : 3000 is NOT deleted
+    assert store.get_restart_baseline("edge") == (1, 3000)
+    store.close()
