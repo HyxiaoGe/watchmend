@@ -532,7 +532,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings, client, webhook=settings.patrol_webhook, secret=settings.patrol_sign_secret
     )
     # load_targets 在此与 build_jobs 各调一次(读同一 yaml,幂等),可接受
-    app.state.services = [t.name for t in _load_targets_or_disable(settings.sentinel_services_file)]
+    _panel_targets = _load_targets_or_disable(settings.sentinel_services_file)
+    app.state.services = [t.name for t in _panel_targets]
+    # 面板服务显示名:name→label(仅显式 label);缺省由 view 回退 name,零配置零变化
+    app.state.service_labels = {t.name: t.label for t in _panel_targets if t.label}
     app.state.docker = docker  # 面板「在监容器」计数用(可为 None)
     app.state.llm_config = LLMConfig(settings)  # 面板 LLM 姿态真源(与 build_jobs 各持一份,均热加载)
     # 诊断 job 是否在启动时注册(④ 条件注册):面板据此区分"已配置在跑" vs"已配置·待重启"

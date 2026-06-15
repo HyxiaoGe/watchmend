@@ -57,7 +57,7 @@ Most data sources are optional — leave one empty and that layer turns off clea
 | `SENTINEL_TELEGRAM_BOT_TOKEN` + `SENTINEL_TELEGRAM_CHAT_ID` | Telegram push (both required to enable) | that channel off |
 | `SENTINEL_NTFY_URL` (optional `SENTINEL_NTFY_TOKEN`) | ntfy push, full topic URL | that channel off |
 | `SENTINEL_WEBHOOK_URL` (optional `SENTINEL_WEBHOOK_TOKEN`) | Generic webhook, structured JSON | that channel off |
-| `services.yaml` | HTTP probes + latency baselines | vendor-status-only mode |
+| `services.yaml` | HTTP probes + latency baselines (per-entry optional `label` sets panel display name) | vendor-status-only mode |
 | `SENTINEL_PROMETHEUS_URL` | disk/memory/restart metric rules | metrics layer off |
 | `SENTINEL_LOKI_URL` | error-log spike detection | log layer off |
 | `SENTINEL_MIDDLEWARE_METRICS` | pg/redis exporter `up` fallback | check skipped |

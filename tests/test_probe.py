@@ -47,6 +47,41 @@ def test_load_targets_defaults_and_overrides(tmp_path):
         expect_status=200,
         timeout=2.0,
     )
+    # 未配 label 的服务,label 一律 None(向后兼容:旧 yaml 无此字段)
+    assert all(t.label is None for t in targets)
+
+
+LABEL_YAML = """\
+nginx_base: http://nginx-proxy
+services:
+  - name: audio
+    host: audio.dev.local
+    path: /api/v1/health
+    label: Audio API
+  - name: auth
+    host: auth.dev.local
+    path: /health
+  - name: audio-ui
+    host: audio-ui.dev.local
+    path: /
+    label: ""
+  - name: search
+    host: search.dev.local
+    path: /health
+    label: "   "
+"""
+
+
+def test_load_targets_parses_optional_label(tmp_path):
+    path = tmp_path / "services.yaml"
+    path.write_text(LABEL_YAML, encoding="utf-8")
+    by_name = {t.name: t for t in load_targets(str(path))}
+    assert by_name["audio"].label == "Audio API"  # 显式 label
+    assert by_name["auth"].label is None  # 缺省 → None
+    assert by_name["audio-ui"].label is None  # 空串 → None(不当显示名,渲染回退 name)
+    assert by_name["search"].label is None  # 纯空白 → None(strip 后为空,回退 name)
+    # label 纯展示:不影响 name(DB key)
+    assert by_name["audio"].name == "audio"
 
 
 @respx.mock

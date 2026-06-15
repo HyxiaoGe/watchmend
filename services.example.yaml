@@ -1,6 +1,8 @@
 # 内部探针清单(示例):经反代(Host 头)或容器名直连。显式维护,不自动发现。
 # ⚠️ 这些条目只是格式示例——请按你自己的服务改写,否则探针全红。
 # url 与 host+path 二选一;expect_status/timeout 可逐项覆盖 defaults。
+# label(可选):面板健康行的显示名;不填则显示 name。name 是数据库 key,
+#   改 name 会让历史探针数据断档——想美化面板显示就加 label,别动 name。
 defaults:
   timeout: 5.0
   expect_status: 200
@@ -12,6 +14,7 @@ services:
   - name: webapp
     host: webapp.internal.example
     path: /health
+    label: Web App        # 可选显示名;省略则面板显示 name(webapp)
   - name: grafana
     host: grafana.internal.example
     path: /api/health

@@ -89,6 +89,30 @@ async def test_overview_health_bars_and_states(tmp_path, monkeypatch):
     store.close()
 
 
+async def test_overview_health_row_uses_label_with_name_fallback(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    now = int(datetime.now(tz).timestamp())
+    store.add_probe_samples(
+        [
+            ProbeSample(ts=now - 30, service="audio", ok=True, status_code=200, latency_ms=10.0),
+            ProbeSample(ts=now - 30, service="auth", ok=True, status_code=200, latency_ms=10.0),
+        ]
+    )
+    app = _build_app(store, settings)
+    app.state.service_labels = {"audio": "Audio API"}  # 仅 audio 配显示名
+    r = await _get(app, "/?win=30")
+    assert r.status_code == 200
+    assert "<b>Audio API</b>" in r.text  # 有 label → 健康行显示 label
+    assert "<b>auth</b>" in r.text  # 无 label → 回退 name
+    store.close()
+
+
 async def test_overview_en_light_smoke(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))

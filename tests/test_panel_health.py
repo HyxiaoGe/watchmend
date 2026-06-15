@@ -164,6 +164,39 @@ def test_service_health_bars_empty_store(tmp_path, monkeypatch):
     store.close()
 
 
+def test_service_health_bars_label_with_name_fallback(tmp_path, monkeypatch):
+    from sentinel.panel.view import _service_health_bars
+
+    s = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.add_probe_samples(
+        [
+            ProbeSample(ts=NOW_TS - 50, service="audio", ok=True, status_code=200, latency_ms=10.0),
+            ProbeSample(ts=NOW_TS - 50, service="auth", ok=True, status_code=200, latency_ms=10.0),
+        ]
+    )
+    today_samples = store.get_probe_samples_since(MIDNIGHT_TS)
+    bars = _service_health_bars(
+        store,
+        s,
+        now_ts=NOW_TS,
+        tz=TZ,
+        window_days=2,
+        today_samples=today_samples,
+        service_labels={"audio": "Audio API"},
+    )
+    by = {b["service"]: b for b in bars}
+    assert by["audio"]["label"] == "Audio API"  # 有映射 → 用 label
+    assert by["auth"]["label"] == "auth"  # 无映射 → 回退 name
+    assert by["audio"]["service"] == "audio"  # service(DB key)不变
+    # 不传 service_labels → 全部回退 name(向后兼容)
+    bars2 = _service_health_bars(
+        store, s, now_ts=NOW_TS, tz=TZ, window_days=2, today_samples=today_samples
+    )
+    assert all(b["label"] == b["service"] for b in bars2)
+    store.close()
+
+
 def test_host_self_engine_liveness(monkeypatch):
     from sentinel.panel.view import _host_self
 
