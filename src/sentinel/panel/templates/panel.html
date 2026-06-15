@@ -2,23 +2,55 @@
 {% block body %}
 
 {% set probes = health|length %}
-<div class="banner {{ 'ok' if posture.open_count == 0 else 'bad' }}">
-  <span class="pulse"></span>
-  {% if posture.open_count == 0 %}
-  <span class="big">{{ t('banner.ok') }}</span>
-  {% else %}
-  <span class="big">{{ t('banner.issues', open=posture.open_count) }}</span>
+{% set hero_bad = posture.open_count > 0 %}
+<div class="hero">
+  <div class="hero-ring">
+    <svg viewBox="0 0 100 100" aria-hidden="true">
+      <circle cx="50" cy="50" r="42" fill="none" stroke="var(--st-nodata)" stroke-width="9" pathLength="100"/>
+      {% set ns = namespace(off=0) %}
+      {% for seg, pct in [('down', hero.ring.down), ('partial', hero.ring.partial), ('degraded', hero.ring.degraded), ('ok', hero.ring.ok)] %}
+        {% if pct and pct > 0 %}
+        <circle cx="50" cy="50" r="42" fill="none" stroke="var(--st-{{ seg }})" stroke-width="9"
+          pathLength="100" stroke-dasharray="{{ pct }} {{ 100 - pct }}"
+          stroke-dashoffset="{{ -ns.off }}" transform="rotate(-90 50 50)"/>
+        {% set ns.off = ns.off + pct %}
+        {% endif %}
+      {% endfor %}
+    </svg>
+    <div class="ring-center {{ 'bad' if hero_bad else '' }}">
+      <span class="num">{% if hero.uptime_pct is not none %}{{ hero.uptime_pct }}<span class="pct">%</span>{% else %}—{% endif %}</span>
+    </div>
+  </div>
+  <div class="hero-stats">
+    <div class="hstat">
+      <span class="num">{% if hero.uptime_pct is not none %}{{ hero.uptime_pct }}{% else %}—{% endif %}</span>
+      <span class="cap">{{ t('hero.uptime_label', days=window_days) }}</span>
+    </div>
+    <div class="hstat {{ 'bad' if hero_bad else '' }}">
+      {% if hero_bad %}
+      <span class="num">{{ posture.open_count }}</span>
+      <span class="cap">{{ t('hero.open', open=posture.open_count) }}</span>
+      {% elif hero.days_clean is not none %}
+      <span class="num">{{ hero.days_clean }}</span>
+      <span class="cap">{{ t('hero.days_clean', n=hero.days_clean) }}</span>
+      {% else %}
+      <span class="num">0</span>
+      <span class="cap">{{ t('hero.no_events') }}</span>
+      {% endif %}
+    </div>
+  </div>
+  {% if hero.trend.line_d %}
+  <div class="hero-trend">
+    <svg viewBox="0 0 300 64" preserveAspectRatio="none" aria-hidden="true">
+      {% if hero.trend.area_d %}<path d="{{ hero.trend.area_d }}" fill="var(--p50-fill)" stroke="none"/>{% endif %}
+      <path d="{{ hero.trend.line_d }}" fill="none" stroke="var(--link)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+    </svg>
+  </div>
   {% endif %}
-  <span class="metrics mono">
-    <span><b>{{ probes }}</b> {{ t('metric.probes') }}</span>
-    <span><b>{{ posture.open_count }}</b> {{ t('metric.open') }}</span>
-    <span><b>{{ posture.resolved_24h }}</b> {{ t('metric.recovered') }}</span>
-    <span>{{ t('metric.window', days=window_days) }}</span>
-  </span>
 </div>
 
 <div class="secrow">
-  <span class="sec">{{ t('sec.health') }}</span>
+  <span class="sec">{{ t('sec.services') }}</span>
   <div class="right">
     <span class="lg">
       <span><i style="background:var(--st-ok)"></i>{{ t('st.ok') }}</span>
@@ -36,6 +68,11 @@
   <div class="comp">
     <div class="comp-hd">
       <b>{{ svc.label }}</b>
+      {% if svc.mini_pts %}
+      <svg class="spark" viewBox="0 0 120 40" preserveAspectRatio="none" aria-hidden="true">
+        <path d="{{ svc.mini_pts }}" fill="none" stroke="var(--link)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+      </svg>
+      {% endif %}
       <span class="muted mono">{% if svc.uptime_pct is not none %}{{ svc.uptime_pct }}%{% else %}—{% endif %}</span>
     </div>
     <div class="upbar">

@@ -50,7 +50,7 @@ async def test_overview_renders(tmp_path, monkeypatch):
     assert resp.status_code == 200
     assert "证据台" in resp.text  # hdr.title
     assert "永不自动执行" in resp.text  # footer.readonly
-    assert "组件健康" in resp.text  # sec.health
+    assert "服务一览" in resp.text  # sec.services (renamed from sec.health in Task 7)
     assert "事件" in resp.text  # sec.events
     assert "Loki 巡检失败" in resp.text  # rule_label(scan_failed_loki, zh)
     store.close()
@@ -120,7 +120,7 @@ async def test_overview_en_light_smoke(tmp_path, monkeypatch):
     r = await _get(app, "/?lang=en&theme=light")
     assert r.status_code == 200
     assert 'data-theme="light"' in r.text and '<html lang="en"' in r.text
-    assert "Component Health" in r.text  # sec.health en
+    assert "Services" in r.text  # sec.services en (renamed from sec.health in Task 7)
     assert "Events" in r.text  # sec.events en
     assert "证据台" not in r.text  # 外壳标题区已全英文
     store.close()
@@ -660,7 +660,7 @@ async def test_default_window_is_30(tmp_path, monkeypatch):
     store = Store(str(tmp_path / "s.db"))  # 空库 → 仅 banner metric 渲染窗口
     app = _build_app(store, settings)
     r = await _get(app, "/")
-    assert "窗口 30d" in r.text  # metric.window 显示 30
+    assert "30 天可用率" in r.text  # hero.uptime_label shows window_days=30 (banner replaced by hero in Task 7)
     assert "窗口 90d" not in r.text
     store.close()
 
@@ -691,4 +691,38 @@ async def test_nav_tabs_render_with_overview_active(tmp_path, monkeypatch):
     # 总览高亮(tab-on),服务/事件/体检 Phase 1 置灰(tab-soon span,非链接)
     assert "tab-on" in resp.text
     assert "tab-soon" in resp.text
+    store.close()
+
+
+async def test_overview_renders_hero_and_service_sparkline(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=8))
+    today = datetime.now(tz).date()
+    now_ts = int(datetime.now(tz).timestamp())
+    # 两天历史 + 今日样本,保证 health 非空、趋势线有 ≥2 个非空点
+    store.upsert_probe_daily(
+        "api", (today - timedelta(days=2)).isoformat(), total=100, ok_count=100, p50=10.0, p95=20.0
+    )
+    store.upsert_probe_daily(
+        "api", (today - timedelta(days=1)).isoformat(), total=100, ok_count=98, p50=10.0, p95=22.0
+    )
+    store.add_probe_samples(
+        [ProbeSample(ts=now_ts - 30, service="api", ok=True, status_code=200, latency_ms=11.0)]
+    )
+
+    app = _build_app(store, settings)
+    resp = await _get(app, "/")
+    assert resp.status_code == 200
+    assert 'class="hero"' in resp.text  # 英雄区卡
+    assert "ring-center" in resp.text  # 状态环中心数字
+    assert "hero-trend" in resp.text  # 整体趋势线
+    assert 'class="spark"' in resp.text  # 服务行迷你趋势线
+    assert "服务一览" in resp.text  # sec.services
+    # HERO 下方既有区块未丢(Phase 1 保留)
+    assert "事件" in resp.text  # sec.events
     store.close()
