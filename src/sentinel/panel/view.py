@@ -164,14 +164,23 @@ async def _monitored_containers(docker, settings: Settings) -> int | None:
     return count
 
 
-def _hygiene_services(store: Store, *, now_ts: int) -> list[dict]:
+def _hygiene_services(
+    store: Store, *, now_ts: int, service_labels: dict[str, str] | None = None
+) -> list[dict]:
     """探针 24h uptime/p95(复用 report.aggregate_window;服务名从样本派生)。"""
     samples = store.get_probe_samples_since(now_ts - _DAY_SECONDS)
     names = sorted({s.service for s in samples})
     out: list[dict] = []
     for st in aggregate_window(samples, names):
         uptime = round(st.ok_count / st.total * 100, 1) if st.total else None
-        out.append({"service": st.service, "uptime_pct": uptime, "p95_ms": st.p95_ms})
+        out.append(
+            {
+                "service": st.service,
+                "label": (service_labels or {}).get(st.service, st.service),  # 显示名回退 name
+                "uptime_pct": uptime,
+                "p95_ms": st.p95_ms,
+            }
+        )
     return out
 
 
@@ -200,6 +209,7 @@ def _service_health_bars(
     tz: timezone,
     window_days: int,
     today_samples: list,
+    service_labels: dict[str, str] | None = None,
 ) -> list[dict]:
     """每服务一行 N 天逐日健康柱条。
     返回 [{service, uptime_pct, p95_ms, days:[{date, state, is_today, uptime_pct}]}]。
@@ -248,6 +258,7 @@ def _service_health_bars(
         bars.append(
             {
                 "service": svc,
+                "label": (service_labels or {}).get(svc, svc),  # 显示名;无映射回退 name
                 "uptime_pct": round(st.uptime_pct, 1) if (st and st.total) else None,
                 "p95_ms": st.p95_ms if st else None,
                 "days": days,
@@ -334,10 +345,12 @@ async def build_overview(
     diag_registered: bool | None = None,
     window_days: int = 90,
     page: int = 1,
+    service_labels: dict[str, str] | None = None,
 ) -> dict:
     """总览 view-model。docker 为可选注入的 DockerClient,缺省 None → 容器计数降级 None。
     llm_config 为可选注入的 LLMConfig,缺省 None → 回退 settings.llm_*。
-    diag_registered 为启动时诊断 job 是否注册(lifespan 注入),用于"已配置·待重启"判定。"""
+    diag_registered 为启动时诊断 job 是否注册(lifespan 注入),用于"已配置·待重启"判定。
+    service_labels 为 name→显示名映射(services.yaml 的 label),缺省 None → 面板回退 name。"""
     tz = (
         now.tzinfo
         if isinstance(now.tzinfo, timezone)
@@ -357,7 +370,13 @@ async def build_overview(
     )
     today_samples = store.get_probe_samples_since(midnight_ts)
     health = _service_health_bars(
-        store, settings, now_ts=now_ts, tz=tz, window_days=window_days, today_samples=today_samples
+        store,
+        settings,
+        now_ts=now_ts,
+        tz=tz,
+        window_days=window_days,
+        today_samples=today_samples,
+        service_labels=service_labels,
     )
     # 引擎活性看全表最新样本(不限今日):午夜后最新样本可能落在昨日,
     # 复用 today_samples 会把"刚探测过"误判成 unknown。
@@ -399,7 +418,7 @@ async def build_overview(
         ],
         "recoveries": [_event_view(e, tz, diag_active=diag_active) for e in recoveries],
         "hygiene": {
-            "services": _hygiene_services(store, now_ts=now_ts),
+            "services": _hygiene_services(store, now_ts=now_ts, service_labels=service_labels),
             "hygiene_alerts": [
                 _event_view(e, tz, diag_active=diag_active)
                 for e in open_events

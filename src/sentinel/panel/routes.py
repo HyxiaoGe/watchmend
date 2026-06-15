@@ -67,6 +67,7 @@ def register_panel_routes(app: FastAPI) -> None:
             diag_registered=getattr(state, "diag_job_registered", None),
             window_days=window_days,
             page=page,
+            service_labels=getattr(state, "service_labels", None),
         )
 
         t = i18n.make_translator(lang)

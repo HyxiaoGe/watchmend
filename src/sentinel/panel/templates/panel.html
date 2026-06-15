@@ -35,7 +35,7 @@
 {% for svc in shown %}
   <div class="comp">
     <div class="comp-hd">
-      <b>{{ svc.service }}</b>
+      <b>{{ svc.label }}</b>
       <span class="muted mono">{% if svc.uptime_pct is not none %}{{ svc.uptime_pct }}%{% else %}—{% endif %}</span>
     </div>
     <div class="upbar">
