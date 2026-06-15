@@ -1,4 +1,6 @@
 # tests/test_config.py
+import pytest
+
 from sentinel.config import Settings
 
 
@@ -195,3 +197,20 @@ def test_crashloop_overridable(monkeypatch):
     s = Settings(_env_file=None)
     assert s.sentinel_docker_crashloop_window == 1200
     assert s.sentinel_docker_crashloop_threshold == 5
+
+
+@pytest.mark.parametrize(
+    "var",
+    ["SENTINEL_DOCKER_CRASHLOOP_THRESHOLD", "SENTINEL_DOCKER_CRASHLOOP_WINDOW"],
+)
+@pytest.mark.parametrize("bad", ["0", "-1"])
+def test_crashloop_knobs_reject_nonpositive(monkeypatch, var, bad):
+    # 误配 <=0 会让 delta>=N 恒真 / 发"0 分钟"的噪声卡 → 启动即拒绝(Field ge=1),逼操作员改对
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv(var, bad)
+    from sentinel.config import Settings
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
