@@ -180,12 +180,18 @@ def detect_crashloops(
     每个本轮 active 容器维护基线 (subject, base_count, window_start_ts),按顺序短路:
       1. 无基线(首次观测)→ upsert (rc, now),不报
       2. rc < base_count(容器被重建)→ 重置 (rc, now),不报(对齐 prom resets=0 不报)
-      3. delta = rc - base_count >= N → 发 point 卡 + 重置 (rc, now)(开新窗)
-      4. now - window_start >= W(窗口到期但 delta<N)→ 重置 (rc, now),不报
+      3. delta = rc - base_count >= N 且 now - window_start <= W → 发 point 卡(基线不动)
+      4. now - window_start >= W(窗口到期)→ 重置 (rc, now),不报
       5. 否则(窗口内、delta<N)→ 不动基线,不报(继续累积)
-    达阈即报(低延迟,不必等窗口结束);窗口只承担"不够快就清零"。冷却与基线解耦:
-    delta>=N 时总是发 Finding 并重置基线,事件是否真落库由 apply_findings 的 cooldown 决定。
-    末尾剪枝 window_start_ts < now - _BASELINE_TTL 的行。纯读 restart_counts,只写基线表。
+    达阈即报(低延迟,不必等窗口结束);窗口只承担"不够快就清零"。
+    新鲜度门(步骤 3 的 `now - window_start <= W`):只有 N 次重启确实落在 W 内才报——
+    跨观测空档(容器一时缺位/inspect 抖动/docker 扫描失败)使 window_start 变陈时,
+    步骤 4 重置而非误报一张"W 分钟内"实则跨数小时的假卡。§4.1 边界(恰好 ==W)仍触发。
+    与基线解耦:发卡不改基线(镜像无状态兄弟规则 container_oom / prom container_restart——
+    每 tick 由实时状态重新推导,去重交 apply_findings 的 cooldown)。这样广播全渠道失败时,
+    下一 tick 重新推导同一 finding 自动重试(send-then-commit),不会静默吞掉这次 burst。
+    末尾剪枝 window_start_ts < now - max(_BASELINE_TTL, W) 的行(钳到窗口,W>TTL 时也不会
+    误删仍在累积的基线)。纯读 restart_counts,只写基线表。
     """
     n = settings.sentinel_docker_crashloop_threshold
     w = settings.sentinel_docker_crashloop_window
@@ -200,7 +206,7 @@ def detect_crashloops(
             store.upsert_restart_baseline(name, rc, now_ts)
             continue
         delta = rc - base_count
-        if delta >= n:  # 触发优先于窗口到期(§4.1)
+        if delta >= n and now_ts - window_start <= w:  # 达阈且在窗口内才报(§4.1 边界仍触发)
             findings.append(
                 Finding(
                     rule="container_crashloop",
@@ -217,11 +223,10 @@ def detect_crashloops(
                     point=True,
                 )
             )
-            store.upsert_restart_baseline(name, rc, now_ts)
-            continue
-        if now_ts - window_start >= w:  # 窗口到期、攒得不够快 → 清零
+            continue  # 不重置基线:去重靠 cooldown,失败可下一 tick 重试(见 docstring)
+        if now_ts - window_start >= w:  # 窗口到期(含达阈但窗口已陈)→ 清零
             store.upsert_restart_baseline(name, rc, now_ts)
             continue
         # 窗口内、delta<N:继续累积,基线不动
-    store.prune_restart_baselines(now_ts - _BASELINE_TTL)
+    store.prune_restart_baselines(now_ts - max(_BASELINE_TTL, w))
     return findings
