@@ -678,3 +678,17 @@ async def test_overview_today_nodata_tooltip(tmp_path, monkeypatch):
     r = await _get(app, "/")
     assert "暂无样本" in r.text  # tip.today_nodata zh,今日无数据专属提示
     store.close()
+
+
+async def test_nav_tabs_render_with_overview_active(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/")
+    assert resp.status_code == 200
+    assert 'class="tabs"' in resp.text  # 四标签导航壳已渲染
+    assert "总览" in resp.text and "体检" in resp.text  # tab 文案
+    # 总览高亮(tab-on),服务/事件/体检 Phase 1 置灰(tab-soon span,非链接)
+    assert "tab-on" in resp.text
+    assert "tab-soon" in resp.text
+    store.close()

@@ -103,6 +103,7 @@ def register_panel_routes(app: FastAPI) -> None:
             history_days=settings.sentinel_panel_history_days,
             services_cap=settings.sentinel_panel_services_cap,
             diag_lang=settings.sentinel_llm_lang,
+            active_tab="overview",
         )
         resp = HTMLResponse(html)
         # 仅对出现在 querystring 的偏好写 cookie(cookie 跨页兜底,querystring 当次生效)
