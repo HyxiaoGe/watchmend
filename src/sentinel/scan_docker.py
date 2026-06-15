@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from sentinel.config import Settings
 from sentinel.docker_client import DockerClient, parse_docker_time
 from sentinel.findings import Finding
+
+if TYPE_CHECKING:
+    from sentinel.store import Store
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +30,12 @@ async def run_docker_scan(
     *,
     now_ts: int,
     emit_oom: bool,
-) -> tuple[list[Finding], set[str]]:
+) -> tuple[list[Finding], set[str], dict[str, int]]:
     """Docker 容器规则:container_down / container_unhealthy / container_oom。
 
-    返回 (findings, active_subjects):active_subjects 是"本轮真正评估过"的容器名集合,
-    供 tick 层判断 open 事件是否该 hold(容器消失 ≠ 恢复)。
+    返回 (findings, active_subjects, restart_counts):active_subjects 是"本轮真正评估
+    过"的容器名集合,供 tick 层判断 open 事件是否该 hold(容器消失 ≠ 恢复);restart_counts
+    是受巡检+active 容器的 RestartCount(crash-loop 检测输入,纯读)。
 
     docker.ps() 失败直接向上抛(数据源故障,由 docker_tick 当连续失败处理);
     单容器 inspect_safe() 失败仅记日志并跳过该容器(竞态容忍:扫描期间被删很常见,
@@ -43,6 +48,7 @@ async def run_docker_scan(
     """
     findings: list[Finding] = []
     active_subjects: set[str] = set()
+    restart_counts: dict[str, int] = {}  # 受巡检+active 容器的 RestartCount(crash-loop 输入)
     exclude = settings.docker_exclude_list
     inspect_candidates = 0  # 通过自身/代理/排除过滤、本该 inspect 的容器数
     inspect_ok = 0  # 其中 inspect 成功的数;全失败(候选>=2)= 系统性故障,见函数尾
@@ -79,6 +85,9 @@ async def run_docker_scan(
             continue  # 正在删除:视作即将消失,既不评估也不入 active(否则会被误判"消失=恢复")
 
         active_subjects.add(name)
+        rc = info.get("RestartCount")
+        if rc is not None:
+            restart_counts[name] = rc
 
         restart_policy = info.get("RestartPolicy")
         status = state.get("Status")
@@ -152,4 +161,72 @@ async def run_docker_scan(
             f"all {inspect_candidates} container inspects failed; treating as docker scan failure"
         )
 
-    return findings, active_subjects
+    return findings, active_subjects, restart_counts
+
+
+# 基线行过期剪枝阈值(秒):消失/长期不更新的容器基线自然清理,表不膨胀。无 knob(YAGNI)。
+_BASELINE_TTL = 86400
+
+
+def detect_crashloops(
+    store: Store,
+    settings: Settings,
+    restart_counts: dict[str, int],
+    *,
+    now_ts: int,
+) -> list[Finding]:
+    """RestartCount 跨 tick 滚动(tumbling)窗口 crash-loop 检测。见设计稿 §4。
+
+    每个本轮 active 容器维护基线 (subject, base_count, window_start_ts),按顺序短路:
+      1. 无基线(首次观测)→ upsert (rc, now),不报
+      2. rc < base_count(容器被重建)→ 重置 (rc, now),不报(对齐 prom resets=0 不报)
+      3. delta = rc - base_count >= N 且 now - window_start <= W → 发 point 卡(基线不动)
+      4. now - window_start >= W(窗口到期)→ 重置 (rc, now),不报
+      5. 否则(窗口内、delta<N)→ 不动基线,不报(继续累积)
+    达阈即报(低延迟,不必等窗口结束);窗口只承担"不够快就清零"。
+    新鲜度门(步骤 3 的 `now - window_start <= W`):只有 N 次重启确实落在 W 内才报——
+    跨观测空档(容器一时缺位/inspect 抖动/docker 扫描失败)使 window_start 变陈时,
+    步骤 4 重置而非误报一张"W 分钟内"实则跨数小时的假卡。§4.1 边界(恰好 ==W)仍触发。
+    与基线解耦:发卡不改基线(镜像无状态兄弟规则 container_oom / prom container_restart——
+    每 tick 由实时状态重新推导,去重交 apply_findings 的 cooldown)。这样广播全渠道失败时,
+    下一 tick 重新推导同一 finding 自动重试(send-then-commit),不会静默吞掉这次 burst。
+    末尾剪枝 window_start_ts < now - max(_BASELINE_TTL, W) 的行(钳到窗口,W>TTL 时也不会
+    误删仍在累积的基线)。纯读 restart_counts,只写基线表。
+    """
+    n = settings.sentinel_docker_crashloop_threshold
+    w = settings.sentinel_docker_crashloop_window
+    findings: list[Finding] = []
+    for name, rc in restart_counts.items():
+        baseline = store.get_restart_baseline(name)
+        if baseline is None:
+            store.upsert_restart_baseline(name, rc, now_ts)
+            continue
+        base_count, window_start = baseline
+        if rc < base_count:  # 重建:必须先于 delta>=N 判定,否则负 delta 误入其它分支
+            store.upsert_restart_baseline(name, rc, now_ts)
+            continue
+        delta = rc - base_count
+        if delta >= n and now_ts - window_start <= w:  # 达阈且在窗口内才报(§4.1 边界仍触发)
+            findings.append(
+                Finding(
+                    rule="container_crashloop",
+                    subject=name,
+                    severity="warning",
+                    detail=f"容器 {name} {w // 60} 分钟内重启 {delta} 次(阈值 {n})",
+                    payload={
+                        "restart_count": rc,
+                        "delta": delta,
+                        "window_s": w,
+                        "baseline_count": base_count,
+                    },
+                    needs_diagnosis=True,
+                    point=True,
+                )
+            )
+            continue  # 不重置基线:去重靠 cooldown,失败可下一 tick 重试(见 docstring)
+        if now_ts - window_start >= w:  # 窗口到期(含达阈但窗口已陈)→ 清零
+            store.upsert_restart_baseline(name, rc, now_ts)
+            continue
+        # 窗口内、delta<N:继续累积,基线不动
+    store.prune_restart_baselines(now_ts - max(_BASELINE_TTL, w))
+    return findings

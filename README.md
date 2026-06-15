@@ -60,7 +60,7 @@ make up                                   # 或 docker compose up -d --build
 | `SENTINEL_CERT_DOMAINS` | 公网证书临期检查 | 跳过该检查 |
 | 备份目录挂载 | pg_dump 备份新鲜度检查 | 跳过该检查 |
 | `LLM_BASE_URL` + `LLM_MODEL` | 事件根因诊断 + 日报 AI 总结 | LLM 层关闭 |
-| `SENTINEL_DOCKER_HOST` | 容器停止/不健康/OOM 检测 + docker 诊断工具 | docker 层关闭 † |
+| `SENTINEL_DOCKER_HOST` | 容器停止/不健康/OOM/崩溃重启检测 + docker 诊断工具 | docker 层关闭 † |
 
 > † 与其它层相反:docker 层**默认开启**——`docker-compose.yml` 预置了只读
 > `docker-socket-proxy` 边车(`CONTAINERS=1`、POST 默认拒、专用 `internal` 网),

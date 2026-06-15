@@ -14,11 +14,19 @@ def test_docker_rules_have_display_names():
 
 
 def test_docker_rules_membership():
-    assert DOCKER_RULES == frozenset({"container_down", "container_unhealthy", "container_oom"})
+    assert DOCKER_RULES == frozenset(
+        {
+            "container_down",
+            "container_unhealthy",
+            "container_oom",
+            "container_crashloop",
+        }
+    )
 
 
 def test_docker_open_rules_subset_excludes_oom():
-    # open rules drive recovery; oom is a point event so it must NOT be here
+    # open rules drive recovery; oom/crashloop are point events so they must NOT be here
     assert DOCKER_OPEN_RULES <= DOCKER_RULES
     assert "container_oom" not in DOCKER_OPEN_RULES
+    assert "container_crashloop" not in DOCKER_OPEN_RULES
     assert DOCKER_OPEN_RULES == frozenset({"container_down", "container_unhealthy"})

@@ -708,7 +708,7 @@ async def test_docker_tick_holds_then_recovers(tmp_path, monkeypatch):
 
     # 第 1 轮:扫描无 finding,但 active 不含 web(web 消失/被过滤)→ hold,不发恢复卡
     async def scan_held(docker, settings, *, now_ts, emit_oom):
-        return [], {"db", "cache"}
+        return [], {"db", "cache"}, {}
 
     monkeypatch.setattr(app_mod, "run_docker_scan", scan_held)
     with respx.mock:
@@ -721,7 +721,7 @@ async def test_docker_tick_holds_then_recovers(tmp_path, monkeypatch):
 
     # 第 2 轮:active 含 web 且无 finding(容器恢复 running)→ 发恢复卡 + resolved
     async def scan_recovered(docker, settings, *, now_ts, emit_oom):
-        return [], {"web", "db"}
+        return [], {"web", "db"}, {}
 
     monkeypatch.setattr(app_mod, "run_docker_scan", scan_recovered)
     with respx.mock:
@@ -822,7 +822,7 @@ async def test_docker_tick_emit_oom_follows_prom_disabled(tmp_path, monkeypatch)
 
     async def scan_capture(docker, settings, *, now_ts, emit_oom):
         seen["emit_oom"] = emit_oom
-        return [], set()
+        return [], set(), {}
 
     monkeypatch.setattr(app_mod, "run_docker_scan", scan_capture)
     with respx.mock:
@@ -867,7 +867,7 @@ async def test_docker_tick_emit_oom_failopen_when_metrics_unhealthy(tmp_path, mo
 
     async def scan_capture(docker, settings, *, now_ts, emit_oom):
         seen["emit_oom"] = emit_oom
-        return [], set()
+        return [], set(), {}
 
     monkeypatch.setattr(app_mod, "run_docker_scan", scan_capture)
     with respx.mock:
@@ -1355,4 +1355,127 @@ async def test_post_diagnosis_explicit_empty_tools_clears(tmp_path, monkeypatch)
         )
     assert resp.status_code == 200
     assert store.get_event(eid).diagnosis_tools_json is None
+    store.close()
+
+
+async def test_docker_tick_crashloop_gated_when_metrics_healthy(tmp_path, monkeypatch):
+    # prom 在 + metrics 健康 → emit_crashloop False → detect_crashloops 不跑 → 不建基线
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("SENTINEL_DOCKER_HOST", "tcp://docker-proxy:2375")
+
+    import sentinel.app as app_mod
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    jobs = {
+        n: t
+        for n, _, t in app_mod.build_jobs(
+            Settings(_env_file=None), client, store, docker=_FakeDocker()
+        )
+    }
+
+    async def scan_one(docker, settings, *, now_ts, emit_oom):
+        return [], set(), {"x": 7}
+
+    monkeypatch.setattr(app_mod, "run_docker_scan", scan_one)
+    with respx.mock:
+        respx.post("https://open.feishu.cn/hook/T").mock(
+            return_value=httpx.Response(200, json={"code": 0})
+        )
+        await jobs["docker_scan"]()
+    assert store.get_restart_baseline("x") is None  # gated off → no baseline written
+    await client.aclose()
+    store.close()
+
+
+async def test_docker_tick_crashloop_runs_when_metrics_unhealthy(tmp_path, monkeypatch):
+    # prom 在但 metrics 巡检失败 → emit_crashloop True → detect_crashloops 接管 → 建基线
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prometheus:9090")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("SENTINEL_DOCKER_HOST", "tcp://docker-proxy:2375")
+
+    import sentinel.app as app_mod
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    jobs = {
+        n: t
+        for n, _, t in app_mod.build_jobs(
+            Settings(_env_file=None), client, store, docker=_FakeDocker()
+        )
+    }
+
+    async def metrics_boom(prom, settings):
+        raise RuntimeError("prometheus unreachable")
+
+    async def scan_one(docker, settings, *, now_ts, emit_oom):
+        return [], set(), {"x": 7}
+
+    monkeypatch.setattr(app_mod, "run_metrics_scan", metrics_boom)
+    monkeypatch.setattr(app_mod, "run_docker_scan", scan_one)
+    with respx.mock:
+        respx.post("https://open.feishu.cn/hook/T").mock(
+            return_value=httpx.Response(200, json={"code": 0})
+        )
+        await jobs["metrics_scan"]()  # scan_fails["metrics"] = 1
+        await jobs["docker_scan"]()
+    baseline = store.get_restart_baseline("x")
+    assert baseline is not None and baseline[0] == 7  # gated on → baseline seeded
+    await client.aclose()
+    store.close()
+
+
+async def test_docker_tick_crashloop_fires_event_over_two_ticks(tmp_path, monkeypatch):
+    # prom 缺席 → emit_crashloop True 恒成立。tick1 建基线(rc=1),tick2 rc=5(delta=4>=3)
+    # → 落一条 container_crashloop 事件(point,resolved)。
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("SENTINEL_DOCKER_HOST", "tcp://docker-proxy:2375")
+
+    import sentinel.app as app_mod
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    jobs = {
+        n: t
+        for n, _, t in app_mod.build_jobs(
+            Settings(_env_file=None), client, store, docker=_FakeDocker()
+        )
+    }
+
+    seq = iter([{"x": 1}, {"x": 5}])
+
+    async def scan_seq(docker, settings, *, now_ts, emit_oom):
+        return [], set(), next(seq)
+
+    monkeypatch.setattr(app_mod, "run_docker_scan", scan_seq)
+    with respx.mock:
+        respx.post("https://open.feishu.cn/hook/T").mock(
+            return_value=httpx.Response(200, json={"code": 0})
+        )
+        await jobs["docker_scan"]()  # tick1: seed baseline (1, now)
+        await jobs["docker_scan"]()  # tick2: delta 4 >= 3 → fire
+    events = [
+        (e.rule, e.status, e.diagnosis_status)
+        for e in store.get_events_since(0)
+        if e.rule == "container_crashloop"
+    ]
+    assert events == [("container_crashloop", "resolved", "pending")]
+    await client.aclose()
     store.close()
