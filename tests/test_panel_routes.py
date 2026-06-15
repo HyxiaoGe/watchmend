@@ -694,6 +694,49 @@ async def test_nav_tabs_render_with_overview_active(tmp_path, monkeypatch):
     store.close()
 
 
+async def test_badge_operational_when_no_open(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/badge.svg")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("image/svg+xml")
+    assert "operational" in resp.text
+    assert "WatchMend" in resp.text
+    store.close()
+
+
+async def test_badge_incidents_when_open(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.insert_event(
+        ts=1700000000,
+        rule="service_down",
+        subject="api",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    resp = await _get(app, "/badge.svg")
+    assert resp.status_code == 200
+    assert "1 incident" in resp.text
+    store.close()
+
+
+async def test_badge_not_registered_when_panel_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("SENTINEL_PANEL_ENABLED", "false")
+    settings = _settings(monkeypatch)  # _settings 之后只加 FEISHU_VENDOR_WEBHOOK,不覆盖 PANEL_ENABLED
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)  # register_panel_routes 自读 Settings() → 见 disabled
+    resp = await _get(app, "/badge.svg")
+    assert resp.status_code == 404
+    store.close()
+
+
 async def test_overview_renders_hero_and_service_sparkline(tmp_path, monkeypatch):
     from datetime import datetime, timedelta, timezone
 
