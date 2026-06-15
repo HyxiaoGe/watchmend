@@ -668,3 +668,42 @@ def test_overall_trend_series_empty_health():
     from sentinel.panel.view import _overall_trend_series
 
     assert _overall_trend_series([]) == []
+
+
+async def test_build_overview_exposes_hero_and_mini(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    # 今日样本:api 全 ok(4/4),db 半数失败(1/2)
+    store.add_probe_samples(
+        [
+            ProbeSample(ts=NOW_TS - 400, service="api", ok=True, status_code=200, latency_ms=10.0),
+            ProbeSample(ts=NOW_TS - 300, service="api", ok=True, status_code=200, latency_ms=10.0),
+            ProbeSample(ts=NOW_TS - 200, service="api", ok=True, status_code=200, latency_ms=10.0),
+            ProbeSample(ts=NOW_TS - 100, service="api", ok=True, status_code=200, latency_ms=10.0),
+            ProbeSample(ts=NOW_TS - 80, service="db", ok=True, status_code=200, latency_ms=10.0),
+            ProbeSample(ts=NOW_TS - 40, service="db", ok=False, status_code=500, latency_ms=None),
+        ]
+    )
+    # 全表最新事件 = 2 天前(已恢复,open_count==0)→ days_clean=2
+    rid = store.insert_event(
+        ts=NOW_TS - 2 * 86400,
+        rule="service_down",
+        subject="db",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    store.resolve_event(rid, resolved_ts=NOW_TS - 2 * 86400 + 600)
+    overview = await view.build_overview(store, settings, now=NOW)
+
+    hero = overview["hero"]
+    assert hero["uptime_pct"] == view.overall_uptime_pct(overview["health"])
+    assert set(hero["ring"]) == {"ok", "degraded", "partial", "down"}
+    assert hero["days_clean"] == 2
+    assert set(hero["trend"]) == {"line_d", "area_d"}
+    # 每个 health 行都带 mini_pts 字符串
+    assert all(isinstance(r["mini_pts"], str) for r in overview["health"])
+    store.close()

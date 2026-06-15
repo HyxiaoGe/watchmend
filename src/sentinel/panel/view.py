@@ -467,6 +467,19 @@ async def build_overview(
         today_samples=today_samples,
         service_labels=service_labels,
     )
+    # 英雄区数据(纯函数派生,零新取数):每服务迷你趋势线 + 整体指标。
+    for row in health:
+        row["mini_pts"] = _svg_line(
+            [d["uptime_pct"] for d in row["days"]], w=120.0, h=40.0
+        )["line_d"]
+    latest_events = store.get_events_since(0, limit=1)  # 全表最新一条,事件稀疏 → 廉价
+    latest_event_ts = latest_events[0].ts if latest_events else None
+    hero = {
+        "uptime_pct": overall_uptime_pct(health),
+        "ring": overall_ring(health),
+        "days_clean": _days_clean(latest_event_ts, now_ts),
+        "trend": _svg_line(_overall_trend_series(health), w=300.0, h=64.0),
+    }
     # 引擎活性看全表最新样本(不限今日):午夜后最新样本可能落在昨日,
     # 复用 today_samples 会把"刚探测过"误判成 unknown。
     latest_probe_ts = store.get_latest_probe_ts()
@@ -516,6 +529,7 @@ async def build_overview(
         },
         "window_days": window_days,
         "health": health,
+        "hero": hero,
         "host_self": host_self,
         "events": events,
     }
