@@ -20,6 +20,7 @@ class ProbeTarget:
     host: str | None = None  # 经 nginx-proxy 时的 Host 头;直连为 None
     expect_status: int = 200
     timeout: float = 5.0
+    label: str | None = None  # 可选显示名;None=面板回退 name。纯展示,不参与 DB key/聚合
 
 
 def load_targets(path: str) -> list[ProbeTarget]:
@@ -40,7 +41,12 @@ def load_targets(path: str) -> list[ProbeTarget]:
             url, host = f"{base}{item['path']}", item["host"]
         targets.append(
             ProbeTarget(
-                name=item["name"], url=url, host=host, expect_status=expect, timeout=timeout
+                name=item["name"],
+                url=url,
+                host=host,
+                expect_status=expect,
+                timeout=timeout,
+                label=(item.get("label") or None),  # 空串/缺省归一为 None
             )
         )
     return targets
