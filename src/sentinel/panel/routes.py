@@ -20,7 +20,9 @@ from sentinel.panel import i18n, prefs, view
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _env = Environment(
     loader=FileSystemLoader(str(_TEMPLATES_DIR)),
-    autoescape=select_autoescape(["html"]),  # 所有动态值 HTML 转义,原始日志作纯文本
+    # 动态值 HTML 转义,原始日志作纯文本;徽标 .svg 模板亦纳入(纵深防御:未来若把
+    # 服务名/事件 subject 接进徽标也不会破坏 SVG 结构)
+    autoescape=select_autoescape(["html", "svg"]),
 )
 
 _TRUTHY = ("1", "true", "yes", "on")
@@ -176,7 +178,7 @@ def register_panel_routes(app: FastAPI) -> None:
         left_w = 72
         right_w = int(len(status_text) * 6.5 + 20)
         total_w = left_w + right_w
-        svg = _env.get_template("badge.svg.j2").render(
+        svg = _env.get_template("badge.svg").render(
             status_text=status_text,
             color=color,
             left_w=left_w,

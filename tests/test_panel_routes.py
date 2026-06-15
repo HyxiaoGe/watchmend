@@ -657,11 +657,11 @@ async def test_diag_lang_hint_shown_when_ui_lang_differs(tmp_path, monkeypatch):
 async def test_default_window_is_30(tmp_path, monkeypatch):
     # 首屏无 query/cookie 时默认窗口降噪为 30d，而非历史上限 90d（issue #11 claim 1）。
     settings = _settings(monkeypatch)
-    store = Store(str(tmp_path / "s.db"))  # 空库 → 仅 banner metric 渲染窗口
+    store = Store(str(tmp_path / "s.db"))  # 空库 → hero 仍渲染默认窗口标签
     app = _build_app(store, settings)
     r = await _get(app, "/")
-    assert "30 天可用率" in r.text  # hero.uptime_label 内嵌 window_days=30(banner 已换成 hero)
-    assert "窗口 90d" not in r.text
+    assert "30 天可用率" in r.text  # hero.uptime_label 内嵌 window_days=30
+    assert "90 天可用率" not in r.text  # 未回落到历史上限 90(hero 同模板,90 时会渲此文案)
     store.close()
 
 
@@ -735,6 +735,25 @@ async def test_badge_not_registered_when_panel_disabled(tmp_path, monkeypatch):
     resp = await _get(app, "/badge.svg")
     assert resp.status_code == 404
     store.close()
+
+
+def test_badge_template_autoescapes_hostile_value():
+    # 纵深防御:徽标 .svg 模板已纳入 autoescape——即便未来把不可信值(服务名/事件 subject)
+    # 接进徽标,注入标签也会被转义而非破坏 SVG 结构。当前 handler 只喂服务端可控值,无活漏洞;
+    # 本测试钉住 select_autoescape(["html","svg"]) 配置不被回退。
+    from sentinel.panel.routes import _env
+
+    out = _env.get_template("badge.svg").render(
+        status_text='"/><script>alert(1)</script>',
+        color="#3fb950",
+        left_w=72,
+        right_w=80,
+        total_w=152,
+        left_x=36.0,
+        right_x=112.0,
+    )
+    assert "<script>" not in out
+    assert "&lt;script&gt;" in out
 
 
 async def test_overview_renders_hero_and_service_sparkline(tmp_path, monkeypatch):

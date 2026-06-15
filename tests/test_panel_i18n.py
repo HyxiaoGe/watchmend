@@ -61,12 +61,6 @@ def test_messages_zh_en_parity():
 
 def test_new_template_keys_present():
     needed = {
-        "banner.issues",
-        "banner.ok",
-        "metric.probes",
-        "metric.open",
-        "metric.recovered",
-        "metric.window",
         "ev.diag_lang",
         "llm.pending_restart",
         "win.label",
@@ -95,8 +89,6 @@ def test_new_template_keys_present():
     t = i18n.make_translator("en")
     assert t("win.label", days=30) == "30d"
     assert t("comp.expand", n=5) == "Show 5 more"
-    assert "7" in t("banner.issues", open=7, probes=16)
-    assert t("metric.window", days=30) == "window 30d"
     assert "back-translated" in t("ev.diag_lang", lang="zh")
 
 
