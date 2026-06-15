@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     sentinel_docker_socket: str = ""  # DEPRECATED:保留向后兼容,新部署改用 sentinel_docker_host
     sentinel_docker_host: str = ""  # "unix:///var/run/docker.sock" | "tcp://docker-proxy:2375"
     sentinel_docker_scan_interval: int = 60  # docker_scan 周期(秒)
+    # crash-loop 检测(docker-only 盲区补充,见设计稿 §4):W 内重启 >=N 次发 point 卡。
+    # prom+cadvisor 在跑时由 container_restart 覆盖,docker 层此规则被 emit_crashloop 门禁关掉。
+    sentinel_docker_crashloop_window: int = 600  # 滚动窗口(秒,10 个 tick @ 60s)
+    sentinel_docker_crashloop_threshold: int = 3  # 窗口内重启 >=3 次判 loop
     sentinel_docker_exclude: str = ""  # 排除的容器名 CSV
 
     # 通知渠道(子项目②):全部默认空=不启用。飞书之外,海外自托管可只配任一渠道。

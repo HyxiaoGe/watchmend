@@ -175,3 +175,23 @@ def test_llm_config_file_default(monkeypatch):
     from sentinel.config import Settings
 
     assert Settings(_env_file=None).sentinel_llm_config_file == "llm.yaml"
+
+
+def test_crashloop_defaults(monkeypatch):
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    from sentinel.config import Settings
+
+    s = Settings(_env_file=None)
+    assert s.sentinel_docker_crashloop_window == 600
+    assert s.sentinel_docker_crashloop_threshold == 3
+
+
+def test_crashloop_overridable(monkeypatch):
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DOCKER_CRASHLOOP_WINDOW", "1200")
+    monkeypatch.setenv("SENTINEL_DOCKER_CRASHLOOP_THRESHOLD", "5")
+    from sentinel.config import Settings
+
+    s = Settings(_env_file=None)
+    assert s.sentinel_docker_crashloop_window == 1200
+    assert s.sentinel_docker_crashloop_threshold == 5
