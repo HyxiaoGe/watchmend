@@ -127,6 +127,6 @@ def test_phase1_format_keys_accept_params():
     from sentinel.panel.i18n import make_translator
 
     t = make_translator("zh")
-    assert "30" in t("hero.uptime_label", days=30)
+    assert t("hero.uptime_label") == "今日可用率"  # 今日口径,无窗口占位
     assert "5" in t("hero.days_clean", n=5)
     assert "2" in t("hero.open", open=2)

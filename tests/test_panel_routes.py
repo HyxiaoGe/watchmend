@@ -656,12 +656,51 @@ async def test_diag_lang_hint_shown_when_ui_lang_differs(tmp_path, monkeypatch):
 
 async def test_default_window_is_30(tmp_path, monkeypatch):
     # 首屏无 query/cookie 时默认窗口降噪为 30d，而非历史上限 90d（issue #11 claim 1）。
+    from datetime import datetime, timedelta, timezone
+
     settings = _settings(monkeypatch)
-    store = Store(str(tmp_path / "s.db"))  # 空库 → hero 仍渲染默认窗口标签
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    yest = (datetime.now(tz).date() - timedelta(days=1)).isoformat()
+    # 出一个服务才会渲染逐日柱条的窗口轴
+    store.upsert_probe_daily("api", yest, total=10, ok_count=10, p50=1.0, p95=2.0)
     app = _build_app(store, settings)
     r = await _get(app, "/")
-    assert "30 天可用率" in r.text  # hero.uptime_label 内嵌 window_days=30
-    assert "90 天可用率" not in r.text  # 未回落到历史上限 90(hero 同模板,90 时会渲此文案)
+    assert "30 天前" in r.text  # 逐日柱条窗口轴 axis.window(days=30)
+    assert "90 天前" not in r.text  # 未回落到历史上限 90
+    store.close()
+
+
+async def test_hero_label_is_today_not_window(tmp_path, monkeypatch):
+    # 回归 Codex P2:hero 大号与值同口径=今日(标签"今日可用率",不冒充"30 天可用率")。
+    # 历史 29 天 100% + 今天单失败样本时,标签仍是今日;窗口历史由趋势线/逐日柱条承载。
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    today = datetime.now(tz).date()
+    for i in range(1, 30):
+        store.upsert_probe_daily(
+            "api",
+            (today - timedelta(days=i)).isoformat(),
+            total=100,
+            ok_count=100,
+            p50=10.0,
+            p95=20.0,
+        )
+    now_ts = int(datetime.now(tz).timestamp())
+    store.add_probe_samples(
+        [ProbeSample(ts=now_ts - 60, service="api", ok=False, status_code=500, latency_ms=None)]
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/?win=30")
+    assert r.status_code == 200
+    assert "今日可用率" in r.text  # 标签=今日口径
+    assert "30 天可用率" not in r.text  # 不再冒充窗口可用率
+    assert "30 天前" in r.text  # 窗口故事仍在(逐日柱条窗口轴)
     store.close()
 
 

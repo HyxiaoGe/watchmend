@@ -24,7 +24,7 @@
   <div class="hero-stats">
     <div class="hstat">
       <span class="num">{% if hero.uptime_pct is not none %}{{ hero.uptime_pct }}{% else %}—{% endif %}</span>
-      <span class="cap">{{ t('hero.uptime_label', days=window_days) }}</span>
+      <span class="cap">{{ t('hero.uptime_label') }}</span>
     </div>
     <div class="hstat {{ 'bad' if hero_bad else '' }}">
       {% if hero_bad %}

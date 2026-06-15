@@ -64,7 +64,10 @@ def _svg_line(values: list[float | None], *, w: float, h: float, pad_frac: float
 
 def overall_uptime_pct(health: list[dict]) -> float | None:
     """各服务今日 uptime 等权均值,排除 nodata(uptime_pct is None)。
-    全 nodata / 空 → None。英雄区中心大数字。"""
+    全 nodata / 空 → None。英雄区中心大号数字(标签 "今日可用率")。
+    刻意取今日而非窗口:大号数字渲染在状态环正中,而环(overall_ring)反映今日态,
+    二者须同口径才不自相矛盾(否则"历史好、今天坏"时会出现绿数字嵌在红环里);
+    窗口历史由下方趋势线与逐日柱条承载。"""
     vals = [r["uptime_pct"] for r in health if r.get("uptime_pct") is not None]
     if not vals:
         return None
