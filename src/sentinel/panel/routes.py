@@ -185,6 +185,4 @@ def register_panel_routes(app: FastAPI) -> None:
             left_x=round(left_w / 2, 1),
             right_x=round(left_w + right_w / 2, 1),
         )
-        return Response(
-            svg, media_type="image/svg+xml", headers={"Cache-Control": "max-age=60"}
-        )
+        return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "max-age=60"})

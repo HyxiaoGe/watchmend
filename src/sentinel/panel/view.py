@@ -22,9 +22,7 @@ _SELF_IMAGE_SUBSTR = "watchmend"
 _SOCKET_PROXY_IMAGE = "tecnativa/docker-socket-proxy"
 
 
-def _svg_line(
-    values: list[float | None], *, w: float, h: float, pad_frac: float = 0.08
-) -> dict:
+def _svg_line(values: list[float | None], *, w: float, h: float, pad_frac: float = 0.08) -> dict:
     """把一条可能含 None 缺口的序列归一成 SVG 路径(零 JS 可视化基元)。
     返回 {"line_d", "area_d"}:line_d 在 None 处用 M 断开折线;
     area_d 仅当序列无缺口时自底边闭合填充,否则为空串。
@@ -469,9 +467,9 @@ async def build_overview(
     )
     # 英雄区数据(纯函数派生,零新取数):每服务迷你趋势线 + 整体指标。
     for row in health:
-        row["mini_pts"] = _svg_line(
-            [d["uptime_pct"] for d in row["days"]], w=120.0, h=40.0
-        )["line_d"]
+        row["mini_pts"] = _svg_line([d["uptime_pct"] for d in row["days"]], w=120.0, h=40.0)[
+            "line_d"
+        ]
     latest_events = store.get_events_since(0, limit=1)  # 全表最新一条,事件稀疏 → 廉价
     latest_event_ts = latest_events[0].ts if latest_events else None
     hero = {

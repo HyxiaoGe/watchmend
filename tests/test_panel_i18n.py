@@ -116,8 +116,14 @@ def test_phase1_panel_keys_present_both_langs():
     from sentinel.panel.i18n import MESSAGES
 
     keys = [
-        "tab.overview", "tab.services", "tab.events", "tab.hygiene",
-        "hero.uptime_label", "hero.days_clean", "hero.open", "hero.no_events",
+        "tab.overview",
+        "tab.services",
+        "tab.events",
+        "tab.hygiene",
+        "hero.uptime_label",
+        "hero.days_clean",
+        "hero.open",
+        "hero.no_events",
         "sec.services",
     ]
     for lang in ("zh", "en"):

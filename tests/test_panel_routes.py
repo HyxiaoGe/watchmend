@@ -660,7 +660,7 @@ async def test_default_window_is_30(tmp_path, monkeypatch):
     store = Store(str(tmp_path / "s.db"))  # 空库 → 仅 banner metric 渲染窗口
     app = _build_app(store, settings)
     r = await _get(app, "/")
-    assert "30 天可用率" in r.text  # hero.uptime_label shows window_days=30 (banner replaced by hero in Task 7)
+    assert "30 天可用率" in r.text  # hero.uptime_label 内嵌 window_days=30(banner 已换成 hero)
     assert "窗口 90d" not in r.text
     store.close()
 
@@ -729,7 +729,7 @@ async def test_badge_incidents_when_open(tmp_path, monkeypatch):
 
 async def test_badge_not_registered_when_panel_disabled(tmp_path, monkeypatch):
     monkeypatch.setenv("SENTINEL_PANEL_ENABLED", "false")
-    settings = _settings(monkeypatch)  # _settings 之后只加 FEISHU_VENDOR_WEBHOOK,不覆盖 PANEL_ENABLED
+    settings = _settings(monkeypatch)  # 门控自读 env,不被 _settings 覆盖
     store = Store(str(tmp_path / "s.db"))
     app = _build_app(store, settings)  # register_panel_routes 自读 Settings() → 见 disabled
     resp = await _get(app, "/badge.svg")

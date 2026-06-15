@@ -602,7 +602,9 @@ def _health_row(service, uptime_pct, today_state):
         "label": service,
         "uptime_pct": uptime_pct,
         "p95_ms": None,
-        "days": [{"date": "2026-06-14", "state": today_state, "is_today": True, "uptime_pct": uptime_pct}],
+        "days": [
+            {"date": "2026-06-14", "state": today_state, "is_today": True, "uptime_pct": uptime_pct}
+        ],
     }
 
 
