@@ -22,6 +22,48 @@ _SELF_IMAGE_SUBSTR = "watchmend"
 _SOCKET_PROXY_IMAGE = "tecnativa/docker-socket-proxy"
 
 
+def _svg_line(
+    values: list[float | None], *, w: float, h: float, pad_frac: float = 0.08
+) -> dict:
+    """把一条可能含 None 缺口的序列归一成 SVG 路径(零 JS 可视化基元)。
+    返回 {"line_d", "area_d"}:line_d 在 None 处用 M 断开折线;
+    area_d 仅当序列无缺口时自底边闭合填充,否则为空串。
+    y 轴留 pad_frac 余量,避免 99%+ 的微小波动被压成直线。"""
+    nums = [v for v in values if v is not None]
+    n = len(values)
+    if n < 2 or len(nums) < 2:
+        return {"line_d": "", "area_d": ""}
+    lo, hi = min(nums), max(nums)
+    span = (hi - lo) or 1.0
+    pad = span * pad_frac
+    lo -= pad
+    hi += pad
+    rng = (hi - lo) or 1.0
+
+    def x_of(i: int) -> float:
+        return i / (n - 1) * w
+
+    def y_of(v: float) -> float:
+        return h - (v - lo) / rng * h
+
+    parts: list[str] = []
+    gap = True
+    for i, v in enumerate(values):
+        if v is None:
+            gap = True
+            continue
+        parts.append(f"{'M' if gap else 'L'}{x_of(i):.1f},{y_of(v):.1f}")
+        gap = False
+    line_d = " ".join(parts)
+
+    if None in values:
+        area_d = ""
+    else:
+        seg = " ".join(f"{x_of(i):.1f},{y_of(v):.1f}" for i, v in enumerate(values))
+        area_d = f"M{x_of(0):.1f},{h:.1f} L{seg} L{x_of(n - 1):.1f},{h:.1f} Z"
+    return {"line_d": line_d, "area_d": area_d}
+
+
 def _hhmm(ts: int, tz: timezone) -> str:
     return datetime.fromtimestamp(ts, tz).strftime("%H:%M")
 

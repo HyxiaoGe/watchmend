@@ -556,3 +556,40 @@ async def test_build_overview_event_feed_pagination(tmp_path, monkeypatch):
     # 事件项沿用 _event_view 结构（含原始 rule）
     assert ev["items"][0]["rule"] == "service_down"
     store.close()
+
+
+def test_svg_line_maps_series_to_path_with_padding():
+    from sentinel.panel.view import _svg_line
+
+    out = _svg_line([100.0, 50.0, 100.0], w=100.0, h=40.0, pad_frac=0.0)
+    # 3 点等距:x = 0,50,100;无 padding 时 max→y=0,min→y=h
+    assert out["line_d"] == "M0.0,0.0 L50.0,40.0 L100.0,0.0"
+    # 无缺口 → area_d 自底边闭合
+    assert out["area_d"] == "M0.0,40.0 L0.0,0.0 50.0,40.0 100.0,0.0 L100.0,40.0 Z"
+
+
+def test_svg_line_breaks_on_none_gap_and_omits_area():
+    from sentinel.panel.view import _svg_line
+
+    out = _svg_line([100.0, None, 50.0], w=100.0, h=40.0, pad_frac=0.0)
+    # 中间 None → 用 M 断开,缺口两侧不连线
+    assert out["line_d"] == "M0.0,0.0 M100.0,40.0"
+    # 有缺口 → 不画面积
+    assert out["area_d"] == ""
+
+
+def test_svg_line_too_few_points_returns_empty():
+    from sentinel.panel.view import _svg_line
+
+    assert _svg_line([], w=100.0, h=40.0) == {"line_d": "", "area_d": ""}
+    assert _svg_line([42.0], w=100.0, h=40.0) == {"line_d": "", "area_d": ""}
+    assert _svg_line([None, None], w=100.0, h=40.0) == {"line_d": "", "area_d": ""}
+
+
+def test_svg_line_flat_series_does_not_divide_by_zero():
+    from sentinel.panel.view import _svg_line
+
+    out = _svg_line([100.0, 100.0, 100.0], w=100.0, h=40.0, pad_frac=0.08)
+    # 全等值:span=0 → 用 1.0 兜底,不抛异常,line 落在中线附近
+    assert out["line_d"].startswith("M0.0,")
+    assert "L" in out["line_d"]
