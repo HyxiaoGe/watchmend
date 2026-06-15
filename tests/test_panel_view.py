@@ -593,3 +593,51 @@ def test_svg_line_flat_series_does_not_divide_by_zero():
     # 全等值:span=0 → 用 1.0 兜底,不抛异常,line 落在中线附近
     assert out["line_d"].startswith("M0.0,")
     assert "L" in out["line_d"]
+
+
+def _health_row(service, uptime_pct, today_state):
+    # 模拟 _service_health_bars 输出的一行(只放本测用得到的字段)
+    return {
+        "service": service,
+        "label": service,
+        "uptime_pct": uptime_pct,
+        "p95_ms": None,
+        "days": [{"date": "2026-06-14", "state": today_state, "is_today": True, "uptime_pct": uptime_pct}],
+    }
+
+
+def test_overall_uptime_pct_equal_weight_excludes_nodata():
+    from sentinel.panel.view import overall_uptime_pct
+
+    health = [
+        _health_row("a", 100.0, "ok"),
+        _health_row("b", 98.0, "degraded"),
+        _health_row("c", None, "nodata"),  # nodata 排除
+    ]
+    assert overall_uptime_pct(health) == 99.0  # (100+98)/2
+
+
+def test_overall_uptime_pct_all_nodata_returns_none():
+    from sentinel.panel.view import overall_uptime_pct
+
+    assert overall_uptime_pct([_health_row("a", None, "nodata")]) is None
+    assert overall_uptime_pct([]) is None
+
+
+def test_overall_ring_counts_today_state_normalized():
+    from sentinel.panel.view import overall_ring
+
+    health = [
+        _health_row("a", 100.0, "ok"),
+        _health_row("b", 100.0, "ok"),
+        _health_row("c", 80.0, "down"),
+        _health_row("d", None, "nodata"),  # nodata = 环底色余量,不计入四段
+    ]
+    ring = overall_ring(health)
+    assert ring == {"ok": 50.0, "degraded": 0.0, "partial": 0.0, "down": 25.0}
+
+
+def test_overall_ring_empty_health_is_all_zero():
+    from sentinel.panel.view import overall_ring
+
+    assert overall_ring([]) == {"ok": 0.0, "degraded": 0.0, "partial": 0.0, "down": 0.0}

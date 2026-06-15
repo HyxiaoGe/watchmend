@@ -64,6 +64,28 @@ def _svg_line(
     return {"line_d": line_d, "area_d": area_d}
 
 
+def overall_uptime_pct(health: list[dict]) -> float | None:
+    """各服务今日 uptime 等权均值,排除 nodata(uptime_pct is None)。
+    全 nodata / 空 → None。英雄区中心大数字。"""
+    vals = [r["uptime_pct"] for r in health if r.get("uptime_pct") is not None]
+    if not vals:
+        return None
+    return round(sum(vals) / len(vals), 1)
+
+
+def overall_ring(health: list[dict]) -> dict:
+    """按各服务今日格状态计数归一成 {ok,degraded,partial,down} 占比(%),
+    分母为服务总数;nodata 不计入四段(留作状态环底色余量)。空 → 全 0。"""
+    counts = {"ok": 0, "degraded": 0, "partial": 0, "down": 0}
+    for r in health:
+        days = r.get("days") or []
+        state = days[-1]["state"] if days else "nodata"
+        if state in counts:
+            counts[state] += 1
+    total = len(health) or 1
+    return {k: round(counts[k] / total * 100, 2) for k in counts}
+
+
 def _hhmm(ts: int, tz: timezone) -> str:
     return datetime.fromtimestamp(ts, tz).strftime("%H:%M")
 
