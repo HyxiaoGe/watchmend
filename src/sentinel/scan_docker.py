@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from sentinel.config import Settings
 from sentinel.docker_client import DockerClient, parse_docker_time
 from sentinel.findings import Finding
+
+if TYPE_CHECKING:
+    from sentinel.store import Store
 
 logger = logging.getLogger(__name__)
 
@@ -153,3 +157,66 @@ async def run_docker_scan(
         )
 
     return findings, active_subjects
+
+
+# 基线行过期剪枝阈值(秒):消失/长期不更新的容器基线自然清理,表不膨胀。无 knob(YAGNI)。
+_BASELINE_TTL = 86400
+
+
+def detect_crashloops(
+    store: Store,
+    settings: Settings,
+    restart_counts: dict[str, int],
+    *,
+    now_ts: int,
+) -> list[Finding]:
+    """RestartCount 跨 tick 滚动(tumbling)窗口 crash-loop 检测。见设计稿 §4。
+
+    每个本轮 active 容器维护基线 (subject, base_count, window_start_ts),按顺序短路:
+      1. 无基线(首次观测)→ upsert (rc, now),不报
+      2. rc < base_count(容器被重建)→ 重置 (rc, now),不报(对齐 prom resets=0 不报)
+      3. delta = rc - base_count >= N → 发 point 卡 + 重置 (rc, now)(开新窗)
+      4. now - window_start >= W(窗口到期但 delta<N)→ 重置 (rc, now),不报
+      5. 否则(窗口内、delta<N)→ 不动基线,不报(继续累积)
+    达阈即报(低延迟,不必等窗口结束);窗口只承担"不够快就清零"。冷却与基线解耦:
+    delta>=N 时总是发 Finding 并重置基线,事件是否真落库由 apply_findings 的 cooldown 决定。
+    末尾剪枝 window_start_ts < now - _BASELINE_TTL 的行。纯读 restart_counts,只写基线表。
+    """
+    n = settings.sentinel_docker_crashloop_threshold
+    w = settings.sentinel_docker_crashloop_window
+    findings: list[Finding] = []
+    for name, rc in restart_counts.items():
+        baseline = store.get_restart_baseline(name)
+        if baseline is None:
+            store.upsert_restart_baseline(name, rc, now_ts)
+            continue
+        base_count, window_start = baseline
+        if rc < base_count:  # 重建:必须先于 delta>=N 判定,否则负 delta 误入其它分支
+            store.upsert_restart_baseline(name, rc, now_ts)
+            continue
+        delta = rc - base_count
+        if delta >= n:  # 触发优先于窗口到期(§4.1)
+            findings.append(
+                Finding(
+                    rule="container_crashloop",
+                    subject=name,
+                    severity="warning",
+                    detail=f"容器 {name} {w // 60} 分钟内重启 {delta} 次(阈值 {n})",
+                    payload={
+                        "restart_count": rc,
+                        "delta": delta,
+                        "window_s": w,
+                        "baseline_count": base_count,
+                    },
+                    needs_diagnosis=True,
+                    point=True,
+                )
+            )
+            store.upsert_restart_baseline(name, rc, now_ts)
+            continue
+        if now_ts - window_start >= w:  # 窗口到期、攒得不够快 → 清零
+            store.upsert_restart_baseline(name, rc, now_ts)
+            continue
+        # 窗口内、delta<N:继续累积,基线不动
+    store.prune_restart_baselines(now_ts - _BASELINE_TTL)
+    return findings
