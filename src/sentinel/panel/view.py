@@ -86,6 +86,31 @@ def overall_ring(health: list[dict]) -> dict:
     return {k: round(counts[k] / total * 100, 2) for k in counts}
 
 
+def _days_clean(latest_event_ts: int | None, now_ts: int) -> int | None:
+    """距今最后一次事件的整天数(下取整,钳 ≥0)。latest_event_ts=None(从无事件)→ None。
+    英雄区"连续 N 天 0 事件"正向里程碑;调用方传入全表最新事件 ts。"""
+    if latest_event_ts is None:
+        return None
+    return max(0, (now_ts - latest_event_ts) // _DAY_SECONDS)
+
+
+def _overall_trend_series(health: list[dict]) -> list[float | None]:
+    """逐日把各服务 days[i].uptime_pct 等权均值,得整体可用率时间序列(左早右今)。
+    某天全服务无数据 → 该点 None(由 _svg_line 断开)。"""
+    if not health:
+        return []
+    n = len(health[0].get("days") or [])
+    series: list[float | None] = []
+    for i in range(n):
+        vals = [
+            r["days"][i]["uptime_pct"]
+            for r in health
+            if i < len(r.get("days") or []) and r["days"][i]["uptime_pct"] is not None
+        ]
+        series.append(round(sum(vals) / len(vals), 2) if vals else None)
+    return series
+
+
 def _hhmm(ts: int, tz: timezone) -> str:
     return datetime.fromtimestamp(ts, tz).strftime("%H:%M")
 

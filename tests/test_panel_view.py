@@ -641,3 +641,30 @@ def test_overall_ring_empty_health_is_all_zero():
     from sentinel.panel.view import overall_ring
 
     assert overall_ring([]) == {"ok": 0.0, "degraded": 0.0, "partial": 0.0, "down": 0.0}
+
+
+def test_days_clean_floor_division():
+    from sentinel.panel.view import _days_clean
+
+    now_ts = 1_000_000
+    assert _days_clean(now_ts - 3 * 86400 - 10, now_ts) == 3  # 3 天多 → 3
+    assert _days_clean(now_ts - 100, now_ts) == 0  # 不足 1 天 → 0
+    assert _days_clean(now_ts + 500, now_ts) == 0  # 未来 ts(时钟漂移)→ 钳 0
+    assert _days_clean(None, now_ts) is None  # 从无事件
+
+
+def test_overall_trend_series_per_day_equal_weight():
+    from sentinel.panel.view import _overall_trend_series
+
+    health = [
+        {"days": [{"uptime_pct": 100.0}, {"uptime_pct": 90.0}, {"uptime_pct": None}]},
+        {"days": [{"uptime_pct": 80.0}, {"uptime_pct": None}, {"uptime_pct": None}]},
+    ]
+    # 第0天 (100+80)/2=90;第1天 仅90;第2天 全 None → None
+    assert _overall_trend_series(health) == [90.0, 90.0, None]
+
+
+def test_overall_trend_series_empty_health():
+    from sentinel.panel.view import _overall_trend_series
+
+    assert _overall_trend_series([]) == []
