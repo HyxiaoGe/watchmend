@@ -10,6 +10,24 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-06-17
+
+### Added
+- China / prebuilt-image deployment: a standalone `docker-compose.image.yml` that
+  pulls the prebuilt `ghcr.io/hyxiaoge/watchmend` image (no local build) and bundles
+  a read-only `lscr.io/linuxserver/socket-proxy` sidecar — both reachable in China,
+  where Docker Hub is blocked — plus a turnkey deploy section in the README.
+- Release guard: `tests/test_compose_image.py` pins the image tag in
+  `docker-compose.image.yml` to the `pyproject.toml` version.
+
+### Fixed
+- `services.yaml` parsing: an empty file, a bare `services:`, or a missing
+  `services` key now degrades to vendor-status-only instead of crash-looping the
+  container; a non-list `services` value still fails loudly.
+- Docker patrol self-exclusion now also matches the `linuxserver/socket-proxy`
+  (lscr) fork, so the bundled socket-proxy sidecar is no longer mis-reported as a
+  down container when using the prebuilt-image compose.
+
 ## [0.11.0] - 2026-06-16
 
 ### Added
@@ -203,7 +221,8 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 ### Security
 - Secret-leak redaction across docker metadata and environment values.
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.9.1...v0.10.0
