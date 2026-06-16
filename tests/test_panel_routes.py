@@ -727,9 +727,13 @@ async def test_nav_tabs_render_with_overview_active(tmp_path, monkeypatch):
     assert resp.status_code == 200
     assert 'class="tabs"' in resp.text  # 四标签导航壳已渲染
     assert "总览" in resp.text and "体检" in resp.text  # tab 文案
-    # 总览高亮(tab-on),服务/事件/体检 Phase 1 置灰(tab-soon span,非链接)
+    # 四标签现均为真实跨页链接(Phase 2),不再有 tab-soon 占位
+    assert "tab-soon" not in resp.text
+    assert 'href="/services?' in resp.text  # 跨页链接
+    assert 'href="/events?' in resp.text
+    assert 'href="/hygiene?' in resp.text
+    # 总览标签高亮
     assert "tab-on" in resp.text
-    assert "tab-soon" in resp.text
     store.close()
 
 
@@ -826,4 +830,392 @@ async def test_overview_renders_hero_and_service_sparkline(tmp_path, monkeypatch
     assert "服务一览" in resp.text  # sec.services
     # HERO 下方既有区块未丢(Phase 1 保留)
     assert "事件" in resp.text  # sec.events
+    store.close()
+
+
+async def test_services_list_renders(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    today = datetime.now(tz).date()
+    now_ts = int(datetime.now(tz).timestamp())
+    store.upsert_probe_daily(
+        "api", (today - timedelta(days=1)).isoformat(), total=100, ok_count=100, p50=10.0, p95=22.0
+    )
+    store.add_probe_samples(
+        [ProbeSample(ts=now_ts - 30, service="api", ok=True, status_code=200, latency_ms=12.0)]
+    )
+    app = _build_app(store, settings)
+    app.state.service_labels = {"api": "API Gateway"}
+    r = await _get(app, "/services?lang=zh")
+    assert r.status_code == 200
+    assert 'class="srow"' in r.text  # 服务行
+    assert "API Gateway" in r.text  # 显示名 label
+    assert "/service/api?" in r.text  # 整行点进服务详情(携带偏好)
+    assert 'class="tab-on">服务</a>' in r.text  # 「服务」标签为当前页高亮
+    store.close()
+
+
+async def test_services_list_empty(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    r = await _get(app, "/services")
+    assert r.status_code == 200
+    assert "暂无服务数据" in r.text  # svc.empty
+    store.close()
+
+
+async def test_services_list_worst_first_and_xss(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    recent = int(datetime.now(tz).timestamp()) - 30
+    store.add_probe_samples(
+        [
+            ProbeSample(ts=recent, service="ok-svc", ok=True, status_code=200, latency_ms=10.0),
+            # down 服务(1 ok / 3 = 33% < 50%)
+            ProbeSample(ts=recent, service="<x>svc", ok=True, status_code=200, latency_ms=10.0),
+            ProbeSample(
+                ts=recent - 1, service="<x>svc", ok=False, status_code=500, latency_ms=None
+            ),
+            ProbeSample(
+                ts=recent - 2, service="<x>svc", ok=False, status_code=500, latency_ms=None
+            ),
+        ]
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/services")
+    assert r.status_code == 200
+    # 服务名转义(纵深防御:服务名进 sname 与 href)
+    assert "<x>svc" not in r.text
+    assert "&lt;x&gt;svc" in r.text
+    # down 服务排到 ok 服务前(worst-first)
+    assert r.text.index("&lt;x&gt;svc") < r.text.index("ok-svc")
+    store.close()
+
+
+async def test_service_detail_renders(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    today = datetime.now(tz).date()
+    now_ts = int(datetime.now(tz).timestamp())
+    for i in range(1, 8):
+        store.upsert_probe_daily(
+            "api",
+            (today - timedelta(days=i)).isoformat(),
+            total=10,
+            ok_count=10,
+            p50=10.0,
+            p95=20.0,
+        )
+    store.add_probe_samples(
+        [ProbeSample(ts=now_ts - 30, service="api", ok=True, status_code=200, latency_ms=18.0)]
+    )
+    app = _build_app(store, settings)
+    app.state.service_labels = {"api": "API Gateway"}
+    r = await _get(app, "/service/api?lang=zh")
+    assert r.status_code == 200
+    assert "API Gateway" in r.text  # 显示名 label
+    assert 'class="crumb"' in r.text  # 面包屑回服务列表
+    assert "/services?" in r.text
+    assert 'class="lat-chart"' in r.text  # 延迟时序大图
+    assert 'class="tab-on">服务</a>' in r.text  # 「服务」标签高亮
+    assert '<meta http-equiv="refresh"' not in r.text  # 详情页不自动刷新
+    store.close()
+
+
+async def test_service_detail_404(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    r = await _get(app, "/service/ghost?lang=zh")
+    assert r.status_code == 404
+    assert "服务不存在" in r.text  # svc.notfound
+    store.close()
+
+
+async def test_service_detail_samples_toggle(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    now_ts = int(datetime.now(tz).timestamp())
+    store.add_probe_samples(
+        [
+            ProbeSample(ts=now_ts - 60, service="api", ok=True, status_code=200, latency_ms=11.0),
+            ProbeSample(ts=now_ts - 30, service="api", ok=True, status_code=200, latency_ms=13.0),
+        ]
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/service/api?gran=samples")
+    assert r.status_code == 200
+    assert "gran=samples" in r.text  # 逐次/逐日切换链接保留
+    store.close()
+
+
+async def test_service_detail_name_escaped(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    now_ts = int(datetime.now(tz).timestamp())
+    store.add_probe_samples(
+        [ProbeSample(ts=now_ts - 30, service="<x>svc", ok=True, status_code=200, latency_ms=10.0)]
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/service/%3Cx%3Esvc")
+    assert r.status_code == 200
+    assert "<x>svc" not in r.text  # 服务名 h1 转义
+    assert "&lt;x&gt;svc" in r.text
+    store.close()
+
+
+async def test_events_list_renders(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    recent = int(datetime.now(tz).timestamp()) - 3600
+    store.insert_event(
+        ts=recent,
+        rule="service_down",
+        subject="api",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    app.state.service_labels = {"api": "API Gateway"}
+    r = await _get(app, "/events?lang=zh")
+    assert r.status_code == 200
+    assert 'class="filters"' in r.text  # 筛选条
+    assert "API Gateway" in r.text  # 服务显示名(卡片 + 筛选 chip)
+    assert 'class="tab-on">事件</a>' in r.text  # 「事件」标签高亮
+    store.close()
+
+
+async def test_events_list_filter_by_severity(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    recent = int(datetime.now(tz).timestamp()) - 3600
+    store.insert_event(
+        ts=recent,
+        rule="service_down",
+        subject="crit-svc",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    store.insert_event(
+        ts=recent - 1,
+        rule="latency_degraded",
+        subject="warn-svc",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/events?severity=warning")
+    assert r.status_code == 200
+    # 服务筛选 chip 仍列出全部 subject(可切换),故按规则名判定卡片区:
+    # 规则名只出现在事件卡,不出现在筛选 chip。warning 卡在,critical 卡被滤掉。
+    assert "延迟退化" in r.text  # latency_degraded(warning)卡
+    assert "服务异常" not in r.text  # service_down(critical)卡被滤掉
+    store.close()
+
+
+async def test_events_list_subject_escaped_and_filter_preserved(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    recent = int(datetime.now(tz).timestamp()) - 3600
+    store.insert_event(
+        ts=recent,
+        rule="service_down",
+        subject="<x>svc",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/events?severity=critical")
+    assert r.status_code == 200
+    assert "<x>svc" not in r.text  # 服务名转义(卡片 + 筛选 chip)
+    assert "&lt;x&gt;svc" in r.text
+    # 翻页/筛选链接保留 severity 选择(qurl 透传 transient)
+    assert "severity=critical" in r.text
+    store.close()
+
+
+async def test_event_detail_timeline_and_confidence_ring(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm/v1", LLM_MODEL="m")
+    store = Store(str(tmp_path / "s.db"))
+    eid = store.insert_event(
+        ts=1700000000,
+        rule="container_down",
+        subject="postgres",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="pending",
+        cooldown_until=0,
+    )
+    store.set_diagnosis(
+        eid,
+        status="done",
+        diagnosis_json=json.dumps(
+            {
+                "summary": "进程被 OOM killer 终止",
+                "root_cause": "内存超限",
+                "confidence": "high",
+                "suggested_commands": ["docker restart postgres"],
+            }
+        ),
+        tools_json=json.dumps(
+            [
+                {"tool": "docker_logs", "args": {"name": "postgres"}, "output": "OOM", "ok": True},
+                {"tool": "docker_inspect", "args": {}, "output": "{}", "ok": False},
+            ]
+        ),
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, f"/event/{eid}?lang=zh")
+    assert r.status_code == 200
+    assert 'class="diaghero"' in r.text  # HERO 诊断卡
+    assert 'class="timeline"' in r.text  # 证据链 timeline
+    assert r.text.count('class="tl-node') == 3  # 2 工具节点 + 1 末端结论菱形(末端含 tl-end)
+    assert 'class="tl-node tl-end"' in r.text  # 终端结论节点
+    assert "内存超限" in r.text  # 根因大字 + 结论回指
+    assert "✓" in r.text and "✗" in r.text  # 成功/失败工具各一
+    assert 'stroke-dasharray="92 8"' in r.text  # high → 92% 置信度环
+    assert "docker restart postgres" in r.text  # 建议命令(永不自动执行)
+    store.close()
+
+
+async def test_hygiene_renders_tristate_and_nav(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)  # backup ok / disk·cert unevaluated
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    r = await _get(app, "/hygiene?lang=zh")
+    assert r.status_code == 200
+    assert 'class="hbanner"' in r.text  # 体检 banner
+    assert 'class="hcard ok"' in r.text  # backup 健康卡
+    assert 'class="hcard unevaluated"' in r.text  # disk/cert 未评估(灰态,不画绿)
+    assert "未启用" in r.text  # hyg.unevaluated
+    assert 'class="tab-on">体检</a>' in r.text  # 「体检」标签高亮
+    store.close()
+
+
+async def test_hygiene_alert_card_links_to_event(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch, SENTINEL_CERT_DOMAINS="a.com")
+    store = Store(str(tmp_path / "s.db"))
+    eid = store.insert_event(
+        ts=1700000000,
+        rule="cert_expiry",
+        subject="a.com",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json=json.dumps({"days_left": 5}),
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/hygiene?lang=zh")
+    assert r.status_code == 200
+    assert 'class="hcard alert"' in r.text  # cert 告警卡
+    assert f"/event/{eid}" in r.text  # 链到事件详情
+    store.close()
+
+
+async def test_hygiene_upstream_escaped_and_status_link(tmp_path, monkeypatch):
+    from sentinel.models import (
+        Component,
+        ComponentStatus,
+        Incident,
+        IncidentStatus,
+        Indicator,
+        Snapshot,
+    )
+
+    settings = _settings(monkeypatch, SENTINEL_PROVIDERS="anthropic")
+    store = Store(str(tmp_path / "s.db"))
+    store.put(
+        "anthropic",
+        Snapshot(
+            provider="anthropic",
+            display_name="<x>Corp",
+            indicator=Indicator.MINOR,
+            status_url="https://status.example.com",
+            components=[Component(key="api", name="API", status=ComponentStatus.OPERATIONAL)],
+            incidents=[
+                Incident(
+                    key="bad",
+                    title="poisoned link",
+                    status=IncidentStatus.INVESTIGATING,
+                    impact=Indicator.MINOR,
+                    url="javascript:alert(1)",  # 投毒 shortlink
+                    started_at=None,
+                    updated_at=None,
+                    latest_update_id="u1",
+                )
+            ],
+            fetched_at="2026-06-16T00:00:00Z",
+        ),
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/hygiene")
+    assert r.status_code == 200
+    assert "<x>Corp" not in r.text and "&lt;x&gt;Corp" in r.text  # 显示名转义
+    assert "https://status.example.com" in r.text  # 状态页链接
+    assert "javascript:" not in r.text  # 投毒 shortlink 不落进 href(scheme 白名单)
+    assert "poisoned link" in r.text  # 标题仍展示(降级为纯文本,无链接)
+    store.close()
+
+
+async def test_hygiene_disabled_panel_404(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch, SENTINEL_PANEL_ENABLED="false")
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    r = await _get(app, "/hygiene")
+    assert r.status_code == 404
     store.close()

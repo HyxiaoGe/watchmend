@@ -15,6 +15,8 @@
     --hero-glow:radial-gradient(120% 120% at 50% 0%, rgba(163,113,247,.10), transparent 60%);
     --fz-hero:clamp(2.6rem,7vw,4.2rem); --fz-display:clamp(1.4rem,3vw,2rem);
     --ring-sz:clamp(120px,18vw,168px);
+    /* Phase 2:延迟双线 token(语义别名,不引新色相) */
+    --p50:var(--link); --p95:var(--st-degraded); --p95-fill:rgba(210,153,34,.13);
   }
   :root[data-theme="light"] {
     --bg:#ffffff; --panel:#f6f8fa; --line:#d0d7de; --txt:#1f2328; --mut:#656d76;
@@ -78,10 +80,9 @@
   h1 { font-size:1.05rem; } h2 { font-size:.95rem; border-bottom:1px solid var(--line); padding-bottom:.3rem; margin-top:1.3rem; }
   /* —— Phase 1 重设计:导航壳 + 英雄区 + sparkline —— */
   .tabs { display:flex; gap:4px; margin:2px 0 10px; flex-wrap:wrap; }
-  .tabs a, .tabs .tab-soon { font-size:13px; padding:5px 12px; border-radius:7px; color:var(--mut); }
+  .tabs a { font-size:13px; padding:5px 12px; border-radius:7px; color:var(--mut); }
   .tabs a:hover { background:var(--panel); }
   .tabs a.tab-on { background:var(--vio); color:#fff; }
-  .tabs .tab-soon { opacity:.5; cursor:default; }
   .hero { display:grid; grid-template-columns:auto 1fr; gap:clamp(16px,3vw,32px); align-items:center;
     border:1px solid var(--line); border-radius:var(--rad-lg); background:var(--panel) var(--hero-glow);
     box-shadow:inset 0 1px 0 rgba(255,255,255,.04); padding:clamp(20px,4vw,36px); margin:12px 0; }
@@ -101,20 +102,143 @@
   .hero-trend { grid-column:1 / -1; margin-top:8px; }
   .hero-trend svg { width:100%; height:64px; display:block; }
   .spark { width:120px; height:40px; display:block; align-self:center; }
+  /* —— Phase 2:服务列表 —— */
+  .wrap { max-width:1080px; margin:0 auto; }
+  .slist { display:flex; flex-direction:column; gap:8px; margin:10px 0; }
+  .srow { display:flex; align-items:center; gap:14px; background:var(--panel);
+    border:1px solid var(--line); border-radius:var(--rad); padding:12px 16px; color:var(--txt);
+    transition:border-color .15s, background .15s; }
+  .srow:hover { border-color:var(--vio); background:var(--viobg); }
+  .srow .sdot { width:10px; height:10px; border-radius:50%; flex:none; background:var(--st-nodata); }
+  .srow .sdot.ok{background:var(--st-ok)} .srow .sdot.degraded{background:var(--st-degraded)}
+  .srow .sdot.partial{background:var(--st-partial)} .srow .sdot.down{background:var(--st-down)}
+  .srow .sname { flex:1; font-size:14px; font-weight:600; min-width:72px; }
+  .srow .sspark { width:140px; height:34px; flex:none; }
+  .srow .sp95 { font-family:ui-monospace,Menlo,monospace; color:var(--mut); font-size:12px;
+    min-width:88px; text-align:right; }
+  .srow .supct { font-family:ui-monospace,Menlo,monospace; font-variant-numeric:tabular-nums;
+    font-size:16px; min-width:60px; text-align:right; color:var(--st-ok); }
+  .srow .supct.bad { color:var(--st-down); } .srow .supct.warn { color:var(--st-degraded); }
+  .srow .supct.none { color:var(--mut); }
+  /* —— Phase 2:服务详情 —— */
+  .crumb { color:var(--mut); font-size:11px; margin:2px 0 4px; }
+  .sd-head { display:flex; align-items:center; gap:11px; margin:6px 0 2px; flex-wrap:wrap; }
+  .sd-head .sdot { width:13px; height:13px; border-radius:50%; flex:none; background:var(--st-nodata); }
+  .sd-head .sdot.ok{background:var(--st-ok)} .sd-head .sdot.degraded{background:var(--st-degraded)}
+  .sd-head .sdot.partial{background:var(--st-partial)} .sd-head .sdot.down{background:var(--st-down)}
+  .sd-head h1 { font-size:var(--fz-display); margin:0; line-height:1.1; }
+  .sd-head .upt { margin-left:auto; font-family:ui-monospace,Menlo,monospace;
+    font-variant-numeric:tabular-nums; font-size:var(--fz-display); color:var(--st-ok); }
+  .sd-head .upt.bad { color:var(--st-down); } .sd-head .upt.warn { color:var(--st-degraded); }
+  .sd-head .upt.none { color:var(--mut); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--rad);
+    padding:16px 18px; margin:10px 0; }
+  .lat3 { display:flex; gap:28px; flex-wrap:wrap; }
+  .lat3 .cell .v { font-family:ui-monospace,Menlo,monospace; font-variant-numeric:tabular-nums;
+    font-size:var(--fz-display); display:block; line-height:1.1; }
+  .lat3 .cell .v .u { font-size:.5em; color:var(--mut); margin-left:1px; }
+  .lat3 .cell .v.breach { color:var(--st-down); }
+  .lat3 .cell .k { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+  .bar { height:8px; border-radius:999px; background:var(--st-nodata); margin-top:12px; overflow:hidden; }
+  .bar > i { display:block; height:100%; background:var(--st-ok); border-radius:999px; }
+  .bar > i.breach { background:var(--st-down); }
+  .chart-wrap { margin-top:4px; }
+  .lat-chart { width:100%; height:120px; display:block; }
+  .lat-chart a { cursor:pointer; }
+  .chart-legend { display:flex; gap:14px; color:var(--mut); font-size:11px; margin-top:4px; flex-wrap:wrap; }
+  .chart-legend span { display:flex; gap:5px; align-items:center; }
+  .chart-legend i { width:14px; height:2px; display:inline-block; }
+  .codes { display:flex; flex-direction:column; gap:7px; }
+  .coderow { display:flex; align-items:center; gap:10px; font-size:12px; }
+  .coderow .cc { font-family:ui-monospace,Menlo,monospace; min-width:60px; }
+  .coderow .cbar { flex:1; height:8px; border-radius:4px; background:var(--st-nodata); overflow:hidden; }
+  .coderow .cbar > i { display:block; height:100%; background:var(--st-ok); }
+  .coderow .cbar > i.bad { background:var(--st-down); } .coderow .cbar > i.other { background:var(--link); }
+  .coderow .cn { color:var(--mut); font-family:ui-monospace,Menlo,monospace; min-width:96px; text-align:right; }
+  /* —— Phase 2:事件流列表 —— */
+  .filters { display:flex; flex-direction:column; gap:8px; background:var(--panel);
+    border:1px solid var(--line); border-radius:var(--rad); padding:10px 14px; margin:10px 0 14px; }
+  .frow { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .frow .fk { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; min-width:54px; }
+  .fchips { display:flex; gap:6px; flex-wrap:wrap; }
+  .fchip { font-size:11px; padding:2px 10px; border-radius:11px; border:1px solid var(--line); color:var(--mut); }
+  .fchip:hover { border-color:var(--vio); color:var(--txt); }
+  .fchip.on { background:var(--vio); border-color:var(--vio); color:#fff; }
+  .conf { font-size:11px; padding:0 7px; border-radius:9px; border:1px solid var(--line); color:var(--mut); }
+  .conf.high { color:var(--st-ok); border-color:#1f6f33; }
+  .conf.medium { color:var(--st-degraded); border-color:#7a5a12; }
+  .conf.low { color:var(--mut); }
+  .evmeta { color:var(--mut); font-size:11px; margin-top:8px; display:flex; gap:14px; flex-wrap:wrap; align-items:center; }
+  /* —— Phase 2:事件详情(HERO 诊断卡 + 证据链 timeline)—— */
+  .diaghero { display:grid; grid-template-columns:auto 1fr; gap:clamp(16px,3vw,28px); align-items:center;
+    border:1px solid var(--vio); border-radius:var(--rad-lg); background:var(--panel) var(--hero-glow);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.04); padding:clamp(18px,3vw,28px); margin:14px 0; }
+  .diaghero .hero-ring { width:clamp(96px,14vw,128px); height:clamp(96px,14vw,128px); }
+  .diaghero .ring-center .num { color:var(--vio); font-size:var(--fz-display); }
+  .diaghero .ring-center .cap { color:var(--mut); font-size:10px; text-transform:uppercase; letter-spacing:.4px; margin-top:2px; }
+  .dh-root { font-size:var(--fz-display); font-weight:700; line-height:1.2; }
+  .dh-sum { font-size:13px; line-height:1.55; margin-top:8px; }
+  .dh-ev { margin:10px 0 0; padding-left:18px; color:var(--mut); font-size:12px; }
+  .dh-ev li { margin:2px 0; }
+  .timeline { position:relative; margin:10px 0 14px 8px; padding-left:22px; border-left:2px solid var(--line);
+    display:flex; flex-direction:column; gap:14px; }
+  .tl-node { position:relative; }
+  .tl-dot { position:absolute; left:-29px; top:2px; width:13px; height:13px; border-radius:50%;
+    border:2px solid var(--bg); background:var(--st-ok); }
+  .tl-dot.bad { background:var(--st-down); }
+  .tl-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .tl-tool { font-family:ui-monospace,Menlo,monospace; font-weight:600; font-size:12px; }
+  .tl-args { color:var(--mut); font-family:ui-monospace,Menlo,monospace; font-size:11px; word-break:break-all; }
+  .tl-node details { margin-top:5px; }
+  .tl-end .tl-dot { background:var(--vio); border-radius:2px; transform:rotate(45deg); left:-28px; }
+  .tl-end .tl-concl { color:var(--vio); font-weight:600; font-size:12px; }
+  /* —— Phase 2:体检页(banner + 三态卡 + 上游依赖 + 自身姿态)—— */
+  .hbanner { display:flex; align-items:center; gap:18px; flex-wrap:wrap; border:1px solid var(--line);
+    border-radius:var(--rad-lg); background:var(--panel) var(--hero-glow); padding:16px 20px; margin:12px 0 16px; }
+  .hbanner .pulse { width:16px; height:16px; border-radius:50%; flex:none; background:var(--st-ok); box-shadow:0 0 0 4px rgba(63,185,80,.18); }
+  .hbanner .pulse.down { background:var(--st-down); box-shadow:0 0 0 4px rgba(248,81,73,.20); }
+  .hbanner .pulse.partial { background:var(--st-partial); box-shadow:0 0 0 4px rgba(219,109,40,.18); }
+  .hbanner .pulse.degraded { background:var(--st-degraded); box-shadow:0 0 0 4px rgba(210,153,34,.18); }
+  .hbanner .pulse.nodata { background:var(--st-nodata); box-shadow:none; }
+  .hbanner .bmetrics { display:flex; gap:18px; flex-wrap:wrap; color:var(--mut); font-size:12px; align-items:center; }
+  .hbanner .bmetrics b { font-weight:600; }
+  .hcards { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin:10px 0; }
+  .hcard { border:1px solid var(--line); border-radius:var(--rad); background:var(--panel); padding:14px 16px; }
+  .hcard.unevaluated { border-style:dashed; opacity:.75; }
+  .hcard .hh { display:flex; align-items:center; gap:9px; }
+  .hcard .hdot { width:11px; height:11px; border-radius:50%; flex:none; background:var(--st-nodata); }
+  .hcard .hdot.ok{background:var(--st-ok)} .hcard .hdot.alert{background:var(--st-down)}
+  .hcard .htitle { font-size:13px; font-weight:600; }
+  .hcard .hstate { margin-left:auto; font-size:11px; color:var(--mut); }
+  .hcard .hbody { font-size:12px; margin-top:9px; line-height:1.5; }
+  .hcard .hbody.muted { color:var(--mut); }
+  .deps { display:flex; flex-direction:column; gap:8px; margin:10px 0; }
+  .dep { border:1px solid var(--line); border-radius:var(--rad); background:var(--panel); padding:10px 14px; }
+  .dep .dh { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+  .dep .ddot { width:10px; height:10px; border-radius:50%; flex:none; background:var(--st-nodata); }
+  .dep .ddot.ok{background:var(--st-ok)} .dep .ddot.degraded{background:var(--st-degraded)}
+  .dep .ddot.partial{background:var(--st-partial)} .dep .ddot.down{background:var(--st-down)}
+  .dep .dname { font-size:13px; font-weight:600; }
+  .dep .dlink { margin-left:auto; font-size:11px; }
+  .dep .dcomps { display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; }
+  .dep .dcomps .c { font-size:11px; color:var(--mut); display:flex; align-items:center; gap:4px; }
+  .dep .dcomps .c i { width:7px; height:7px; border-radius:50%; background:var(--st-nodata); display:inline-block; }
+  .dep .dcomps .c i.ok{background:var(--st-ok)} .dep .dcomps .c i.degraded{background:var(--st-degraded)}
+  .dep .dcomps .c i.partial{background:var(--st-partial)} .dep .dcomps .c i.down{background:var(--st-down)}
+  .dep .dinc { margin-top:8px; font-size:12px; } .dep .dinc a { display:block; margin:2px 0; }
 </style>
 </head>
 <body>
-{% if qurl is defined %}
+{% if active_tab is defined %}
 <div class="hdr">
   <b>{{ t('hdr.title') }}</b>
-  <span class="sub mono">{{ t('hdr.refreshed', ts=now_str) }} · {{ refresh_seconds|default(0) }}s ·
-    LLM:{% if posture and posture.llm.enabled %}{{ posture.llm.model }}{% if posture.llm.pending_restart %} {{ t('llm.pending_restart') }}{% else %} ✓{% endif %}{% else %}{{ t('host.llm.off') }}{% endif %}</span>
+  <span class="sub mono">{% if refresh_seconds %}{{ t('hdr.refreshed', ts=now_str) }} · {{ refresh_seconds }}s{% endif %}{% if posture %} · LLM:{% if posture.llm.enabled %}{{ posture.llm.model }}{% if posture.llm.pending_restart %} {{ t('llm.pending_restart') }}{% else %} ✓{% endif %}{% else %}{{ t('host.llm.off') }}{% endif %}{% endif %}</span>
 </div>
 <nav class="tabs">
-  <a href="{{ qurl() }}" class="{{ 'tab-on' if active_tab|default('') == 'overview' else '' }}">{{ t('tab.overview') }}</a>
-  <span class="tab-soon">{{ t('tab.services') }}</span>
-  <span class="tab-soon">{{ t('tab.events') }}</span>
-  <span class="tab-soon">{{ t('tab.hygiene') }}</span>
+  <a href="{{ tab_url('/') }}" class="{{ 'tab-on' if active_tab == 'overview' else '' }}">{{ t('tab.overview') }}</a>
+  <a href="{{ tab_url('/services') }}" class="{{ 'tab-on' if active_tab == 'services' else '' }}">{{ t('tab.services') }}</a>
+  <a href="{{ tab_url('/events') }}" class="{{ 'tab-on' if active_tab == 'events' else '' }}">{{ t('tab.events') }}</a>
+  <a href="{{ tab_url('/hygiene') }}" class="{{ 'tab-on' if active_tab == 'hygiene' else '' }}">{{ t('tab.hygiene') }}</a>
 </nav>
 <div class="nav">
   <span class="seg">
@@ -130,7 +254,7 @@
     <a href="{{ qurl(lang='zh') }}" class="{{ 'on' if lang == 'zh' else '' }}">中</a>
     <a href="{{ qurl(lang='en') }}" class="{{ 'on' if lang == 'en' else '' }}">EN</a>
   </span>
-  <a href="{{ qurl(ev_page=1) }}">{{ t('nav.latest') }}</a>
+  {% if active_tab in ('overview', 'events') %}<a href="{{ qurl(ev_page=1) }}">{{ t('nav.latest') }}</a>{% endif %}
 </div>
 {% endif %}
 {% block body %}{% endblock %}

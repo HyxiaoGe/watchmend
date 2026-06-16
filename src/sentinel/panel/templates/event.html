@@ -1,44 +1,78 @@
 {% extends "_base.html" %}
 {% block title %}{{ t('hdr.title') }}{% endblock %}
 {% block body %}
-<p><a href="{{ back_url }}">← {{ t('nav.latest') }}</a></p>
+<div class="wrap">
+<p class="crumb"><a href="{{ back_url }}">← {{ t('tab.events') }}</a></p>
 {% if detail is none %}
 <h1>{{ t('ev.notfound') }}</h1>
 <p class="muted">{{ t('ev.notfound_hint') }}</p>
 {% else %}
 {% set e = detail.event %}
-<h1>{{ e.subject }} · {{ rule_label(e.rule, lang) }}
-  <span class="{{ 'crit' if e.severity == 'critical' else 'warn' }}">{{ t('sev.' ~ e.severity) }}</span></h1>
+<div class="sd-head">
+  <span class="sdot {{ 'down' if e.severity == 'critical' else 'degraded' }}"></span>
+  <h1>{{ e.subject }} · {{ rule_label(e.rule, lang) }}</h1>
+  <span class="upt {{ 'bad' if e.severity == 'critical' else 'warn' }}" style="font-size:13px">{{ t('sev.' ~ e.severity) }}</span>
+</div>
 <p class="muted">{{ e.ts_str }} · {{ t('life.' ~ e.lifecycle) }}{% if e.resolved_str %} · {{ e.resolved_str }}{% endif %}</p>
 <p>{{ e.detail }}</p>
 
 {% if not detail.llm_enabled %}
-<div class="muted">{{ t('host.llm.off') }}</div>
+<div class="card muted">{{ t('host.llm.off') }}</div>
 {% elif detail.diagnosis %}
-<h2>{{ t('ev.ai') }}{% if detail.diagnosis.confidence %} · {{ detail.diagnosis.confidence }}{% endif %}</h2>
-{% if lang != diag_lang %}<p class="diag-lang">{{ t('ev.diag_lang', lang=diag_lang) }}</p>{% endif %}
-{% if detail.diagnosis.root_cause %}<p><span class="vio">{{ t('ev.summary') }}:</span> {{ detail.diagnosis.root_cause }}</p>{% endif %}
-{% if detail.diagnosis.summary %}<p>{{ detail.diagnosis.summary }}</p>{% endif %}
-{% if detail.diagnosis.evidence %}<ul>{% for item in detail.diagnosis.evidence %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
-{% else %}
-<div class="muted">{{ t('ev.ai') }} —</div>
-{% endif %}
+<div class="diaghero">
+  <div class="hero-ring">
+    <svg viewBox="0 0 100 100" aria-hidden="true">
+      <circle cx="50" cy="50" r="42" fill="none" stroke="var(--st-nodata)" stroke-width="9" pathLength="100"/>
+      {% if detail.confidence_pct %}
+      <circle cx="50" cy="50" r="42" fill="none" stroke="var(--vio)" stroke-width="9" pathLength="100"
+        stroke-dasharray="{{ detail.confidence_pct }} {{ 100 - detail.confidence_pct }}"
+        transform="rotate(-90 50 50)" stroke-linecap="round"/>
+      {% endif %}
+    </svg>
+    <div class="ring-center">
+      <span class="num">{% if detail.confidence_level %}{{ t('conf.' ~ detail.confidence_level) }}{% else %}—{% endif %}</span>
+      <span class="cap">{{ t('ev.confidence') }}</span>
+    </div>
+  </div>
+  <div class="dh-body">
+    {% if lang != diag_lang %}<div class="diag-lang">{{ t('ev.diag_lang', lang=diag_lang) }}</div>{% endif %}
+    {% if detail.diagnosis.root_cause %}<div class="dh-root">{{ detail.diagnosis.root_cause }}</div>{% endif %}
+    {% if detail.diagnosis.summary %}<div class="dh-sum">{{ detail.diagnosis.summary }}</div>{% endif %}
+    {% if detail.diagnosis.evidence %}<ul class="dh-ev">{% for item in detail.diagnosis.evidence %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+  </div>
+</div>
 
-<h2>{{ t('host.llm') }}</h2>
-{% for tc in detail.tool_calls %}
-<div class="ev">
-  {{ loop.index }} <code>{{ tc.tool }}({{ tc.args_str }})</code>
-  <span class="{{ 'ok' if tc.ok else 'crit' }}">{{ '✓' if tc.ok else '✗' }}</span>
-  <details><summary>{{ t('ev.detail') }}</summary><pre>{{ tc.output }}</pre></details>
+<div class="secrow"><span class="sec">{{ t('ev.timeline') }}</span></div>
+{% if detail.tool_calls %}
+<div class="timeline">
+  {% for tc in detail.tool_calls %}
+  <div class="tl-node">
+    <span class="tl-dot {{ '' if tc.ok else 'bad' }}"></span>
+    <div class="tl-head">
+      <span class="tl-tool">{{ tc.tool }}</span>
+      <span class="{{ 'ok' if tc.ok else 'crit' }}">{{ '✓' if tc.ok else '✗' }}</span>
+      <span class="tl-args">{{ tc.args_str }}</span>
+    </div>
+    <details><summary>{{ t('ev.detail') }}</summary><pre>{{ tc.output }}</pre></details>
+  </div>
+  {% endfor %}
+  <div class="tl-node tl-end">
+    <span class="tl-dot"></span>
+    <span class="tl-concl">{{ t('ev.conclusion') }}{% if detail.diagnosis.root_cause %} · {{ detail.diagnosis.root_cause }}{% endif %}</span>
+  </div>
 </div>
 {% else %}
-<div class="muted">—</div>
-{% endfor %}
+<div class="card muted">—</div>
+{% endif %}
 
-{% if detail.diagnosis and detail.diagnosis.suggested_commands %}
-<h2>{{ t('ev.commands') }}</h2>
+{% if detail.diagnosis.suggested_commands %}
+<div class="secrow"><span class="sec">{{ t('ev.commands') }}</span></div>
 <pre>{% for c in detail.diagnosis.suggested_commands %}{{ c }}
 {% endfor %}</pre>
 {% endif %}
+{% else %}
+<div class="card muted">{{ t('ev.ai') }} —</div>
 {% endif %}
+{% endif %}
+</div>
 {% endblock %}

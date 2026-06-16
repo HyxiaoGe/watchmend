@@ -1,0 +1,90 @@
+{% extends "_base.html" %}
+{% block title %}{{ t('hdr.title') }}{% endblock %}
+{% block body %}
+<div class="wrap">
+<div class="hbanner">
+  <span class="pulse {{ banner.state }}"></span>
+  <div class="bmetrics">
+    <span>{% if banner.alert_count %}<b class="crit">{{ t('hyg.m_local', ok=banner.evaluated_count, total=banner.local_total, alerts=banner.alert_count) }}</b>{% else %}{{ t('hyg.m_local', ok=banner.evaluated_count, total=banner.local_total, alerts=0) }}{% endif %}</span>
+    <span>{% if banner.worst_upstream %}<b class="warn">{{ t('hyg.m_upstream', name=banner.worst_upstream) }}</b>{% elif banner.upstream_any_data %}{{ t('hyg.m_upstream_ok') }}{% else %}{{ t('hyg.no_data') }}{% endif %}</span>
+    <span>{{ t('hyg.m_layers', online=banner.layers_online, total=banner.layers_total) }}</span>
+    <span>{% if banner.last_report_date %}{{ t('hyg.m_report', date=banner.last_report_date) }}{% else %}<b class="warn">{{ t('hyg.m_report_never') }}</b>{% endif %}</span>
+  </div>
+</div>
+
+<div class="secrow"><span class="sec">{{ t('hyg.local') }}</span></div>
+<div class="hcards">
+  {% for c in local %}
+  <div class="hcard {{ c.state }}">
+    <div class="hh">
+      <span class="hdot {{ c.state }}"></span>
+      <span class="htitle">{{ t('hyg.' ~ c.key) }}</span>
+      <span class="hstate">{% if c.state == 'alert' %}{{ c.ts_str }}{% elif c.state == 'ok' %}{{ t('hyg.healthy') }} ✓{% else %}{{ t('hyg.unevaluated') }}{% endif %}</span>
+    </div>
+    {% if c.state == 'unevaluated' %}
+    <div class="hbody muted">{{ t('hyg.unevaluated_hint') }}</div>
+    {% elif c.key == 'backup' %}
+      {% if c.state == 'alert' %}<div class="hbody">{{ t('hyg.backup_alert', age=c.values.age_hours, th=c.values.threshold_hours) }} · <a href="{{ eurl(c.event_id) }}">{{ t('ev.detail') }}</a></div>
+      {% else %}<div class="hbody muted">{{ t('hyg.backup_ok') }}</div>{% endif %}
+    {% elif c.key == 'disk' %}
+      {% if c.state == 'alert' %}<div class="hbody">{% if c.values.predicted_avail_gb is not none %}{{ t('hyg.disk_forecast', days=c.values.forecast_days, gb=c.values.predicted_avail_gb) }}{% endif %}{% if c.values.usage_pct is not none %}{% if c.values.predicted_avail_gb is not none %}<br>{% endif %}{{ t('hyg.disk_usage', pct=c.values.usage_pct, th=c.values.usage_threshold_pct) }}{% endif %} · <a href="{{ eurl(c.event_id) }}">{{ t('ev.detail') }}</a></div>
+      {% else %}<div class="hbody muted">{{ t('hyg.disk_ok') }}</div>{% endif %}
+    {% elif c.key == 'cert' %}
+      {% if c.state == 'alert' %}<div class="hbody">{{ t('hyg.cert_alert', days=c.values.days_left, th=c.values.min_days) }} · <a href="{{ eurl(c.event_id) }}">{{ t('ev.detail') }}</a></div>
+      {% else %}<div class="hbody muted">{{ t('hyg.cert_ok') }}</div>{% endif %}
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<div class="secrow"><span class="sec">{{ t('hyg.upstream') }}</span></div>
+<div class="deps">
+  {% for u in upstream %}
+  <div class="dep">
+    <div class="dh">
+      <span class="ddot {{ u.state }}"></span>
+      <span class="dname">{{ u.name }}</span>
+      <span class="hstate muted">{{ t('st.' ~ u.state) }}</span>
+      {% if u.status_url %}<a class="dlink" href="{{ u.status_url }}" target="_blank" rel="noopener noreferrer">{{ t('hyg.status_page') }}</a>{% endif %}
+    </div>
+    {% if not u.has_data %}
+    <div class="hbody muted">{{ t('hyg.no_data') }}</div>
+    {% elif u.components or u.incidents %}
+    <details>
+      <summary class="muted" style="font-size:11px">{{ t('hyg.components') }} {{ u.components|length }} · {{ t('hyg.incidents') }} {{ u.incidents|length }}</summary>
+      {% if u.components %}<div class="dcomps">{% for c in u.components %}<span class="c"><i class="{{ c.state }}"></i>{{ c.name }}</span>{% endfor %}</div>{% endif %}
+      {% if u.incidents %}<div class="dinc">{% for inc in u.incidents %}{% if inc.url %}<a href="{{ inc.url }}" target="_blank" rel="noopener noreferrer">⚠ {{ inc.title }}</a>{% else %}<span>⚠ {{ inc.title }}</span>{% endif %}{% endfor %}</div>{% endif %}
+    </details>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<div class="secrow"><span class="sec">{{ t('hyg.self') }}</span></div>
+<div class="self">
+  <div class="ln1">
+    <span class="k">{{ t('host.self') }}</span>
+    <span>{{ t('host.engine') }}
+      {% if host_self.probe_engine_live is none %}<span class="muted">{{ t('host.engine.unknown') }}</span>
+      {% elif host_self.probe_engine_live %}<span class="ok">{{ t('host.engine.live') }} ✓</span>
+      {% else %}<span class="crit">{{ t('host.engine.stale') }}</span>{% endif %}</span>
+    <span>{{ t('host.channels') }}
+      <span class="{{ 'ok' if posture.channels else 'muted' }}">{% if posture.channels %}{{ posture.channels|join('、') }}{% else %}{{ t('footer.none') }}{% endif %}</span></span>
+    <span>{{ t('host.layers') }}
+      <span class="muted">prom{{ '✓' if posture.layers.prometheus else '✗' }}
+      loki{{ '✓' if posture.layers.loki else '✗' }}
+      docker{{ '✓' if posture.layers.docker else '✗' }}
+      LLM{{ '✓' if posture.layers.llm else '✗' }}</span></span>
+    <span>{{ t('host.llm') }}
+      {% if host_self.llm.active %}<span class="vio">{{ host_self.llm.active }} ✓</span>
+      {% if host_self.llm.fallback_ready %}<span class="tag">{{ t('host.llm.fallback', model=host_self.llm.fallback) }}</span>{% endif %}
+      {% else %}<span class="muted">{{ t('host.llm.off') }}</span>{% endif %}</span>
+  </div>
+  <div class="ln1">
+    <span class="k">docker</span>
+    <span class="muted">{{ posture.docker.mode }}{% if posture.docker.read_only %}{{ t('footer.docker_readonly') }}{% endif %}</span>
+    {% if posture.monitored_containers is not none %}<span class="tag">{{ posture.monitored_containers }}</span>{% endif %}
+  </div>
+</div>
+</div>
+{% endblock %}

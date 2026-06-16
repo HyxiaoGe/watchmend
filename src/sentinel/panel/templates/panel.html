@@ -1,6 +1,6 @@
 {% extends "_base.html" %}
 {% block body %}
-
+<div class="wrap">
 {% set probes = health|length %}
 {% set hero_bad = posture.open_count > 0 %}
 <div class="hero">
@@ -163,4 +163,5 @@
 <div class="footer mono">docker:{{ posture.docker.mode }}{% if posture.docker.read_only %}{{ t('footer.docker_readonly') }}{% endif %} ·
   {{ t('footer.notify', channels=posture.channels|join('、') if posture.channels else t('footer.none')) }} ·
   {% if posture.env_redaction %}{{ t('footer.env') }}{% for r in posture.env_redaction %}{{ r.subject }} {{ r.count }}{% if not loop.last %}、{% endif %}{% endfor %}{% endif %}</div>
+</div>
 {% endblock %}

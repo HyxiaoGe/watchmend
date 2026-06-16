@@ -1,0 +1,33 @@
+{% extends "_base.html" %}
+{% block body %}
+<div class="wrap">
+<div class="secrow">
+  <span class="sec">{{ t('sec.services') }}</span>
+  <div class="right"><span class="lg">
+    <span><i style="background:var(--st-ok)"></i>{{ t('st.ok') }}</span>
+    <span><i style="background:var(--st-degraded)"></i>{{ t('st.degraded') }}</span>
+    <span><i style="background:var(--st-partial)"></i>{{ t('st.partial') }}</span>
+    <span><i style="background:var(--st-down)"></i>{{ t('st.down') }}</span>
+    <span><i style="background:var(--st-nodata)"></i>{{ t('st.nodata') }}</span>
+  </span></div>
+</div>
+<div class="slist">
+{% for s in services %}
+  <a class="srow" href="{{ surl(s.service) }}">
+    <span class="sdot {{ s.state }}" title="{{ t('st.' ~ s.state) }}"></span>
+    <span class="sname">{{ s.label }}</span>
+    {% if s.p95_pts %}
+    <svg class="sspark" viewBox="0 0 140 34" preserveAspectRatio="none" aria-hidden="true">
+      <path d="{{ s.p95_pts }}" fill="none" stroke="var(--link)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+    </svg>
+    {% else %}<span class="sspark"></span>{% endif %}
+    <span class="sp95">{% if s.p95_ms is not none %}p95 {{ s.p95_ms }}ms{% else %}—{% endif %}</span>
+    <span class="supct {{ 'bad' if s.state == 'down' else ('warn' if s.state in ('partial', 'degraded') else ('none' if s.uptime_pct is none else '')) }}">{% if s.uptime_pct is not none %}{{ s.uptime_pct }}%{% else %}—{% endif %}</span>
+  </a>
+{% else %}
+  <div class="comp muted">{{ t('svc.empty') }}</div>
+{% endfor %}
+</div>
+<p class="muted" style="font-size:11px;margin-top:6px">{{ t('svc.col_trend', days=window_days) }} · {{ t('svc.col_uptime') }}</p>
+</div>
+{% endblock %}
