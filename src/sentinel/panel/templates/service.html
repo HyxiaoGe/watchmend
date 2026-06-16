@@ -97,7 +97,7 @@
 </div></div>
 {% endif %}
 
-<div class="secrow"><span class="sec">{{ t('svc.events') }}</span></div>
+<div class="secrow"><span class="sec">{{ t('svc.events') }}</span>{% if detail.events.total %}<a class="sec-link" href="{{ events_url(detail.service) }}">{{ t('svc.all_events') }}</a>{% endif %}</div>
 {% for e in detail.events['items'] %}
 <div class="ev">
   <div class="top">

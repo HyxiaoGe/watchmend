@@ -36,7 +36,7 @@
 <div class="ev">
   <div class="top">
     <span class="dot {{ e.severity }}" title="{{ t('sev.' ~ e.severity) }}"></span>
-    <b>{{ rule_label(e.rule, lang) }}</b> <span class="mono">{{ e.label }}</span>
+    <b>{{ rule_label(e.rule, lang) }}</b> {% if e.service_linkable %}<a class="svc-link mono" href="{{ surl(e.subject) }}">{{ e.label }}</a>{% else %}<span class="mono">{{ e.label }}</span>{% endif %}
     <span class="chip {{ 'ok' if e.lifecycle == 'recovered' else '' }}">{{ t('life.' ~ e.lifecycle) }}</span>
     {% if e.is_scan_failure %}<span class="chip warn">{{ t('ev.scanfail') }}</span>{% endif %}
     <span class="when mono">{{ e.ts_str }}{% if e.resolved_str %} → {{ e.resolved_str }}{% endif %}</span>
