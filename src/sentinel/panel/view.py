@@ -1006,3 +1006,248 @@ def build_event_detail(
         "confidence_pct": _confidence_pct(conf_level),  # 92/66/38 给环 dasharray
         "tool_calls": _tool_calls_view(e.diagnosis_tools_json),
     }
+
+
+# Indicator(上游 status snapshot)→ 面板 state 色;component status 同理(§8.4)。
+_INDICATOR_STATE = {
+    "none": "ok",
+    "minor": "degraded",
+    "major": "partial",
+    "critical": "down",
+    "unknown": "nodata",
+}
+_COMP_STATE = {
+    "operational": "ok",
+    "maintenance": "degraded",
+    "degraded": "degraded",
+    "partial_outage": "partial",
+    "major_outage": "down",
+    "unknown": "nodata",
+}
+
+
+def _worst_state(states: list[str]) -> str:
+    """取最坏档(_STATE_RANK 越小越坏;空 → nodata)。"""
+    if not states:
+        return "nodata"
+    return min(states, key=lambda s: _STATE_RANK.get(s, 4))
+
+
+def _hygiene_payload(e: EventRecord) -> dict:
+    try:
+        d = json.loads(e.payload_json)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def _num(v) -> float | None:
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def _local_hygiene(store: Store, settings: Settings, *, tz: timezone) -> list[dict]:
+    """本地体检三态卡(backup/disk/cert),事件驱动 + 配置门控(§8.4)。
+    state:alert(有 open 事件,带数值)/ ok(已配置且无 open 事件)/ unevaluated(未配置)。
+    未配置绝不画 ok ✓——避免"没在查"被误读成"健康"。无常驻 gauge 表,数值从 payload_json 解析。"""
+    open_by_rule: dict[str, EventRecord] = {}
+    for e in store.get_open_events():
+        cur = open_by_rule.get(e.rule)
+        if cur is None or e.ts > cur.ts:
+            open_by_rule[e.rule] = e
+
+    # backup:configured = backup_dir 非空(引擎对 backup 始终尝试,与 forecast/cert 的配置门控一致)
+    be = open_by_rule.get("backup_stale")
+    if be is not None:
+        p = _hygiene_payload(be)
+        age = _num(p.get("age_hours"))
+        backup = {
+            "key": "backup",
+            "state": "alert",
+            "event_id": be.id,
+            "ts_str": _hhmm(be.ts, tz),
+            "values": {
+                "age_hours": round(age, 1) if age is not None else None,
+                "threshold_hours": settings.sentinel_backup_max_age_hours,
+            },
+        }
+    else:
+        backup = {
+            "key": "backup",
+            "state": "ok" if settings.sentinel_backup_dir else "unevaluated",
+            "event_id": None,
+            "ts_str": None,
+            "values": {},
+        }
+
+    # disk:主 disk_forecast(预测),副 disk_usage(当前超阈水位);任一 open 即 alert
+    disk_fc = open_by_rule.get("disk_forecast")
+    disk_use = open_by_rule.get("disk_usage")
+    primary = disk_fc or disk_use
+    if primary is not None:
+        disk_state = "alert"
+    elif settings.sentinel_prometheus_url:
+        disk_state = "ok"
+    else:
+        disk_state = "unevaluated"
+    fc_p = _hygiene_payload(disk_fc) if disk_fc else {}
+    use_p = _hygiene_payload(disk_use) if disk_use else {}
+    avail = _num(fc_p.get("predicted_avail_bytes"))
+    usage = _num(use_p.get("usage_pct"))
+    disk = {
+        "key": "disk",
+        "state": disk_state,
+        "event_id": primary.id if primary else None,
+        "ts_str": _hhmm(primary.ts, tz) if primary else None,
+        "values": {
+            "predicted_avail_gb": round(avail / 1e9, 1) if avail is not None else None,
+            "forecast_days": settings.sentinel_disk_forecast_days,
+            "usage_pct": round(usage, 1) if usage is not None else None,
+            "usage_threshold_pct": round(settings.sentinel_disk_usage_pct),
+        },
+    }
+
+    ce = open_by_rule.get("cert_expiry")
+    if ce is not None:
+        p = _hygiene_payload(ce)
+        days = _num(p.get("days_left"))
+        cert = {
+            "key": "cert",
+            "state": "alert",
+            "event_id": ce.id,
+            "ts_str": _hhmm(ce.ts, tz),
+            "values": {
+                "days_left": round(days) if days is not None else None,
+                "min_days": settings.sentinel_cert_min_days,
+            },
+        }
+    else:
+        cert = {
+            "key": "cert",
+            "state": "ok" if settings.cert_domains_list else "unevaluated",
+            "event_id": None,
+            "ts_str": None,
+            "values": {},
+        }
+    return [backup, disk, cert]
+
+
+def _upstream_deps(store: Store, settings: Settings) -> list[dict]:
+    """上游依赖健康(providers status snapshot,§8.4)。Indicator→state 映射;
+    components + 未解决 incidents 供 <details> 展开;链到 status_url。Snapshot=None → nodata。
+    cloudflare track_components=False → components 可能空,模板须容空。"""
+    out: list[dict] = []
+    for p in settings.providers_list:
+        snap = store.get(p)
+        if snap is None:
+            out.append(
+                {
+                    "provider": p,
+                    "name": p,
+                    "state": "nodata",
+                    "components": [],
+                    "incidents": [],
+                    "status_url": "",
+                    "has_data": False,
+                }
+            )
+            continue
+        comps = [
+            {"name": c.name, "state": _COMP_STATE.get(c.status.value, "nodata")}
+            for c in snap.components
+        ]
+        incs = [
+            {
+                "title": i.title,
+                "status": i.status.value,
+                "url": i.url,
+                "impact": _INDICATOR_STATE.get(i.impact.value, "nodata"),
+            }
+            for i in snap.incidents
+            if i.status.value != "resolved"  # 只列未结
+        ]
+        out.append(
+            {
+                "provider": p,
+                "name": snap.display_name,
+                "state": _INDICATOR_STATE.get(snap.indicator.value, "nodata"),
+                "components": comps,
+                "incidents": incs,
+                "status_url": snap.status_url,
+                "has_data": True,
+            }
+        )
+    return out
+
+
+async def build_hygiene(
+    store: Store,
+    settings: Settings,
+    *,
+    now: datetime,
+    docker=None,
+    llm_config=None,
+    diag_registered: bool | None = None,
+) -> dict:
+    """体检页 view-model(§8.4):本地三态卡 + 上游依赖 + 哨兵自身姿态 + 顶部体检 banner。
+    banner pulse = 三块(本地/上游/自身)最坏档;零新表/新取数(事件驱动 + 现成 snapshot/meta)。"""
+    tz = (
+        now.tzinfo
+        if isinstance(now.tzinfo, timezone)
+        else timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    )
+    now_ts = int(now.timestamp())
+    llm = _llm_posture(llm_config, settings, diag_registered=diag_registered)
+    local = _local_hygiene(store, settings, tz=tz)
+    upstream = _upstream_deps(store, settings)
+    latest_probe_ts = store.get_latest_probe_ts()
+    host_self = _host_self(
+        settings, latest_probe_ts=latest_probe_ts, now_ts=now_ts, llm_config=llm_config, llm=llm
+    )
+    docker_mode = _docker_mode(settings)
+    open_events = store.get_open_events()
+    layers = {
+        "prometheus": bool(settings.sentinel_prometheus_url),
+        "loki": bool(settings.sentinel_loki_url),
+        "docker": docker_mode != "off",
+        "llm": llm["enabled"],
+    }
+    posture = {
+        "monitored_containers": await _monitored_containers(docker, settings),
+        "open_count": len(open_events),
+        "resolved_24h": store.count_resolved_since(now_ts - _DAY_SECONDS),
+        "llm": llm,
+        "docker": {"mode": docker_mode, "read_only": True},
+        "layers": layers,
+        "channels": _channels(settings),
+    }
+    # banner:三块最坏档(alert→down / ok→ok / unevaluated→nodata 映射本地卡)
+    local_states = [
+        "down" if c["state"] == "alert" else ("ok" if c["state"] == "ok" else "nodata")
+        for c in local
+    ]
+    local_worst = _worst_state(local_states)
+    upstream_worst = _worst_state([u["state"] for u in upstream])
+    engine = host_self["probe_engine_live"]
+    self_state = "ok" if engine else ("degraded" if engine is False else "nodata")
+    bad_up = [u for u in upstream if u["state"] in ("down", "partial", "degraded")]
+    worst_up = min(bad_up, key=lambda u: _STATE_RANK.get(u["state"], 4))["name"] if bad_up else None
+    banner = {
+        "state": _worst_state([local_worst, upstream_worst, self_state]),
+        "alert_count": sum(1 for c in local if c["state"] == "alert"),
+        "evaluated_count": sum(1 for c in local if c["state"] != "unevaluated"),
+        "local_total": len(local),
+        "worst_upstream": worst_up,
+        "upstream_any_data": any(u["has_data"] for u in upstream),  # 区分"全绿"vs"暂无数据"
+        "layers_online": sum(1 for v in layers.values() if v),
+        "layers_total": len(layers),
+        "last_report_date": store.get_meta("daily_report_last_date"),
+    }
+    return {
+        "now_str": now.strftime("%Y-%m-%d %H:%M"),
+        "refresh_seconds": _REFRESH_SECONDS,
+        "banner": banner,
+        "local": local,
+        "upstream": upstream,
+        "posture": posture,
+        "host_self": host_self,
+    }

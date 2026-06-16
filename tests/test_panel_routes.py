@@ -1129,3 +1129,73 @@ async def test_event_detail_timeline_and_confidence_ring(tmp_path, monkeypatch):
     assert 'stroke-dasharray="92 8"' in r.text  # high → 92% 置信度环
     assert "docker restart postgres" in r.text  # 建议命令(永不自动执行)
     store.close()
+
+
+async def test_hygiene_renders_tristate_and_nav(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)  # backup ok / disk·cert unevaluated
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    r = await _get(app, "/hygiene?lang=zh")
+    assert r.status_code == 200
+    assert 'class="hbanner"' in r.text  # 体检 banner
+    assert 'class="hcard ok"' in r.text  # backup 健康卡
+    assert 'class="hcard unevaluated"' in r.text  # disk/cert 未评估(灰态,不画绿)
+    assert "未启用" in r.text  # hyg.unevaluated
+    assert 'class="tab-on">体检</a>' in r.text  # 「体检」标签高亮
+    store.close()
+
+
+async def test_hygiene_alert_card_links_to_event(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch, SENTINEL_CERT_DOMAINS="a.com")
+    store = Store(str(tmp_path / "s.db"))
+    eid = store.insert_event(
+        ts=1700000000,
+        rule="cert_expiry",
+        subject="a.com",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json=json.dumps({"days_left": 5}),
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/hygiene?lang=zh")
+    assert r.status_code == 200
+    assert 'class="hcard alert"' in r.text  # cert 告警卡
+    assert f"/event/{eid}" in r.text  # 链到事件详情
+    store.close()
+
+
+async def test_hygiene_upstream_escaped_and_status_link(tmp_path, monkeypatch):
+    from sentinel.models import Component, ComponentStatus, Indicator, Snapshot
+
+    settings = _settings(monkeypatch, SENTINEL_PROVIDERS="anthropic")
+    store = Store(str(tmp_path / "s.db"))
+    store.put(
+        "anthropic",
+        Snapshot(
+            provider="anthropic",
+            display_name="<x>Corp",
+            indicator=Indicator.NONE,
+            status_url="https://status.example.com",
+            components=[Component(key="api", name="API", status=ComponentStatus.OPERATIONAL)],
+            incidents=[],
+            fetched_at="2026-06-16T00:00:00Z",
+        ),
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/hygiene")
+    assert r.status_code == 200
+    assert "<x>Corp" not in r.text and "&lt;x&gt;Corp" in r.text  # 显示名转义
+    assert "https://status.example.com" in r.text  # 状态页链接
+    store.close()
+
+
+async def test_hygiene_disabled_panel_404(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch, SENTINEL_PANEL_ENABLED="false")
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    r = await _get(app, "/hygiene")
+    assert r.status_code == 404
+    store.close()

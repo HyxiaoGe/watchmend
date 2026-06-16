@@ -1056,3 +1056,137 @@ def test_build_events_list_label_and_page_clamp(tmp_path, monkeypatch):
     assert data["events"]["page"] == data["events"]["total_pages"]  # 越界钳到末页
     assert data["events"]["items"][0]["label"] == "API Gateway"  # label 回填
     store.close()
+
+
+# —— Phase 2:体检页 view 单测 ——
+
+
+def test_local_hygiene_default_tristate(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)  # backup_dir 默认非空;prometheus/cert_domains 默认空
+    store = Store(str(tmp_path / "s.db"))
+    cards = {c["key"]: c for c in view._local_hygiene(store, settings, tz=TZ)}
+    assert cards["backup"]["state"] == "ok"  # 已配置且无 open 事件
+    assert cards["disk"]["state"] == "unevaluated"  # 未接 prometheus
+    assert cards["cert"]["state"] == "unevaluated"  # 未配证书域名
+    store.close()
+
+
+def test_local_hygiene_alert_values(tmp_path, monkeypatch):
+    settings = _settings(
+        monkeypatch, SENTINEL_CERT_DOMAINS="a.com", SENTINEL_PROMETHEUS_URL="http://p:9090"
+    )
+    store = Store(str(tmp_path / "s.db"))
+    store.insert_event(
+        ts=NOW_TS - 100,
+        rule="cert_expiry",
+        subject="a.com",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json=json.dumps({"days_left": 3}),
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    store.insert_event(
+        ts=NOW_TS - 100,
+        rule="disk_forecast",
+        subject="/",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json=json.dumps({"predicted_avail_bytes": 2.5e9}),
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    cards = {c["key"]: c for c in view._local_hygiene(store, settings, tz=TZ)}
+    assert cards["cert"]["state"] == "alert" and cards["cert"]["values"]["days_left"] == 3
+    assert cards["disk"]["state"] == "alert"
+    assert cards["disk"]["values"]["predicted_avail_gb"] == 2.5  # bytes → GB
+    assert cards["backup"]["state"] == "ok"  # 仍健康
+    store.close()
+
+
+def test_local_hygiene_disk_usage_secondary(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch, SENTINEL_PROMETHEUS_URL="http://p:9090")
+    store = Store(str(tmp_path / "s.db"))
+    store.insert_event(
+        ts=NOW_TS - 100,
+        rule="disk_usage",
+        subject="/",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json=json.dumps({"usage_pct": 91.3}),
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    disk = next(c for c in view._local_hygiene(store, settings, tz=TZ) if c["key"] == "disk")
+    assert disk["state"] == "alert"  # 仅 disk_usage open(无 forecast)也 alert
+    assert disk["values"]["usage_pct"] == 91.3
+    store.close()
+
+
+def test_upstream_deps_indicator_and_incident_filter(tmp_path, monkeypatch):
+    from sentinel.models import (
+        Component,
+        ComponentStatus,
+        Incident,
+        IncidentStatus,
+        Indicator,
+        Snapshot,
+    )
+
+    settings = _settings(monkeypatch, SENTINEL_PROVIDERS="anthropic,openai")
+    store = Store(str(tmp_path / "s.db"))
+    store.put(
+        "anthropic",
+        Snapshot(
+            provider="anthropic",
+            display_name="Anthropic",
+            indicator=Indicator.MAJOR,
+            status_url="https://status.anthropic.com",
+            components=[Component(key="api", name="API", status=ComponentStatus.PARTIAL_OUTAGE)],
+            incidents=[
+                Incident(
+                    key="i1",
+                    title="Elevated errors",
+                    status=IncidentStatus.INVESTIGATING,
+                    impact=Indicator.MAJOR,
+                    url="https://s/i1",
+                    started_at=None,
+                    updated_at=None,
+                    latest_update_id="u1",
+                ),
+                Incident(
+                    key="i2",
+                    title="done",
+                    status=IncidentStatus.RESOLVED,
+                    impact=Indicator.MINOR,
+                    url="https://s/i2",
+                    started_at=None,
+                    updated_at=None,
+                    latest_update_id="u2",
+                ),
+            ],
+            fetched_at="2026-06-16T00:00:00Z",
+        ),
+    )
+    deps = {d["provider"]: d for d in view._upstream_deps(store, settings)}
+    assert deps["anthropic"]["state"] == "partial"  # major → partial
+    assert deps["anthropic"]["components"][0]["state"] == "partial"  # partial_outage → partial
+    assert len(deps["anthropic"]["incidents"]) == 1  # resolved 滤掉,仅留未结
+    assert deps["openai"]["state"] == "nodata" and deps["openai"]["has_data"] is False
+    store.close()
+
+
+async def test_build_hygiene_shape_and_banner(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.set_meta("daily_report_last_date", "2026-06-16")
+    data = await view.build_hygiene(store, settings, now=NOW)
+    assert set(data) >= {"banner", "local", "upstream", "posture", "host_self"}
+    assert len(data["local"]) == 3
+    assert data["banner"]["layers_total"] == 4
+    assert data["banner"]["last_report_date"] == "2026-06-16"
+    assert data["banner"]["upstream_any_data"] is False  # 无 snapshot
+    store.close()

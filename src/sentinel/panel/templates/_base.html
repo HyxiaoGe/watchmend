@@ -192,6 +192,40 @@
   .tl-node details { margin-top:5px; }
   .tl-end .tl-dot { background:var(--vio); border-radius:2px; transform:rotate(45deg); left:-28px; }
   .tl-end .tl-concl { color:var(--vio); font-weight:600; font-size:12px; }
+  /* —— Phase 2:体检页(banner + 三态卡 + 上游依赖 + 自身姿态)—— */
+  .hbanner { display:flex; align-items:center; gap:18px; flex-wrap:wrap; border:1px solid var(--line);
+    border-radius:var(--rad-lg); background:var(--panel) var(--hero-glow); padding:16px 20px; margin:12px 0 16px; }
+  .hbanner .pulse { width:16px; height:16px; border-radius:50%; flex:none; background:var(--st-ok); box-shadow:0 0 0 4px rgba(63,185,80,.18); }
+  .hbanner .pulse.down { background:var(--st-down); box-shadow:0 0 0 4px rgba(248,81,73,.20); }
+  .hbanner .pulse.partial { background:var(--st-partial); box-shadow:0 0 0 4px rgba(219,109,40,.18); }
+  .hbanner .pulse.degraded { background:var(--st-degraded); box-shadow:0 0 0 4px rgba(210,153,34,.18); }
+  .hbanner .pulse.nodata { background:var(--st-nodata); box-shadow:none; }
+  .hbanner .bmetrics { display:flex; gap:18px; flex-wrap:wrap; color:var(--mut); font-size:12px; align-items:center; }
+  .hbanner .bmetrics b { font-weight:600; }
+  .hcards { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin:10px 0; }
+  .hcard { border:1px solid var(--line); border-radius:var(--rad); background:var(--panel); padding:14px 16px; }
+  .hcard.unevaluated { border-style:dashed; opacity:.75; }
+  .hcard .hh { display:flex; align-items:center; gap:9px; }
+  .hcard .hdot { width:11px; height:11px; border-radius:50%; flex:none; background:var(--st-nodata); }
+  .hcard .hdot.ok{background:var(--st-ok)} .hcard .hdot.alert{background:var(--st-down)}
+  .hcard .htitle { font-size:13px; font-weight:600; }
+  .hcard .hstate { margin-left:auto; font-size:11px; color:var(--mut); }
+  .hcard .hbody { font-size:12px; margin-top:9px; line-height:1.5; }
+  .hcard .hbody.muted { color:var(--mut); }
+  .deps { display:flex; flex-direction:column; gap:8px; margin:10px 0; }
+  .dep { border:1px solid var(--line); border-radius:var(--rad); background:var(--panel); padding:10px 14px; }
+  .dep .dh { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+  .dep .ddot { width:10px; height:10px; border-radius:50%; flex:none; background:var(--st-nodata); }
+  .dep .ddot.ok{background:var(--st-ok)} .dep .ddot.degraded{background:var(--st-degraded)}
+  .dep .ddot.partial{background:var(--st-partial)} .dep .ddot.down{background:var(--st-down)}
+  .dep .dname { font-size:13px; font-weight:600; }
+  .dep .dlink { margin-left:auto; font-size:11px; }
+  .dep .dcomps { display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; }
+  .dep .dcomps .c { font-size:11px; color:var(--mut); display:flex; align-items:center; gap:4px; }
+  .dep .dcomps .c i { width:7px; height:7px; border-radius:50%; background:var(--st-nodata); display:inline-block; }
+  .dep .dcomps .c i.ok{background:var(--st-ok)} .dep .dcomps .c i.degraded{background:var(--st-degraded)}
+  .dep .dcomps .c i.partial{background:var(--st-partial)} .dep .dcomps .c i.down{background:var(--st-down)}
+  .dep .dinc { margin-top:8px; font-size:12px; } .dep .dinc a { display:block; margin:2px 0; }
 </style>
 </head>
 <body>

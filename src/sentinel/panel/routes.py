@@ -370,6 +370,43 @@ def register_panel_routes(app: FastAPI) -> None:
         _write_pref_cookies(resp, request, lang, theme, window_days)
         return resp
 
+    @app.get("/hygiene", response_class=HTMLResponse)
+    async def panel_hygiene(request: Request) -> HTMLResponse:
+        state = request.app.state
+        settings: Settings = state.settings
+        lang, theme, window_days = _read_prefs(request, settings)
+        data = await view.build_hygiene(
+            state.store,
+            settings,
+            now=datetime.now(_tz(settings)),
+            docker=getattr(state, "docker", None),
+            llm_config=getattr(state, "llm_config", None),
+            diag_registered=getattr(state, "diag_job_registered", None),
+        )
+        qurl, tab_url = _nav_helpers("/hygiene", lang=lang, theme=theme, window_days=window_days)
+
+        def eurl(event_id: int) -> str:
+            return f"/event/{event_id}?" + urlencode(
+                {"lang": lang, "theme": theme, "win": window_days}
+            )
+
+        html = _env.get_template("hygiene.html").render(
+            **data,
+            t=i18n.make_translator(lang),
+            lang=lang,
+            theme=theme,
+            window_days=window_days,
+            history_days=settings.sentinel_panel_history_days,
+            rule_label=i18n.rule_label,
+            qurl=qurl,
+            tab_url=tab_url,
+            eurl=eurl,
+            active_tab="hygiene",
+        )
+        resp = HTMLResponse(html)
+        _write_pref_cookies(resp, request, lang, theme, window_days)
+        return resp
+
     @app.get("/badge.svg")
     async def panel_badge(request: Request) -> Response:
         # 可嵌徽标(README/外部页 <img src> 引用)。只暴露 open_count——面板本就可见的聚合,
