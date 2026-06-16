@@ -156,6 +156,41 @@ def _summary_of(e: EventRecord) -> str | None:
     return None
 
 
+_CONFIDENCE_LEVELS = ("high", "medium", "low")
+_CONFIDENCE_PCT = {"high": 92, "medium": 66, "low": 38}
+
+
+def _confidence_of(e: EventRecord) -> str | None:
+    """诊断置信度(high/medium/low)读自 diagnosis_json.confidence;缺/坏/未知 → None。"""
+    if not e.diagnosis_json:
+        return None
+    try:
+        d = json.loads(e.diagnosis_json)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if isinstance(d, dict):
+        c = d.get("confidence")
+        if isinstance(c, str) and c.strip().lower() in _CONFIDENCE_LEVELS:
+            return c.strip().lower()
+    return None
+
+
+def _tool_count_of(e: EventRecord) -> int:
+    """取证步数 = diagnosis_tools_json 数组长度;缺/坏 → 0。"""
+    if not e.diagnosis_tools_json:
+        return 0
+    try:
+        calls = json.loads(e.diagnosis_tools_json)
+    except (json.JSONDecodeError, TypeError):
+        return 0
+    return len(calls) if isinstance(calls, list) else 0
+
+
+def _confidence_pct(level: str | None) -> int | None:
+    """置信度 → 环 dasharray 百分比(high/medium/low → 92/66/38);未知/无 → None。"""
+    return _CONFIDENCE_PCT.get(level) if level else None
+
+
 def _event_view(e: EventRecord, tz: timezone, *, diag_active: bool = True) -> dict:
     return {
         "id": e.id,
@@ -168,6 +203,8 @@ def _event_view(e: EventRecord, tz: timezone, *, diag_active: bool = True) -> di
         "diagnosis_status": e.diagnosis_status,
         "has_evidence": e.diagnosis_status == "done" and bool(e.diagnosis_tools_json),
         "summary": _summary_of(e),
+        "confidence": _confidence_of(e),  # §8.3 事件流卡第二行置信度色(总览不引用)
+        "tool_count": _tool_count_of(e),  # §8.3 第三行取证步数
         "resolved_str": _hhmm(e.resolved_ts, tz) if e.resolved_ts else None,
     }
 
@@ -835,6 +872,80 @@ def build_service_detail(
         "posture": {"llm": posture},
         "events": {
             "items": ev_items,
+            "page": page,
+            "total_pages": total_pages,
+            "total": total,
+        },
+    }
+
+
+_EVENT_SEVERITIES = ("critical", "warning")
+_EVENT_STATUSES = ("open", "recovered")
+
+
+def build_events_list(
+    store: Store,
+    settings: Settings,
+    *,
+    now: datetime,
+    page: int = 1,
+    subject: str | None = None,
+    severity: str | None = None,
+    status: str | None = None,
+    service_labels: dict[str, str] | None = None,
+    llm_config=None,
+    diag_registered: bool | None = None,
+) -> dict:
+    """事件流列表 view-model(§8.3)。同源 _event_feed(近 N 天 + 仍 open 的更早),
+    再对 subject/severity/status 做内存过滤(store 无对应过滤查询;事件稀疏,全量过滤廉价)。
+    筛选纯 query 参数,零新查询;翻页须带筛选(路由 qurl 透传 transient)。
+    status='recovered' 映射 EventRecord.status=='resolved';非法筛选值由路由先归一为 None。"""
+    tz = (
+        now.tzinfo
+        if isinstance(now.tzinfo, timezone)
+        else timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    )
+    now_ts = int(now.timestamp())
+    posture = _llm_posture(llm_config, settings, diag_registered=diag_registered)
+    diag_active = posture["enabled"] and not posture["pending_restart"]
+    window_start = now_ts - settings.sentinel_event_feed_days * _DAY_SECONDS
+    recent = store.get_events_since(window_start)
+    older_open = [e for e in store.get_open_events() if e.ts < window_start]
+    feed = sorted(older_open + recent, key=lambda e: e.ts, reverse=True)
+    labels = service_labels or {}
+    subjects = sorted({e.subject for e in feed})
+
+    def keep(e: EventRecord) -> bool:
+        if subject and e.subject != subject:
+            return False
+        if severity and e.severity != severity:
+            return False
+        if status == "open" and e.status != "open":
+            return False
+        if status == "recovered" and e.status != "resolved":
+            return False
+        return True
+
+    filtered = [e for e in feed if keep(e)]
+    size = max(1, settings.sentinel_panel_page_size)
+    total = len(filtered)
+    total_pages = max(1, (total + size - 1) // size)
+    page = min(max(1, page), total_pages)
+    start = (page - 1) * size
+    items: list[dict] = []
+    for e in filtered[start : start + size]:
+        v = _event_view(e, tz, diag_active=diag_active)
+        v["label"] = labels.get(e.subject, e.subject)  # 展示名;无映射回退 subject
+        items.append(v)
+    return {
+        "now_str": now.strftime("%Y-%m-%d %H:%M"),
+        "refresh_seconds": _REFRESH_SECONDS,
+        "subjects": [{"name": s, "label": labels.get(s, s)} for s in subjects],
+        "severities": list(_EVENT_SEVERITIES),
+        "statuses": list(_EVENT_STATUSES),
+        "filters": {"subject": subject, "severity": severity, "status": status},
+        "events": {
+            "items": items,
             "page": page,
             "total_pages": total_pages,
             "total": total,

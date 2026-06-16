@@ -988,3 +988,98 @@ async def test_service_detail_name_escaped(tmp_path, monkeypatch):
     assert "<x>svc" not in r.text  # 服务名 h1 转义
     assert "&lt;x&gt;svc" in r.text
     store.close()
+
+
+async def test_events_list_renders(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    recent = int(datetime.now(tz).timestamp()) - 3600
+    store.insert_event(
+        ts=recent,
+        rule="service_down",
+        subject="api",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    app.state.service_labels = {"api": "API Gateway"}
+    r = await _get(app, "/events?lang=zh")
+    assert r.status_code == 200
+    assert 'class="filters"' in r.text  # 筛选条
+    assert "API Gateway" in r.text  # 服务显示名(卡片 + 筛选 chip)
+    assert 'class="tab-on">事件</a>' in r.text  # 「事件」标签高亮
+    store.close()
+
+
+async def test_events_list_filter_by_severity(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    recent = int(datetime.now(tz).timestamp()) - 3600
+    store.insert_event(
+        ts=recent,
+        rule="service_down",
+        subject="crit-svc",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    store.insert_event(
+        ts=recent - 1,
+        rule="latency_degraded",
+        subject="warn-svc",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/events?severity=warning")
+    assert r.status_code == 200
+    # 服务筛选 chip 仍列出全部 subject(可切换),故按规则名判定卡片区:
+    # 规则名只出现在事件卡,不出现在筛选 chip。warning 卡在,critical 卡被滤掉。
+    assert "延迟退化" in r.text  # latency_degraded(warning)卡
+    assert "服务异常" not in r.text  # service_down(critical)卡被滤掉
+    store.close()
+
+
+async def test_events_list_subject_escaped_and_filter_preserved(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    recent = int(datetime.now(tz).timestamp()) - 3600
+    store.insert_event(
+        ts=recent,
+        rule="service_down",
+        subject="<x>svc",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/events?severity=critical")
+    assert r.status_code == 200
+    assert "<x>svc" not in r.text  # 服务名转义(卡片 + 筛选 chip)
+    assert "&lt;x&gt;svc" in r.text
+    # 翻页/筛选链接保留 severity 选择(qurl 透传 transient)
+    assert "severity=critical" in r.text
+    store.close()

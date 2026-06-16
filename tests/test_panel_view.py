@@ -938,3 +938,121 @@ def test_build_service_detail_related_events_and_marks(tmp_path, monkeypatch):
     # latency 类事件叠到时序图 x 标记上
     assert any(m["rule"] == "latency_degraded" for m in d["marks"])
     store.close()
+
+
+# —— Phase 2:事件流列表 view 单测 ——
+
+
+def test_confidence_and_tool_count_helpers():
+    from sentinel.findings import EventRecord
+    from sentinel.panel.view import _confidence_of, _confidence_pct, _tool_count_of
+
+    def rec(diag_json=None, tools_json=None):
+        return EventRecord(
+            id=1,
+            ts=0,
+            rule="container_down",
+            subject="api",
+            severity="critical",
+            status="open",
+            detail="d",
+            payload_json="{}",
+            diagnosis_status="done",
+            diagnosis_json=diag_json,
+            cooldown_until=0,
+            resolved_ts=None,
+            diagnosis_tools_json=tools_json,
+        )
+
+    assert _confidence_of(rec(json.dumps({"confidence": "High"}))) == "high"  # 归一小写
+    assert _confidence_of(rec(json.dumps({"confidence": "bogus"}))) is None
+    assert _confidence_of(rec(None)) is None
+    assert _confidence_of(rec("not-json")) is None
+    assert _tool_count_of(rec(tools_json=json.dumps([{"tool": "a"}, {"tool": "b"}]))) == 2
+    assert _tool_count_of(rec(tools_json=None)) == 0
+    assert _tool_count_of(rec(tools_json="bad")) == 0
+    assert _confidence_pct("high") == 92 and _confidence_pct("medium") == 66
+    assert _confidence_pct("low") == 38 and _confidence_pct(None) is None
+
+
+def test_event_view_exposes_confidence_and_tool_count(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    _seed_open(
+        store,
+        "container_down",
+        "api",
+        diag={"summary": "x", "confidence": "medium"},
+        tools=[{"tool": "docker_logs", "output": "o", "ok": True}],
+    )
+    data = view.build_events_list(store, settings, now=NOW)
+    it = data["events"]["items"][0]
+    assert it["confidence"] == "medium"
+    assert it["tool_count"] == 1
+    store.close()
+
+
+def test_build_events_list_filters_and_subjects(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    _seed_open(store, "service_down", "api", ts=NOW_TS - 100)  # critical open
+    store.insert_event(
+        ts=NOW_TS - 200,
+        rule="latency_degraded",
+        subject="auth",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    rid = store.insert_event(
+        ts=NOW_TS - 300,
+        rule="container_down",
+        subject="api",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    store.resolve_event(rid, resolved_ts=NOW_TS - 250)  # recovered
+    base = view.build_events_list(store, settings, now=NOW)
+    assert base["events"]["total"] == 3
+    assert [s["name"] for s in base["subjects"]] == ["api", "auth"]  # distinct + 排序
+    # subject=api → 2(service_down + 已恢复 container_down)
+    assert view.build_events_list(store, settings, now=NOW, subject="api")["events"]["total"] == 2
+    # severity=warning → 1(auth)
+    sv = view.build_events_list(store, settings, now=NOW, severity="warning")
+    assert sv["events"]["total"] == 1 and sv["events"]["items"][0]["subject"] == "auth"
+    # status=recovered → 1(已恢复的 container_down)
+    rc = view.build_events_list(store, settings, now=NOW, status="recovered")
+    assert rc["events"]["total"] == 1 and rc["events"]["items"][0]["lifecycle"] == "recovered"
+    # status=open → 2
+    assert view.build_events_list(store, settings, now=NOW, status="open")["events"]["total"] == 2
+    store.close()
+
+
+def test_build_events_list_label_and_page_clamp(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    for i in range(20):
+        store.insert_event(
+            ts=NOW_TS - 100 - i,
+            rule="service_down",
+            subject="api",
+            severity="critical",
+            status="open",
+            detail="d",
+            payload_json="{}",
+            diagnosis_status="skipped",
+            cooldown_until=0,
+        )
+    data = view.build_events_list(
+        store, settings, now=NOW, page=999, service_labels={"api": "API Gateway"}
+    )
+    assert data["events"]["page"] == data["events"]["total_pages"]  # 越界钳到末页
+    assert data["events"]["items"][0]["label"] == "API Gateway"  # label 回填
+    store.close()

@@ -1,0 +1,65 @@
+{% extends "_base.html" %}
+{% block title %}{{ t('hdr.title') }}{% endblock %}
+{% block body %}
+<div class="wrap">
+<div class="filters">
+  <div class="frow">
+    <span class="fk">{{ t('filter.service') }}</span>
+    <span class="fchips">
+      <a href="{{ qurl(subject=none, ev_page=1) }}" class="fchip {{ 'on' if not filters.subject else '' }}">{{ t('filter.all') }}</a>
+      {% for s in subjects %}
+      <a href="{{ qurl(subject=s.name, ev_page=1) }}" class="fchip {{ 'on' if filters.subject == s.name else '' }}">{{ s.label }}</a>
+      {% endfor %}
+    </span>
+  </div>
+  <div class="frow">
+    <span class="fk">{{ t('filter.severity') }}</span>
+    <span class="fchips">
+      <a href="{{ qurl(severity=none, ev_page=1) }}" class="fchip {{ 'on' if not filters.severity else '' }}">{{ t('filter.all') }}</a>
+      {% for sv in severities %}
+      <a href="{{ qurl(severity=sv, ev_page=1) }}" class="fchip {{ 'on' if filters.severity == sv else '' }}">{{ t('sev.' ~ sv) }}</a>
+      {% endfor %}
+    </span>
+  </div>
+  <div class="frow">
+    <span class="fk">{{ t('filter.status') }}</span>
+    <span class="fchips">
+      <a href="{{ qurl(status=none, ev_page=1) }}" class="fchip {{ 'on' if not filters.status else '' }}">{{ t('filter.all') }}</a>
+      {% for stt in statuses %}
+      <a href="{{ qurl(status=stt, ev_page=1) }}" class="fchip {{ 'on' if filters.status == stt else '' }}">{{ t('life.' ~ stt) }}</a>
+      {% endfor %}
+    </span>
+  </div>
+</div>
+
+{% for e in events['items'] %}
+<div class="ev">
+  <div class="top">
+    <span class="dot {{ e.severity }}" title="{{ t('sev.' ~ e.severity) }}"></span>
+    <b>{{ rule_label(e.rule, lang) }}</b> <span class="mono">{{ e.label }}</span>
+    <span class="chip {{ 'ok' if e.lifecycle == 'recovered' else '' }}">{{ t('life.' ~ e.lifecycle) }}</span>
+    {% if e.is_scan_failure %}<span class="chip warn">{{ t('ev.scanfail') }}</span>{% endif %}
+    <span class="when mono">{{ e.ts_str }}{% if e.resolved_str %} → {{ e.resolved_str }}{% endif %}</span>
+  </div>
+  {% if e.summary %}
+  <div class="diag">{% if lang != diag_lang %}<div class="diag-lang">{{ t('ev.diag_lang', lang=diag_lang) }}</div>{% endif %}<div class="lbl">🧠 {{ t('ev.summary') }}</div><div class="body">{{ e.summary }}</div></div>
+  {% endif %}
+  <div class="evmeta">
+    {% if e.confidence %}<span class="conf {{ e.confidence }}">{{ t('evl.conf', level=t('conf.' ~ e.confidence)) }}</span>{% endif %}
+    {% if e.tool_count %}<span>🔎 {{ t('evl.tools', n=e.tool_count) }}</span>{% endif %}
+    <a href="{{ eurl(e.id) }}">{{ t('ev.detail') }}</a>
+  </div>
+</div>
+{% else %}
+<div class="ev muted">{{ t('ev.empty') }}</div>
+{% endfor %}
+
+{% if events.total_pages > 1 %}
+<div class="pager">
+  {% if events.page > 1 %}<a href="{{ qurl(ev_page=events.page - 1) }}">{{ t('ev.prev') }}</a>{% endif %}
+  <span>{{ t('ev.page', page=events.page, total=events.total_pages, count=events.total) }}</span>
+  {% if events.page < events.total_pages %}<a href="{{ qurl(ev_page=events.page + 1) }}">{{ t('ev.next') }}</a>{% endif %}
+</div>
+{% endif %}
+</div>
+{% endblock %}

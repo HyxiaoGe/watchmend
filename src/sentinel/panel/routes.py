@@ -311,6 +311,65 @@ def register_panel_routes(app: FastAPI) -> None:
         _write_pref_cookies(resp, request, lang, theme, window_days)
         return resp
 
+    @app.get("/events", response_class=HTMLResponse)
+    async def panel_events(request: Request) -> HTMLResponse:
+        state = request.app.state
+        settings: Settings = state.settings
+        q = request.query_params
+        lang, theme, window_days = _read_prefs(request, settings)
+        page = prefs.resolve_page(q.get("ev_page"))
+        # 非法筛选值归一为 None(severity/status 仅接受白名单;subject 任意串透传)
+        subject = (q.get("subject") or "").strip() or None
+        sev_q = (q.get("severity") or "").strip().lower()
+        severity = sev_q if sev_q in view._EVENT_SEVERITIES else None
+        st_q = (q.get("status") or "").strip().lower()
+        status = st_q if st_q in view._EVENT_STATUSES else None
+        data = view.build_events_list(
+            state.store,
+            settings,
+            now=datetime.now(_tz(settings)),
+            page=page,
+            subject=subject,
+            severity=severity,
+            status=status,
+            service_labels=getattr(state, "service_labels", None),
+            llm_config=getattr(state, "llm_config", None),
+            diag_registered=getattr(state, "diag_job_registered", None),
+        )
+        qurl, tab_url = _nav_helpers(
+            "/events",
+            lang=lang,
+            theme=theme,
+            window_days=window_days,
+            subject=subject,
+            severity=severity,
+            status=status,
+            ev_page=data["events"]["page"],
+        )
+
+        def eurl(event_id: int) -> str:
+            return f"/event/{event_id}?" + urlencode(
+                {"lang": lang, "theme": theme, "win": window_days}
+            )
+
+        html = _env.get_template("events.html").render(
+            **data,
+            t=i18n.make_translator(lang),
+            lang=lang,
+            theme=theme,
+            window_days=window_days,
+            history_days=settings.sentinel_panel_history_days,
+            rule_label=i18n.rule_label,
+            diag_lang=settings.sentinel_llm_lang,
+            qurl=qurl,
+            tab_url=tab_url,
+            eurl=eurl,
+            active_tab="events",
+        )
+        resp = HTMLResponse(html)
+        _write_pref_cookies(resp, request, lang, theme, window_days)
+        return resp
+
     @app.get("/badge.svg")
     async def panel_badge(request: Request) -> Response:
         # 可嵌徽标(README/外部页 <img src> 引用)。只暴露 open_count——面板本就可见的聚合,
