@@ -1,8 +1,8 @@
 {% extends "_base.html" %}
 {% block body %}
 <div class="wrap">
-{% set open_total = needs_attention|length + rollup.hygiene_alert_count %}
-{% set hero_bad = open_total > 0 %}
+
+{# —— HERO:去重状态环(环段=今日 4 态分布、中心=今日可用率带阈值色)+ 环旁 KPI 事实 —— #}
 <div class="hero">
   <div class="hero-ring">
     <svg viewBox="0 0 100 100" aria-hidden="true">
@@ -17,40 +17,46 @@
         {% endif %}
       {% endfor %}
     </svg>
-    <div class="ring-center {{ 'bad' if hero_bad else '' }}">
+    <div class="ring-center {{ hero.uptime_grade }}">
       <span class="num">{% if hero.uptime_pct is not none %}{{ hero.uptime_pct }}<span class="pct">%</span>{% else %}—{% endif %}</span>
-    </div>
-  </div>
-  <div class="hero-stats">
-    <div class="hstat">
-      <span class="num">{% if hero.uptime_pct is not none %}{{ hero.uptime_pct }}{% else %}—{% endif %}</span>
       <span class="cap">{{ t('hero.uptime_label') }}</span>
     </div>
-    <div class="hstat {{ 'bad' if hero_bad else '' }}">
-      {% if hero_bad %}
-      <span class="num">{{ open_total }}</span>
-      <span class="cap">{{ t('hero.open', open=open_total) }}</span>
-      {% elif hero.days_clean is not none %}
-      <span class="num">{{ hero.days_clean }}</span>
-      <span class="cap">{{ t('hero.days_clean', n=hero.days_clean) }}</span>
-      {% else %}
-      <span class="num">0</span>
-      <span class="cap">{{ t('hero.no_events') }}</span>
-      {% endif %}
+  </div>
+  <div class="kpis">
+    {# 服务态:N/M ok(4 态计数,环已编码分布)#}
+    <div class="kpi">
+      <span class="num">{{ hero.services.ok }}/{{ hero.services.total }}</span>
+      <span class="cap">{{ t('ov.svc_ok', ok=hero.services.ok, total=hero.services.total) }}</span>
+    </div>
+    {# 窗口均值 7/30/90d + Δ 箭头(纯 CSS 类,无图表)#}
+    {% for wk, wd in [('d7', 7), ('d30', 30), ('d90', 90)] %}
+    {% set w = hero.windows[wk] %}
+    <div class="kpi">
+      <span class="num">{% if w.mean is not none %}{{ w.mean }}<span class="pct">%</span>{% else %}<span class="nodata">–</span>{% endif %}{% if w.delta is not none %}{% set arrow = '▲' if w.dir == 'up' else ('▼' if w.dir == 'down' else '→') %} <span class="delta {{ w.dir }}">{{ arrow }}{{ '%+.1f'|format(w.delta) }}</span>{% endif %}</span>
+      <span class="cap">{{ t('ov.win_mean', days=wd) }}</span>
+    </div>
+    {% endfor %}
+    {# 开放事件:总数 + 按严重度(calm/busy 读法一致)#}
+    <div class="kpi">
+      <span class="num">{{ hero.open.total }}{% if hero.open.critical %} <span class="sev crit">●{{ hero.open.critical }}</span>{% endif %}{% if hero.open.warning %} <span class="sev warn">●{{ hero.open.warning }}</span>{% endif %}</span>
+      <span class="cap">{{ t('ov.open') }}</span>
+    </div>
+    {# 24h 净流:新增 vs 恢复(对称真实事件口径)#}
+    <div class="kpi">
+      <span class="num">+{{ hero.flow_24h.opened }} / −{{ hero.flow_24h.resolved }}</span>
+      <span class="cap">{{ t('ov.flow') }} · {{ t('ov.opened') }}/{{ t('ov.resolved') }}</span>
+    </div>
+    {# MTTR(近 30d 已恢复,过滤 point 事件)#}
+    <div class="kpi">
+      <span class="num">{{ fmt_duration(hero.mttr.mean_s) }}</span>
+      <span class="cap">{{ t('ov.mttr') }}{% if hero.mttr.n %} · {{ t('ov.mttr_worst', dur=fmt_duration(hero.mttr.worst_s)) }}{% endif %}</span>
     </div>
   </div>
-  {% if hero.trend.line_d %}
-  <div class="hero-trend">
-    <svg viewBox="0 0 300 64" preserveAspectRatio="none" aria-hidden="true">
-      {% if hero.trend.area_d %}<path d="{{ hero.trend.area_d }}" fill="var(--p50-fill)" stroke="none"/>{% endif %}
-      <path d="{{ hero.trend.line_d }}" fill="none" stroke="var(--link)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
-    </svg>
-  </div>
-  {% endif %}
 </div>
 
-<div class="secrow"><span class="sec">{{ t('sec.attention') }}</span></div>
+{# —— 待关注:当前未结告警(非 hygiene),压缩成行 → /event/{id};非空才渲 —— #}
 {% if needs_attention %}
+<div class="secrow"><span class="sec">{{ t('sec.attention') }}</span></div>
 <div class="attn">
   {% for e in needs_attention[:10] %}
   <a class="arow" href="{{ eurl(e.id) }}">
@@ -66,26 +72,58 @@
   <a class="arow more" href="{{ tab_url('/events') }}">{{ t('attn.more', n=needs_attention|length - 10) }} →</a>
   {% endif %}
 </div>
-{% else %}
-<div class="allclear">✓ {{ t('sec.allclear') }}</div>
 {% endif %}
 
-<div class="rollup">
-  <a class="rcard" href="{{ tab_url('/services') }}">
-    <span class="rk">{{ t('roll.services') }}</span>
-    <span class="rv">{{ rollup.services.total }}
-      <span class="ok">{{ rollup.services.ok }}✓</span>
-      {% if rollup.services.problem %}<span class="crit">{{ rollup.services.problem }} {{ t('roll.problem') }}</span>{% endif %}
-      {% if rollup.services.nodata %}<span class="muted">{{ rollup.services.nodata }} {{ t('st.nodata') }}</span>{% endif %}
-    </span>
+{# —— 服务可用率(最差优先;今日/7d/30d 多窗口切面;截断 cap,其余 → /services)—— #}
+<div class="secrow">
+  <span class="sec">{{ t('roster.title') }}</span>
+  <span class="muted">{{ t('roster.worst_first') }}</span>
+</div>
+{% if roster.rows %}
+<div class="roster">
+  <div class="rhead">
+    <span class="rname"></span>
+    <span class="rw">{{ t('roster.col_today') }}</span>
+    <span class="rw">{{ t('roster.col_7d') }}</span>
+    <span class="rw">{{ t('roster.col_30d') }}</span>
+    <span class="rp95"></span>
+    <span class="rgo"></span>
+  </div>
+  {% for row in roster.rows %}
+  <a class="rrow {{ row.state }}" href="{{ surl(row.name) }}">
+    <span class="rname"><span class="rdot {{ row.state }}"></span>{{ row.label }}</span>
+    {% for v in [row.d1, row.d7, row.d30] %}
+    <span class="rw{% if v is none %} nodata{% endif %} mono">{% if v is not none %}{{ v }}%{% else %}–{% endif %}</span>
+    {% endfor %}
+    <span class="rp95 mono">{% if row.p95_ms is not none %}p95 {{ row.p95_ms|round|int }}ms{% else %}–{% endif %}</span>
+    <span class="rgo">→</span>
   </a>
+  {% endfor %}
+  {% if roster.overflow > 0 %}
+  <a class="rrow more" href="{{ tab_url('/services') }}">… {{ t('roster.more', n=roster.overflow) }} →</a>
+  {% endif %}
+</div>
+{% else %}
+<div class="allclear muted">{{ t('svc.empty') }}</div>
+{% endif %}
+
+{# —— 汇总行:体检按类型计数(链 /hygiene)+ 日报新鲜度 —— #}
+<div class="rollup">
   <a class="rcard" href="{{ tab_url('/hygiene') }}">
     <span class="rk">{{ t('roll.hygiene') }}</span>
-    <span class="rv">{% if rollup.hygiene_alert_count %}<span class="warn">{{ t('roll.hyg_alerts', n=rollup.hygiene_alert_count) }}</span>{% else %}<span class="ok">{{ t('roll.hyg_ok') }} ✓</span>{% endif %}</span>
+    <span class="rv">
+      {% for label, n in [(t('ov.hyg_backup'), rollup.hygiene.backup), (t('ov.hyg_disk'), rollup.hygiene.disk), (t('ov.hyg_cert'), rollup.hygiene.cert)] %}
+      <span class="{{ 'warn' if n else 'muted' }}">{{ label }} {{ n }}</span>
+      {% endfor %}
+    </span>
   </a>
   <div class="rcard">
     <span class="rk">{{ t('roll.report') }}</span>
-    <span class="rv">{% if rollup.last_report_date %}{{ rollup.last_report_date }}{% else %}<span class="muted">{{ t('roll.report_never') }}</span>{% endif %}</span>
+    <span class="rv">
+      {% if rollup.report.freshness == 'never' %}<span class="muted">{{ t('roll.report_never') }}</span>
+      {% elif rollup.report.freshness == 'today' %}<span class="mono">{{ rollup.report.date }}</span> <span class="ok">{{ t('report.today') }} ✓</span>
+      {% else %}<span class="mono">{{ rollup.report.date }}</span> <span class="warn">{{ t('report.stale', days=rollup.report.days) }}</span>{% endif %}
+    </span>
   </div>
 </div>
 </div>
