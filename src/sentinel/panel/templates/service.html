@@ -1,6 +1,7 @@
 {% extends "_base.html" %}
 {% block title %}{{ t('hdr.title') }}{% endblock %}
 {% block body %}
+{% from "_macros.html" import tip with context %}
 <div class="wrap">
 <p class="crumb"><a href="{{ services_url }}">← {{ t('tab.services') }}</a></p>
 {% if detail is none %}
@@ -18,15 +19,15 @@
   <div class="lat3">
     <div class="cell">
       <span class="v {{ 'breach' if detail.compare.breached else '' }}">{% if detail.compare.current_ms is not none %}{{ detail.compare.current_ms }}<span class="u">ms</span>{% else %}—{% endif %}</span>
-      <span class="k">{{ t('svc.cur_p95') }}</span>
+      <span class="k">{{ tip(t('svc.cur_p95'), 'p95', 'p95') }}</span>
     </div>
     <div class="cell">
       <span class="v">{% if detail.compare.baseline_ms is not none %}{{ detail.compare.baseline_ms }}<span class="u">ms</span>{% else %}—{% endif %}</span>
-      <span class="k">{% if detail.compare.baseline_ms is not none %}{{ t('svc.baseline', days=detail.compare.baseline_days) }}{% else %}{{ t('svc.no_baseline') }}{% endif %}</span>
+      <span class="k">{{ tip((t('svc.baseline', days=detail.compare.baseline_days) if detail.compare.baseline_ms is not none else t('svc.no_baseline')), 'baseline', 'baseline') }}</span>
     </div>
     <div class="cell">
       <span class="v">{% if detail.compare.threshold_ms is not none %}{{ detail.compare.threshold_ms }}<span class="u">ms</span>{% else %}—{% endif %}</span>
-      <span class="k">{{ t('svc.threshold') }}</span>
+      <span class="k">{{ tip(t('svc.threshold'), 'threshold', 'threshold') }}</span>
     </div>
   </div>
   {% if detail.compare.fill_pct is not none %}
