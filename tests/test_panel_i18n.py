@@ -74,6 +74,17 @@ def test_new_template_keys_present():
         "ev.notfound",
         "ev.notfound_hint",
         "ev.commands",
+        # SLO 看板(总览重设计)
+        "ov.svc_ok",
+        "ov.win_mean",
+        "ov.open",
+        "ov.flow",
+        "ov.mttr",
+        "roster.title",
+        "roster.col_today",
+        "roster.more",
+        "report.today",
+        "report.stale",
     }
     for k in needed:
         assert k in i18n.MESSAGES["zh"], f"zh missing {k}"
