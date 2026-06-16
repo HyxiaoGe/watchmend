@@ -1083,3 +1083,49 @@ async def test_events_list_subject_escaped_and_filter_preserved(tmp_path, monkey
     # 翻页/筛选链接保留 severity 选择(qurl 透传 transient)
     assert "severity=critical" in r.text
     store.close()
+
+
+async def test_event_detail_timeline_and_confidence_ring(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm/v1", LLM_MODEL="m")
+    store = Store(str(tmp_path / "s.db"))
+    eid = store.insert_event(
+        ts=1700000000,
+        rule="container_down",
+        subject="postgres",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="pending",
+        cooldown_until=0,
+    )
+    store.set_diagnosis(
+        eid,
+        status="done",
+        diagnosis_json=json.dumps(
+            {
+                "summary": "进程被 OOM killer 终止",
+                "root_cause": "内存超限",
+                "confidence": "high",
+                "suggested_commands": ["docker restart postgres"],
+            }
+        ),
+        tools_json=json.dumps(
+            [
+                {"tool": "docker_logs", "args": {"name": "postgres"}, "output": "OOM", "ok": True},
+                {"tool": "docker_inspect", "args": {}, "output": "{}", "ok": False},
+            ]
+        ),
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, f"/event/{eid}?lang=zh")
+    assert r.status_code == 200
+    assert 'class="diaghero"' in r.text  # HERO 诊断卡
+    assert 'class="timeline"' in r.text  # 证据链 timeline
+    assert r.text.count('class="tl-node') == 3  # 2 工具节点 + 1 末端结论菱形(末端含 tl-end)
+    assert 'class="tl-node tl-end"' in r.text  # 终端结论节点
+    assert "内存超限" in r.text  # 根因大字 + 结论回指
+    assert "✓" in r.text and "✗" in r.text  # 成功/失败工具各一
+    assert 'stroke-dasharray="92 8"' in r.text  # high → 92% 置信度环
+    assert "docker restart postgres" in r.text  # 建议命令(永不自动执行)
+    store.close()

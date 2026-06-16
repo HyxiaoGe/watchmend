@@ -169,6 +169,29 @@
   .conf.medium { color:var(--st-degraded); border-color:#7a5a12; }
   .conf.low { color:var(--mut); }
   .evmeta { color:var(--mut); font-size:11px; margin-top:8px; display:flex; gap:14px; flex-wrap:wrap; align-items:center; }
+  /* —— Phase 2:事件详情(HERO 诊断卡 + 证据链 timeline)—— */
+  .diaghero { display:grid; grid-template-columns:auto 1fr; gap:clamp(16px,3vw,28px); align-items:center;
+    border:1px solid var(--vio); border-radius:var(--rad-lg); background:var(--panel) var(--hero-glow);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.04); padding:clamp(18px,3vw,28px); margin:14px 0; }
+  .diaghero .hero-ring { width:clamp(96px,14vw,128px); height:clamp(96px,14vw,128px); }
+  .diaghero .ring-center .num { color:var(--vio); font-size:var(--fz-display); }
+  .diaghero .ring-center .cap { color:var(--mut); font-size:10px; text-transform:uppercase; letter-spacing:.4px; margin-top:2px; }
+  .dh-root { font-size:var(--fz-display); font-weight:700; line-height:1.2; }
+  .dh-sum { font-size:13px; line-height:1.55; margin-top:8px; }
+  .dh-ev { margin:10px 0 0; padding-left:18px; color:var(--mut); font-size:12px; }
+  .dh-ev li { margin:2px 0; }
+  .timeline { position:relative; margin:10px 0 14px 8px; padding-left:22px; border-left:2px solid var(--line);
+    display:flex; flex-direction:column; gap:14px; }
+  .tl-node { position:relative; }
+  .tl-dot { position:absolute; left:-29px; top:2px; width:13px; height:13px; border-radius:50%;
+    border:2px solid var(--bg); background:var(--st-ok); }
+  .tl-dot.bad { background:var(--st-down); }
+  .tl-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .tl-tool { font-family:ui-monospace,Menlo,monospace; font-weight:600; font-size:12px; }
+  .tl-args { color:var(--mut); font-family:ui-monospace,Menlo,monospace; font-size:11px; word-break:break-all; }
+  .tl-node details { margin-top:5px; }
+  .tl-end .tl-dot { background:var(--vio); border-radius:2px; transform:rotate(45deg); left:-28px; }
+  .tl-end .tl-concl { color:var(--vio); font-weight:600; font-size:12px; }
 </style>
 </head>
 <body>

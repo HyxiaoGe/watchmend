@@ -997,9 +997,12 @@ def build_event_detail(
             diagnosis = parsed if isinstance(parsed, dict) else None
         except (json.JSONDecodeError, TypeError):
             diagnosis = None
+    conf_level = _confidence_of(e)  # 归一 high/medium/low(给 HERO 置信度环)
     return {
         "event": ev,
         "llm_enabled": posture["enabled"],
         "diagnosis": diagnosis,
+        "confidence_level": conf_level,  # §8.3 HERO:环填充 + 标签
+        "confidence_pct": _confidence_pct(conf_level),  # 92/66/38 给环 dasharray
         "tool_calls": _tool_calls_view(e.diagnosis_tools_json),
     }

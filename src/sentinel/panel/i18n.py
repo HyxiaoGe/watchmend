@@ -105,6 +105,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "conf.high": "高",
         "conf.medium": "中",
         "conf.low": "低",
+        "ev.confidence": "置信度",
+        "ev.timeline": "诊断证据链 · 只读取证",
+        "ev.conclusion": "诊断结论",
         "footer.readonly": "只读 · localhost-only · env 值全遮蔽 · 建议命令永不自动执行",
     },
     "en": {
@@ -205,6 +208,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "conf.high": "high",
         "conf.medium": "medium",
         "conf.low": "low",
+        "ev.confidence": "Confidence",
+        "ev.timeline": "Diagnosis evidence chain · read-only",
+        "ev.conclusion": "Conclusion",
         "footer.readonly": "read-only · localhost-only · env values redacted · "
         "suggested commands never auto-run",
     },
