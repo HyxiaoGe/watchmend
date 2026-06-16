@@ -1292,6 +1292,7 @@ async def test_nav_shows_version_pill_and_icon_nav(tmp_path, monkeypatch):
     assert f"v{__version__}" in html  # 版本胶囊
     assert 'class="tabs"' in html  # 图标导航行
     assert "<svg" in html  # 内联 SVG 图标
+    assert 'aria-label="中文"' in html and 'aria-label="English"' in html  # 语言控件可达名
     store.close()
 
 
@@ -1314,6 +1315,8 @@ async def test_nav_shows_update_when_meta_set(tmp_path, monkeypatch):
     assert '<i class="updot">' in html  # 琥珀更新点元素
     assert "999.0.0" in html  # 更新命令含目标版本
     assert "https://github.com/x/y/releases/v999.0.0" in html  # release 链接
+    # 版本胶囊 aria-label 在有更新时也播报"有新版"(屏幕阅读器不只听到当前版本)
+    assert '· 新版 v999.0.0 可用"' in html
     store.close()
 
 
