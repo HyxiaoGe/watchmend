@@ -161,6 +161,54 @@ def _delta_dir(delta: float | None, eps: float = 0.05) -> str:
     return "up" if delta > 0 else "down"
 
 
+_POINT_RULES = frozenset({"container_oom", "container_crashloop", "container_restart"})
+
+
+def _is_real_incident(rule: str) -> bool:
+    """「真实事件」= 可开→可恢复的状态型告警,排除 hygiene、巡检失败、即开即解的 point 事件。
+    用于 MTTR 与 24h 净流的一致口径,避免每天例行触发的噪声污染信号。"""
+    return (
+        rule not in HYGIENE_RULES
+        and not rule.startswith("scan_failed_")
+        and rule not in _POINT_RULES
+    )
+
+
+def _mttr(resolved_events: list) -> dict:
+    """MTTR(窗口内已恢复事件的平均/最差解决时长,秒)。
+    仅计 resolved_ts > ts 的事件 → 天然排除 point 事件(resolved_ts==ts→时长 0,否则静默拉低均值)。
+    返回 {mean_s, worst_s, n};n=0 → mean/worst None。"""
+    durs = [e.resolved_ts - e.ts for e in resolved_events if e.resolved_ts and e.resolved_ts > e.ts]
+    if not durs:
+        return {"mean_s": None, "worst_s": None, "n": 0}
+    return {"mean_s": round(sum(durs) / len(durs)), "worst_s": max(durs), "n": len(durs)}
+
+
+def _net_flow(opened_events: list, resolved_events: list) -> dict:
+    """24h 净流:窗口内新开 vs 已恢复的「真实事件」计数(对称口径)。
+    opened 按 ts 落窗(调用方已过滤窗口);resolved 还须 resolved_ts>ts(真转移)。"""
+    opened = sum(1 for e in opened_events if _is_real_incident(e.rule))
+    resolved = sum(
+        1
+        for e in resolved_events
+        if _is_real_incident(e.rule) and e.resolved_ts and e.resolved_ts > e.ts
+    )
+    return {"opened": opened, "resolved": resolved}
+
+
+def _fmt_duration(s: float | None) -> str:
+    """时长(秒)→ 紧凑人类可读(s/m/h/d)。None → "–"。"""
+    if s is None:
+        return "–"
+    if s < 60:
+        return f"{round(s)}s"
+    if s < 3600:
+        return f"{round(s / 60)}m"
+    if s < _DAY_SECONDS:
+        return f"{round(s / 3600)}h"
+    return f"{round(s / _DAY_SECONDS)}d"
+
+
 def _row_state(r: dict) -> str:
     """健康行现态 = 最后一日(今日)格状态;空 days → nodata。与 overall_ring 同口径。"""
     days = r.get("days") or []

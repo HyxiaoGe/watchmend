@@ -781,6 +781,71 @@ def test_service_state_counts():
     }
 
 
+def test_is_real_incident():
+    from sentinel.panel.view import _is_real_incident
+
+    assert _is_real_incident("service_down") is True
+    assert _is_real_incident("container_down") is True  # 状态型可恢复事件
+    assert _is_real_incident("disk_usage") is True
+    assert _is_real_incident("backup_stale") is False  # hygiene
+    assert _is_real_incident("cert_expiry") is False
+    assert _is_real_incident("scan_failed_loki") is False  # 巡检失败
+    assert _is_real_incident("container_oom") is False  # point 事件
+    assert _is_real_incident("container_crashloop") is False
+    assert _is_real_incident("container_restart") is False
+
+
+def _ev(ts, resolved_ts=None, rule="service_down"):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(ts=ts, resolved_ts=resolved_ts, rule=rule)
+
+
+def test_mttr_excludes_point_events():
+    from sentinel.panel.view import _mttr
+
+    resolved = [
+        _ev(1000, 1000 + 600),  # 10 分钟
+        _ev(2000, 2000 + 1800),  # 30 分钟
+        _ev(3000, 3000),  # point 事件 resolved_ts==ts → 排除(否则把均值拉低)
+        _ev(4000, None),  # 未真正恢复 → 排除
+    ]
+    m = _mttr(resolved)
+    assert m["n"] == 2
+    assert m["mean_s"] == 1200  # (600+1800)/2
+    assert m["worst_s"] == 1800
+    # 空 → None
+    assert _mttr([]) == {"mean_s": None, "worst_s": None, "n": 0}
+    assert _mttr([_ev(5000, 5000)]) == {"mean_s": None, "worst_s": None, "n": 0}
+
+
+def test_net_flow():
+    from sentinel.panel.view import _net_flow
+
+    opened = [
+        _ev(10, rule="service_down"),
+        _ev(20, rule="container_oom"),
+        _ev(30, rule="backup_stale"),
+    ]
+    resolved = [
+        _ev(5, 15, rule="service_down"),  # 真实恢复
+        _ev(6, 6, rule="container_oom"),  # point 排除
+        _ev(7, 17, rule="scan_failed_loki"),  # 巡检排除
+    ]
+    # opened 仅 service_down 计入(oom/backup 排除);resolved 仅 service_down
+    assert _net_flow(opened, resolved) == {"opened": 1, "resolved": 1}
+
+
+def test_fmt_duration():
+    from sentinel.panel.view import _fmt_duration
+
+    assert _fmt_duration(None) == "–"
+    assert _fmt_duration(45) == "45s"
+    assert _fmt_duration(1320) == "22m"
+    assert _fmt_duration(10800) == "3h"
+    assert _fmt_duration(180000) == "2d"
+
+
 async def test_build_overview_exposes_hero_and_mini(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
