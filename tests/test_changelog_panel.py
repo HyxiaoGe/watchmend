@@ -72,6 +72,37 @@ def test_parse_empty_text():
     assert parse_changelog("") == []
 
 
+_NESTED_SAMPLE = """\
+## [0.2.0] - 2026-06-14
+
+### Added
+- First public milestone, completing four capability areas on top of the
+  0.1.x core:
+  - **Environment auto-discovery**: zero-config detection of monitored
+    containers via a read-only docker API.
+  - **Multi-channel notifications**: Feishu + Telegram + ntfy.
+
+[0.2.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.1.0...v0.2.0
+"""
+
+
+def test_parse_nested_subbullets_become_separate_entries():
+    # 真实 0.2.0 用缩进子弹列特性:不能压成一条 run-on,不能泄漏字面 "- **"
+    added = parse_changelog(_NESTED_SAMPLE)[0].sections[0]
+    assert added.category == "Added"
+    assert len(added.entries) == 3  # 父句 + 两个子弹各成一条
+    assert added.entries[0] == (
+        "First public milestone, completing four capability areas on top of the 0.1.x core:"
+    )
+    assert added.entries[1].startswith("**Environment auto-discovery**:")
+    assert added.entries[2].startswith("**Multi-channel notifications**:")
+    # 子弹自身折行续行仍并入对应条目
+    assert "read-only docker API." in added.entries[1]
+    # 无字面子弹标记泄漏进任何条目
+    for e in added.entries:
+        assert "- **" not in e, f"字面子弹标记泄漏: {e!r}"
+
+
 def test_resolve_finds_source_tree_changelog():
     # 源码树(无 wheel):回落仓库根的真实 CHANGELOG
     from sentinel.panel.changelog import _resolve

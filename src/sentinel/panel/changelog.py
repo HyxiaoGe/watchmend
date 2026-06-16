@@ -10,7 +10,10 @@ from pathlib import Path
 
 _VERSION_RE = re.compile(r"^## \[(\d+\.\d+\.\d+)\](?:\s*-\s*(\S+))?\s*$")
 _SECTION_RE = re.compile(r"^### (.+?)\s*$")
-_ENTRY_RE = re.compile(r"^- (.+?)\s*$")
+# 顶层与缩进子弹都算独立条目(子弹的 `- ` 前可有缩进);否则缩进子弹会被当作续行
+# 并入上一条,压成 run-on 且泄漏字面 "- "。子弹自身的折行续行(缩进、无 `- `)仍由
+# 下方续行分支并入对应条目。
+_ENTRY_RE = re.compile(r"^\s*- (.+?)\s*$")
 
 
 @dataclass(frozen=True)
