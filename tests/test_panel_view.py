@@ -121,8 +121,9 @@ async def test_build_overview_anomalies_and_posture(tmp_path, monkeypatch):
         diagnosis_status="skipped",
         cooldown_until=0,
     )
-    ov = await view.build_overview(store, settings, now=NOW, docker=None)
-    rules = {a["rule"]: a for a in ov["anomalies"]}
+    ov = await view.build_overview(store, settings, now=NOW)
+    # 待关注:当前未结的告警事件(非 hygiene),压缩供首页一行展示
+    rules = {a["rule"]: a for a in ov["needs_attention"]}
     assert rules["container_down"]["lifecycle"] == "diagnosed"
     assert rules["container_down"]["has_evidence"] is True
     assert rules["container_down"]["summary"] == "OOM 被杀"
@@ -130,21 +131,23 @@ async def test_build_overview_anomalies_and_posture(tmp_path, monkeypatch):
     assert rules["container_down"]["rule"] == "container_down"
     assert rules["scan_failed_loki"]["is_scan_failure"] is True
     assert rules["scan_failed_loki"]["lifecycle"] == "scan_failed"
-    p = ov["posture"]
-    assert p["layers"] == {"prometheus": True, "loki": True, "docker": False, "llm": True}
-    assert p["llm"] == {"enabled": True, "pending_restart": False, "model": "deepseek-chat"}
-    assert p["docker"] == {"mode": "off", "read_only": True}
-    assert p["channels"] == ["飞书"]
-    assert p["env_redaction"] == [{"subject": "postgres", "count": 3}]
-    assert p["monitored_containers"] is None  # docker=None
-    assert p["open_count"] == 2
+    # header 的 LLM pill 仍读 posture.llm(完整姿态已移交 /hygiene)
+    assert ov["posture"]["llm"] == {
+        "enabled": True,
+        "pending_restart": False,
+        "model": "deepseek-chat",
+    }
+    # 两起都是告警(非 hygiene)→ 汇总栏 hygiene 计数为 0
+    assert ov["rollup"]["hygiene_alert_count"] == 0
     store.close()
 
 
-async def test_build_overview_recoveries_and_hygiene_split(tmp_path, monkeypatch):
+async def test_build_overview_routes_hygiene_and_recoveries_off_page(tmp_path, monkeypatch):
+    # 总览只保留「待关注」=当前未结的告警事件;hygiene 类未结只计入汇总栏(明细去 /hygiene),
+    # 已恢复事件根本不入待关注(明细去 /events)。
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
-    # 开放 hygiene 事件 → 入 hygiene_alerts,不入 anomalies
+    # 开放 hygiene 事件 → 进汇总 hygiene_alert_count,不进 needs_attention
     store.insert_event(
         ts=NOW_TS - 600,
         rule="backup_stale",
@@ -156,7 +159,19 @@ async def test_build_overview_recoveries_and_hygiene_split(tmp_path, monkeypatch
         diagnosis_status="skipped",
         cooldown_until=0,
     )
-    # 24h 内恢复的事件
+    # 开放的「告警」事件 → 进 needs_attention
+    store.insert_event(
+        ts=NOW_TS - 300,
+        rule="service_down",
+        subject="api",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    # 24h 内恢复的事件 → 既非 open,也不入待关注
     rid = store.insert_event(
         ts=NOW_TS - 7200,
         rule="disk_usage",
@@ -169,23 +184,34 @@ async def test_build_overview_recoveries_and_hygiene_split(tmp_path, monkeypatch
         cooldown_until=0,
     )
     store.resolve_event(rid, resolved_ts=NOW_TS - 3600)
-    # 探针样本 → hygiene.services uptime/p95
-    store.add_probe_samples(
-        [
-            ProbeSample(ts=NOW_TS - 100, service="api", ok=True, status_code=200, latency_ms=120.0),
-            ProbeSample(ts=NOW_TS - 50, service="api", ok=False, status_code=500, latency_ms=None),
-        ]
+    ov = await view.build_overview(store, settings, now=NOW, service_labels={"api": "API 网关"})
+    assert [a["rule"] for a in ov["needs_attention"]] == ["service_down"]
+    # 压缩行必须带展示名(label),否则首页只见规则不见服务;无映射回退 subject
+    assert ov["needs_attention"][0]["label"] == "API 网关"
+    assert ov["rollup"]["hygiene_alert_count"] == 1
+    # 已恢复的 24h 计数仍由 /hygiene 承载
+    hyg = await view.build_hygiene(store, settings, now=NOW)
+    assert hyg["posture"]["resolved_24h"] == 1
+    store.close()
+
+
+async def test_build_overview_needs_attention_label_falls_back_to_subject(tmp_path, monkeypatch):
+    # 无 service_labels 映射时,待关注行 label 回退到 subject(不留空)。
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.insert_event(
+        ts=NOW_TS - 300,
+        rule="service_down",
+        subject="postgres",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
     )
-    ov = await view.build_overview(store, settings, now=NOW, docker=None)
-    assert [a["rule"] for a in ov["anomalies"]] == []  # hygiene 不进 anomalies
-    assert [h["rule"] for h in ov["hygiene"]["hygiene_alerts"]] == ["backup_stale"]
-    assert [r["rule"] for r in ov["recoveries"]] == ["disk_usage"]
-    assert ov["recoveries"][0]["lifecycle"] == "recovered"
-    assert ov["recoveries"][0]["resolved_str"]  # 非空
-    assert ov["posture"]["resolved_24h"] == 1
-    svc = {s["service"]: s for s in ov["hygiene"]["services"]}
-    assert svc["api"]["uptime_pct"] == 50.0  # 1 ok / 2 total
-    assert svc["api"]["p95_ms"] == 120.0
+    ov = await view.build_overview(store, settings, now=NOW)
+    assert ov["needs_attention"][0]["label"] == "postgres"
     store.close()
 
 
@@ -206,10 +232,10 @@ async def test_monitored_containers_excludes_self_and_proxy(tmp_path, monkeypatc
                 {"Names": ["/ignoreme"], "Image": "redis:7"},
             ]
 
-    ov = await view.build_overview(store, settings, now=NOW, docker=_FakeDocker())
-    assert ov["posture"]["monitored_containers"] == 1  # 仅 api
-    assert ov["posture"]["docker"] == {"mode": "proxy", "read_only": True}
-    assert ov["posture"]["layers"]["docker"] is True
+    hyg = await view.build_hygiene(store, settings, now=NOW, docker=_FakeDocker())
+    assert hyg["posture"]["monitored_containers"] == 1  # 仅 api
+    assert hyg["posture"]["docker"] == {"mode": "proxy", "read_only": True}
+    assert hyg["posture"]["layers"]["docker"] is True
     store.close()
 
 
@@ -221,21 +247,21 @@ async def test_monitored_containers_none_on_ps_failure(tmp_path, monkeypatch):
         async def ps(self, *, all=True):
             raise RuntimeError("unreachable")
 
-    ov = await view.build_overview(store, settings, now=NOW, docker=_BoomDocker())
-    assert ov["posture"]["monitored_containers"] is None
+    hyg = await view.build_hygiene(store, settings, now=NOW, docker=_BoomDocker())
+    assert hyg["posture"]["monitored_containers"] is None
     store.close()
 
 
 async def test_build_overview_empty_store_degrades(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)  # 无 prom/loki/docker/llm
     store = Store(str(tmp_path / "s.db"))
-    ov = await view.build_overview(store, settings, now=NOW, docker=None)
-    assert ov["anomalies"] == [] and ov["recoveries"] == []
-    assert ov["hygiene"]["services"] == [] and ov["hygiene"]["hygiene_alerts"] == []
+    ov = await view.build_overview(store, settings, now=NOW)
+    # 空库 → 待关注为空、汇总全零、header LLM pill 关闭
+    assert ov["needs_attention"] == []
+    assert ov["rollup"]["hygiene_alert_count"] == 0
+    assert ov["rollup"]["services"] == {"total": 0, "ok": 0, "problem": 0, "nodata": 0}
+    assert ov["rollup"]["last_report_date"] is None
     assert ov["posture"]["llm"] == {"enabled": False, "pending_restart": False, "model": None}
-    assert ov["posture"]["docker"]["mode"] == "off"
-    assert ov["posture"]["channels"] == ["飞书"]
-    assert ov["posture"]["env_redaction"] == []
     assert ov["now_str"] == "2026-06-14 14:32"
     assert ov["refresh_seconds"] == 30
     store.close()
@@ -320,13 +346,12 @@ async def test_build_overview_llm_from_config_overrides_env(tmp_path, monkeypatc
     settings = Settings(_env_file=None)  # 注意:无 LLM_BASE_URL/MODEL
     cfg = LLMConfig(settings)
     store = Store(str(tmp_path / "s.db"))
-    ov = await view.build_overview(store, settings, now=NOW, docker=None, llm_config=cfg)
+    ov = await view.build_overview(store, settings, now=NOW, llm_config=cfg)
     assert ov["posture"]["llm"] == {
         "enabled": True,
         "pending_restart": False,
         "model": "deepseek-chat",
     }
-    assert ov["posture"]["layers"]["llm"] is True
     store.close()
 
 
@@ -384,16 +409,13 @@ async def test_pending_restart_when_configured_but_diag_unregistered(tmp_path, m
     cfg, settings = _llm_cfg(tmp_path, monkeypatch)
     store = Store(str(tmp_path / "s.db"))
     _seed_open(store, "container_down", "postgres")  # pending,未诊断
-    ov = await view.build_overview(
-        store, settings, now=NOW, docker=None, llm_config=cfg, diag_registered=False
-    )
+    ov = await view.build_overview(store, settings, now=NOW, llm_config=cfg, diag_registered=False)
     assert ov["posture"]["llm"] == {
         "enabled": True,
         "pending_restart": True,
         "model": "deepseek-chat",
     }
-    assert ov["posture"]["layers"]["llm"] is True  # 层仍算"已配置"
-    assert {a["rule"]: a for a in ov["anomalies"]}["container_down"]["lifecycle"] == "open"
+    assert {a["rule"]: a for a in ov["needs_attention"]}["container_down"]["lifecycle"] == "open"
     store.close()
 
 
@@ -402,11 +424,10 @@ async def test_no_pending_restart_when_diag_registered(tmp_path, monkeypatch):
     cfg, settings = _llm_cfg(tmp_path, monkeypatch)
     store = Store(str(tmp_path / "s.db"))
     _seed_open(store, "container_down", "postgres")
-    ov = await view.build_overview(
-        store, settings, now=NOW, docker=None, llm_config=cfg, diag_registered=True
-    )
+    ov = await view.build_overview(store, settings, now=NOW, llm_config=cfg, diag_registered=True)
     assert ov["posture"]["llm"]["pending_restart"] is False
-    assert {a["rule"]: a for a in ov["anomalies"]}["container_down"]["lifecycle"] == "investigating"
+    na = {a["rule"]: a for a in ov["needs_attention"]}
+    assert na["container_down"]["lifecycle"] == "investigating"
     store.close()
 
 
@@ -420,23 +441,30 @@ def test_event_detail_pending_restart_marks_open(tmp_path, monkeypatch):
     store.close()
 
 
-async def test_build_overview_keeps_legacy_keys_and_adds_new(tmp_path, monkeypatch):
+async def test_build_overview_has_slim_dashboard_shape(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
-    ov = await view.build_overview(store, settings, now=NOW, docker=None)
-    # 既有键保留（默认 window_days=90）
-    for key in ("now_str", "refresh_seconds", "posture", "anomalies", "recoveries", "hygiene"):
-        assert key in ov
-    # 新增键
-    assert ov["window_days"] == 90
-    assert isinstance(ov["health"], list)
-    assert "probe_engine_live" in ov["host_self"] and "llm" in ov["host_self"]
-    assert ov["events"] == {"items": [], "page": 1, "total_pages": 1, "total": 0, "page_size": 8}
+    ov = await view.build_overview(store, settings, now=NOW)
+    # 仪表盘只保留概览键:HERO + 待关注 + 汇总;明细键(health/events/host_self)已移交子页。
+    assert set(ov) == {
+        "now_str",
+        "refresh_seconds",
+        "window_days",
+        "posture",
+        "hero",
+        "needs_attention",
+        "rollup",
+    }
+    assert ov["window_days"] == 90  # 默认窗口
+    assert set(ov["posture"]) == {"llm"}  # header pill 只读 llm
+    assert set(ov["hero"]) == {"uptime_pct", "ring", "days_clean", "trend"}
+    assert set(ov["rollup"]) == {"services", "hygiene_alert_count", "last_report_date"}
+    assert set(ov["rollup"]["services"]) == {"total", "ok", "problem", "nodata"}
     store.close()
 
 
-async def test_build_overview_page_size_zero_no_crash(tmp_path, monkeypatch):
-    # SENTINEL_PANEL_PAGE_SIZE=0 不应让面板首页 500（ZeroDivisionError）；钳到 ≥1。
+def test_build_events_list_page_size_zero_no_crash(tmp_path, monkeypatch):
+    # SENTINEL_PANEL_PAGE_SIZE=0 不应让事件页 500（ZeroDivisionError）；钳到 ≥1。
     settings = _settings(monkeypatch, SENTINEL_PANEL_PAGE_SIZE="0")
     store = Store(str(tmp_path / "s.db"))
     for i in range(3):
@@ -451,9 +479,8 @@ async def test_build_overview_page_size_zero_no_crash(tmp_path, monkeypatch):
             diagnosis_status="skipped",
             cooldown_until=0,
         )
-    ov = await view.build_overview(store, settings, now=NOW, docker=None)
-    ev = ov["events"]
-    assert ev["page_size"] == 1  # 0 钳到 1
+    ev = view.build_events_list(store, settings, now=NOW)["events"]
+    # size 钳到 1 → 3 起各占一页,不抛 ZeroDivisionError
     assert ev["total"] == 3 and ev["total_pages"] == 3
     assert ev["page"] == 1 and len(ev["items"]) == 1
     store.close()
@@ -469,8 +496,8 @@ async def test_build_overview_engine_live_across_midnight(tmp_path, monkeypatch)
     store.add_probe_samples(  # am_ts-240 = 昨日 23:59，落在今日午夜之前
         [ProbeSample(ts=am_ts - 240, service="api", ok=True, status_code=200, latency_ms=12.0)]
     )
-    ov = await view.build_overview(store, settings, now=after_midnight, docker=None)
-    assert ov["host_self"]["probe_engine_live"] is True
+    hyg = await view.build_hygiene(store, settings, now=after_midnight)
+    assert hyg["host_self"]["probe_engine_live"] is True
     store.close()
 
 
@@ -478,8 +505,8 @@ async def test_build_overview_engine_unknown_when_never_probed(tmp_path, monkeyp
     # 从未探测过（全表无样本）→ 引擎活性 unknown(None)，区别于"探测过但陈旧"=False。
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
-    ov = await view.build_overview(store, settings, now=NOW, docker=None)
-    assert ov["host_self"]["probe_engine_live"] is None
+    hyg = await view.build_hygiene(store, settings, now=NOW)
+    assert hyg["host_self"]["probe_engine_live"] is None
     store.close()
 
 
@@ -519,42 +546,12 @@ async def test_health_bars_sorted_worst_first(tmp_path, monkeypatch):
         + _samples("mmm", 4, 1)  # 80% → partial
         + _samples("zzz", 1, 2)  # 33% → down（字母最后）
     )
-    ov = await view.build_overview(store, settings, now=NOW, docker=None, window_days=30)
-    order = [b["service"] for b in ov["health"]]
+    svcs = view.build_services_list(store, settings, now=NOW, window_days=30)["services"]
+    order = [b["service"] for b in svcs]
     # down → partial → ok(aaa) → ok(bbb)：状态主序、同状态内字母次序
     assert order == ["zzz", "mmm", "aaa", "bbb"]
-    assert ov["health"][0]["days"][-1]["state"] == "down"
-    assert ov["health"][1]["days"][-1]["state"] == "partial"
-    store.close()
-
-
-async def test_build_overview_event_feed_pagination(tmp_path, monkeypatch):
-    settings = _settings(monkeypatch)
-    store = Store(str(tmp_path / "s.db"))
-    for i in range(10):  # 10 起 open 事件，均落今日窗口内
-        store.insert_event(
-            ts=NOW_TS - i * 60,
-            rule="service_down",
-            subject="api",
-            severity="critical",
-            status="open",
-            detail="d",
-            payload_json="{}",
-            diagnosis_status="skipped",
-            cooldown_until=0,
-        )
-    ov = await view.build_overview(store, settings, now=NOW, docker=None, window_days=30, page=1)
-    assert ov["window_days"] == 30
-    ev = ov["events"]
-    assert ev["total"] == 10 and ev["page_size"] == 8 and ev["total_pages"] == 2
-    assert ev["page"] == 1 and len(ev["items"]) == 8
-    ev2 = (await view.build_overview(store, settings, now=NOW, docker=None, page=2))["events"]
-    assert ev2["page"] == 2 and len(ev2["items"]) == 2
-    # 越界页钳到末页
-    ev9 = (await view.build_overview(store, settings, now=NOW, docker=None, page=99))["events"]
-    assert ev9["page"] == 2 and len(ev9["items"]) == 2
-    # 事件项沿用 _event_view 结构（含原始 rule）
-    assert ev["items"][0]["rule"] == "service_down"
+    assert svcs[0]["days"][-1]["state"] == "down"
+    assert svcs[1]["days"][-1]["state"] == "partial"
     store.close()
 
 
@@ -702,12 +699,14 @@ async def test_build_overview_exposes_hero_and_mini(tmp_path, monkeypatch):
     overview = await view.build_overview(store, settings, now=NOW)
 
     hero = overview["hero"]
-    assert hero["uptime_pct"] == view.overall_uptime_pct(overview["health"])
+    # HERO 可用率与 /services 同源健康柱条同口径
+    svcs = view.build_services_list(store, settings, now=NOW)["services"]
+    assert hero["uptime_pct"] == view.overall_uptime_pct(svcs)
     assert set(hero["ring"]) == {"ok", "degraded", "partial", "down"}
     assert hero["days_clean"] == 2
     assert set(hero["trend"]) == {"line_d", "area_d"}
-    # 每个 health 行都带 mini_pts 字符串
-    assert all(isinstance(r["mini_pts"], str) for r in overview["health"])
+    # 每服务 sparkline 现由 /services 行承载
+    assert all(isinstance(r["p95_pts"], str) for r in svcs)
     store.close()
 
 
@@ -1242,4 +1241,7 @@ async def test_build_hygiene_shape_and_banner(tmp_path, monkeypatch):
     assert data["banner"]["layers_total"] == 4
     assert data["banner"]["last_report_date"] == "2026-06-16"
     assert data["banner"]["upstream_any_data"] is False  # 无 snapshot
+    # 默认姿态:无 docker → off,渠道默认飞书
+    assert data["posture"]["docker"]["mode"] == "off"
+    assert data["posture"]["channels"] == ["飞书"]
     store.close()

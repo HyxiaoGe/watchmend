@@ -14,7 +14,7 @@ from sentinel.store import Store
 
 _REFRESH_SECONDS = 30
 _DAY_SECONDS = 24 * 3600
-# 健康行排序权重：现态(今日格)最坏者优先，使被 services_cap 截断后仍先露出需关注的服务。
+# 健康行排序权重：现态(今日格)最坏者优先，使 /services 列表顶端先露出需关注的服务。
 # nodata 排最后(刚开始采样的服务不抢占注意力)。同权重内按服务名稳定排序。
 _STATE_RANK = {"down": 0, "partial": 1, "degraded": 2, "ok": 3, "nodata": 4}
 # 自身/代理永不计入“在监容器”(与 scan_docker 同口径:按镜像子串识别,兼容 registry 前缀)
@@ -254,32 +254,6 @@ def _llm_posture(llm_config, settings: Settings, *, diag_registered: bool | None
     }
 
 
-def _env_redaction(events: list[EventRecord]) -> list[dict]:
-    """best-effort:从已存证据链里 docker_inspect 项解析 len(Env),按 subject 聚合。
-    output 可能被截断导致 JSON 解析失败 → 跳过该项(模板回退泛化文案)。不新增持久化。"""
-    by_subject: dict[str, int] = {}
-    for e in events:
-        if not e.diagnosis_tools_json:
-            continue
-        try:
-            calls = json.loads(e.diagnosis_tools_json)
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if not isinstance(calls, list):
-            continue
-        for call in calls:
-            if not isinstance(call, dict) or call.get("tool") != "docker_inspect":
-                continue
-            try:
-                payload = json.loads(call.get("output") or "")
-            except (json.JSONDecodeError, TypeError):
-                continue
-            env = payload.get("Env") if isinstance(payload, dict) else None
-            if isinstance(env, list):
-                by_subject[e.subject] = max(by_subject.get(e.subject, 0), len(env))
-    return [{"subject": s, "count": c} for s, c in sorted(by_subject.items())]
-
-
 async def _monitored_containers(docker, settings: Settings) -> int | None:
     """best-effort 实时计数(排除自身/proxy/exclude)。docker off 或 ps 失败 → None。"""
     if docker is None:
@@ -299,26 +273,6 @@ async def _monitored_containers(docker, settings: Settings) -> int | None:
             continue
         count += 1
     return count
-
-
-def _hygiene_services(
-    store: Store, *, now_ts: int, service_labels: dict[str, str] | None = None
-) -> list[dict]:
-    """探针 24h uptime/p95(复用 report.aggregate_window;服务名从样本派生)。"""
-    samples = store.get_probe_samples_since(now_ts - _DAY_SECONDS)
-    names = sorted({s.service for s in samples})
-    out: list[dict] = []
-    for st in aggregate_window(samples, names):
-        uptime = round(st.ok_count / st.total * 100, 1) if st.total else None
-        out.append(
-            {
-                "service": st.service,
-                "label": (service_labels or {}).get(st.service, st.service),  # 显示名回退 name
-                "uptime_pct": uptime,
-                "p95_ms": st.p95_ms,
-            }
-        )
-    return out
 
 
 def _day_state(
@@ -408,7 +362,7 @@ def _service_health_bars(
                 "days": days,
             }
         )
-    # 现态最坏优先（今日格状态），同权重内按服务名；保证 services_cap 截断后先露出问题服务。
+    # 现态最坏优先（今日格状态），同权重内按服务名；保证 /services 列表先露出问题服务。
     # days 在 window_days<=0 的误配下会为空(range(0))；空则按 nodata 收尾，绝不 IndexError 崩整页。
     bars.sort(
         key=lambda b: (
@@ -428,7 +382,7 @@ def _host_self(
     llm: dict,
 ) -> dict:
     """宿主 & 自身行的新增自省块：探针引擎活性 + LLM active/fallback。
-    宿主级 hygiene 告警另由 build_overview 的 hygiene.hygiene_alerts 提供，这里不重算。
+    宿主级 hygiene 告警另由 /hygiene 的本地三态卡(_local_hygiene)提供，这里不重算。
     llm 为 _llm_posture 结果（env 回退路径用其 model；llm_config 在时给 active+fallback）。"""
     if latest_probe_ts is None:
         engine_live: bool | None = None
@@ -448,52 +402,19 @@ def _host_self(
     }
 
 
-def _event_feed(
-    store: Store,
-    settings: Settings,
-    *,
-    now_ts: int,
-    tz: timezone,
-    open_events: list,
-    page: int,
-    diag_active: bool,
-) -> dict:
-    """事件流：近 N 天发生的事件 + 仍 open 的更早事件，ts 降序、服务端切片分页。
-    page 越上界钳到末页；空流 total_pages=1、items=[]。"""
-    window_start = now_ts - settings.sentinel_event_feed_days * _DAY_SECONDS
-    recent = store.get_events_since(window_start)  # ts >= start, desc
-    older_open = [e for e in open_events if e.ts < window_start]
-    feed = sorted(older_open + recent, key=lambda e: e.ts, reverse=True)
-    size = max(1, settings.sentinel_panel_page_size)  # 防 0/负配置触发除零 → 钳到 ≥1
-    total = len(feed)
-    total_pages = max(1, (total + size - 1) // size)
-    page = min(max(1, page), total_pages)
-    start = (page - 1) * size
-    items = [_event_view(e, tz, diag_active=diag_active) for e in feed[start : start + size]]
-    return {
-        "items": items,
-        "page": page,
-        "total_pages": total_pages,
-        "total": total,
-        "page_size": size,
-    }
-
-
 async def build_overview(
     store: Store,
     settings: Settings,
     *,
     now: datetime,
-    docker=None,
     llm_config=None,
     diag_registered: bool | None = None,
     window_days: int = 90,
-    page: int = 1,
     service_labels: dict[str, str] | None = None,
 ) -> dict:
-    """总览 view-model。docker 为可选注入的 DockerClient,缺省 None → 容器计数降级 None。
-    llm_config 为可选注入的 LLMConfig,缺省 None → 回退 settings.llm_*。
-    diag_registered 为启动时诊断 job 是否注册(lifespan 注入),用于"已配置·待重启"判定。
+    """总览 view-model(仪表盘):HERO 概览 + 待关注(当前未结告警事件,压缩一行)+ 汇总链接。
+    明细(每服务柱条/完整事件流/宿主姿态)交给 /services、/events、/hygiene 子页,本页零重复。
+    llm_config/diag_registered 仅供 header 的 LLM pill 姿态;完整姿态见 /hygiene。
     service_labels 为 name→显示名映射(services.yaml 的 label),缺省 None → 面板回退 name。"""
     tz = (
         now.tzinfo
@@ -502,12 +423,10 @@ async def build_overview(
     )
     now_ts = int(now.timestamp())
     open_events = store.get_open_events()
-    recoveries = store.get_resolved_since(now_ts - _DAY_SECONDS)
-    docker_mode = _docker_mode(settings)
     llm = _llm_posture(llm_config, settings, diag_registered=diag_registered)
     # 诊断层此刻是否真在跑:已配置且未待重启。pending 事件的生命周期据此显示。
     diag_active = llm["enabled"] and not llm["pending_restart"]
-    # 健康柱条 + 宿主自身行：今日样本只拉一次，健康柱条与引擎活性共用。
+    # 健康柱条供 HERO(整体环/可用率/趋势)+ 服务汇总计数派生;今日样本只拉一次。
     today_local = datetime.fromtimestamp(now_ts, tz).date()
     midnight_ts = int(
         datetime(today_local.year, today_local.month, today_local.day, tzinfo=tz).timestamp()
@@ -522,11 +441,6 @@ async def build_overview(
         today_samples=today_samples,
         service_labels=service_labels,
     )
-    # 英雄区数据(纯函数派生,零新取数):每服务迷你趋势线 + 整体指标。
-    for row in health:
-        row["mini_pts"] = _svg_line([d["uptime_pct"] for d in row["days"]], w=120.0, h=40.0)[
-            "line_d"
-        ]
     latest_events = store.get_events_since(0, limit=1)  # 全表最新一条,事件稀疏 → 廉价
     latest_event_ts = latest_events[0].ts if latest_events else None
     hero = {
@@ -535,58 +449,42 @@ async def build_overview(
         "days_clean": _days_clean(latest_event_ts, now_ts),
         "trend": _svg_line(_overall_trend_series(health), w=300.0, h=64.0),
     }
-    # 引擎活性看全表最新样本(不限今日):午夜后最新样本可能落在昨日,
-    # 复用 today_samples 会把"刚探测过"误判成 unknown。
-    latest_probe_ts = store.get_latest_probe_ts()
-    host_self = _host_self(
-        settings, latest_probe_ts=latest_probe_ts, now_ts=now_ts, llm_config=llm_config, llm=llm
-    )
-    events = _event_feed(
-        store,
-        settings,
-        now_ts=now_ts,
-        tz=tz,
-        open_events=open_events,
-        page=page,
-        diag_active=diag_active,
-    )
+
+    # 服务汇总计数:当前状态 = 最后一日状态(与 overall_ring 同口径)。
+    def _row_state(r: dict) -> str:
+        return r["days"][-1]["state"] if r["days"] else "nodata"
+
+    ok_n = sum(1 for r in health if _row_state(r) == "ok")
+    problem_n = sum(1 for r in health if _row_state(r) in ("down", "partial", "degraded"))
+    nodata_n = sum(1 for r in health if _row_state(r) == "nodata")
+    # 待关注:当前未结的「告警」事件(非 hygiene),压缩成一行 → /event/{id}。
+    # hygiene 类未结事件由汇总栏的「体检」计数承载,跳 /hygiene 看明细。
+    labels = service_labels or {}
+    needs_attention = []
+    for e in open_events:
+        if e.rule in HYGIENE_RULES:
+            continue
+        v = _event_view(e, tz, diag_active=diag_active)
+        v["label"] = labels.get(e.subject, e.subject)  # 展示名;无映射回退 subject(与事件流同口径)
+        needs_attention.append(v)
     return {
         "now_str": now.strftime("%Y-%m-%d %H:%M"),
         "refresh_seconds": _REFRESH_SECONDS,
-        "posture": {
-            "monitored_containers": await _monitored_containers(docker, settings),
-            "open_count": len(open_events),
-            "resolved_24h": store.count_resolved_since(now_ts - _DAY_SECONDS),
-            "llm": llm,
-            "docker": {"mode": docker_mode, "read_only": True},
-            "layers": {
-                "prometheus": bool(settings.sentinel_prometheus_url),
-                "loki": bool(settings.sentinel_loki_url),
-                "docker": docker_mode != "off",
-                "llm": llm["enabled"],
-            },
-            "channels": _channels(settings),
-            "env_redaction": _env_redaction(open_events + recoveries),
-        },
-        "anomalies": [
-            _event_view(e, tz, diag_active=diag_active)
-            for e in open_events
-            if e.rule not in HYGIENE_RULES
-        ],
-        "recoveries": [_event_view(e, tz, diag_active=diag_active) for e in recoveries],
-        "hygiene": {
-            "services": _hygiene_services(store, now_ts=now_ts, service_labels=service_labels),
-            "hygiene_alerts": [
-                _event_view(e, tz, diag_active=diag_active)
-                for e in open_events
-                if e.rule in HYGIENE_RULES
-            ],
-        },
         "window_days": window_days,
-        "health": health,
+        # header 的 LLM pill 仅读 posture.llm;完整姿态(渠道/层/docker/容器)见 /hygiene。
+        "posture": {"llm": llm},
         "hero": hero,
-        "host_self": host_self,
-        "events": events,
+        "needs_attention": needs_attention,
+        "rollup": {
+            "services": {
+                "total": len(health),
+                "ok": ok_n,
+                "problem": problem_n,
+                "nodata": nodata_n,
+            },
+            "hygiene_alert_count": sum(1 for e in open_events if e.rule in HYGIENE_RULES),
+            "last_report_date": store.get_meta("daily_report_last_date"),
+        },
     }
 
 

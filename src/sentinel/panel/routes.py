@@ -1,8 +1,9 @@
 # src/sentinel/panel/routes.py
 """证据台 SSR 路由(只读,localhost-only,沿用 127.0.0.1:8765 绑定,无新鉴权)。
-GET / 总览、GET /event/{id} 详情。受 SENTINEL_PANEL_ENABLED 门控:关则不注册。
+GET / 总览、/services、/service/{name}、/events、/event/{id}、/hygiene、/badge.svg。
+受 SENTINEL_PANEL_ENABLED 门控:关则不注册。
 偏好(lang/theme/window)经 query>cookie>Accept-Language 解析,出现在 querystring 时写
-cookie 以跨 30s meta 重载存活;page/svc_all 为瞬时态只走 querystring。"""
+cookie 以跨 30s meta 重载存活;ev_page/filter 为瞬时态只走 querystring。"""
 
 from __future__ import annotations
 
@@ -25,8 +26,6 @@ _env = Environment(
     autoescape=select_autoescape(["html", "svg"]),
 )
 
-_TRUTHY = ("1", "true", "yes", "on")
-
 
 def _tz(settings: Settings) -> timezone:
     return timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
@@ -35,7 +34,7 @@ def _tz(settings: Settings) -> timezone:
 def _nav_helpers(path: str, *, lang: str, theme: str, window_days: int, **transient):
     """跨页导航壳 URL 助手(spec §7:qurl 提为跨路由通用 helper)。
     qurl(**override):重建当前页 path,带 lang/theme/win + 该页瞬时态(transient)+ 覆盖项;
-      None 值一律剔除(svc_all/filter 关闭即不出现在 querystring)。
+      None 值一律剔除(ev_page/filter 关闭即不出现在 querystring)。
     tab_url(p):构造他页 URL,只带 lang/theme/win —— 四标签主导航跨页跳转保留偏好。"""
     base: dict[str, object] = {"lang": lang, "theme": theme, "win": window_days, **transient}
 
@@ -106,18 +105,13 @@ def register_panel_routes(app: FastAPI) -> None:
             history_days=settings.sentinel_panel_history_days,
             default=settings.sentinel_panel_default_window,
         )
-        page = prefs.resolve_page(q.get("ev_page"))
-        svc_all = (q.get("svc_all") or "").strip().lower() in _TRUTHY
-
         overview = await view.build_overview(
             state.store,
             settings,
             now=datetime.now(_tz(settings)),
-            docker=getattr(state, "docker", None),
             llm_config=getattr(state, "llm_config", None),
             diag_registered=getattr(state, "diag_job_registered", None),
             window_days=window_days,
-            page=page,
             service_labels=getattr(state, "service_labels", None),
         )
 
@@ -128,8 +122,6 @@ def register_panel_routes(app: FastAPI) -> None:
             lang=lang,
             theme=theme,
             window_days=window_days,
-            ev_page=overview["events"]["page"],  # 用钳后的真实页码
-            svc_all=1 if svc_all else None,
         )
 
         def eurl(event_id: int) -> str:
@@ -147,10 +139,7 @@ def register_panel_routes(app: FastAPI) -> None:
             qurl=qurl,
             tab_url=tab_url,
             eurl=eurl,
-            svc_all=svc_all,
             history_days=settings.sentinel_panel_history_days,
-            services_cap=settings.sentinel_panel_services_cap,
-            diag_lang=settings.sentinel_llm_lang,
             active_tab="overview",
         )
         resp = HTMLResponse(html)

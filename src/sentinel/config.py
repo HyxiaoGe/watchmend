@@ -95,7 +95,6 @@ class Settings(BaseSettings):
     sentinel_panel_history_days: int = 90  # 健康柱条最长窗口 = 90/30 切换的上限
     sentinel_panel_default_window: int = 30  # 首屏默认窗口（{30, history_days} 之一）；降噪默认 30
     sentinel_panel_page_size: int = 8  # 事件流每页条数
-    sentinel_panel_services_cap: int = 6  # 服务行默认展示上限（超出走"展开剩余 N"，按现态最坏优先）
     sentinel_panel_red_uptime_pct: float = 50.0  # 当日 uptime 低于此 → down（红）
     sentinel_panel_partial_uptime_pct: float = 99.5  # 低于此（且≥red）→ partial（橙）
     sentinel_llm_lang: str = "zh"  # 此后新生成的诊断语言（zh|en）；历史不回溯翻译

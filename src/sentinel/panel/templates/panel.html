@@ -1,8 +1,8 @@
 {% extends "_base.html" %}
 {% block body %}
 <div class="wrap">
-{% set probes = health|length %}
-{% set hero_bad = posture.open_count > 0 %}
+{% set open_total = needs_attention|length + rollup.hygiene_alert_count %}
+{% set hero_bad = open_total > 0 %}
 <div class="hero">
   <div class="hero-ring">
     <svg viewBox="0 0 100 100" aria-hidden="true">
@@ -28,8 +28,8 @@
     </div>
     <div class="hstat {{ 'bad' if hero_bad else '' }}">
       {% if hero_bad %}
-      <span class="num">{{ posture.open_count }}</span>
-      <span class="cap">{{ t('hero.open', open=posture.open_count) }}</span>
+      <span class="num">{{ open_total }}</span>
+      <span class="cap">{{ t('hero.open', open=open_total) }}</span>
       {% elif hero.days_clean is not none %}
       <span class="num">{{ hero.days_clean }}</span>
       <span class="cap">{{ t('hero.days_clean', n=hero.days_clean) }}</span>
@@ -49,119 +49,44 @@
   {% endif %}
 </div>
 
-<div class="secrow">
-  <span class="sec">{{ t('sec.services') }}</span>
-  <div class="right">
-    <span class="lg">
-      <span><i style="background:var(--st-ok)"></i>{{ t('st.ok') }}</span>
-      <span><i style="background:var(--st-degraded)"></i>{{ t('st.degraded') }}</span>
-      <span><i style="background:var(--st-partial)"></i>{{ t('st.partial') }}</span>
-      <span><i style="background:var(--st-down)"></i>{{ t('st.down') }}</span>
-      <span><i style="background:var(--st-nodata)"></i>{{ t('st.nodata') }}</span>
-    </span>
-  </div>
-</div>
-
-<div class="comps">
-{% set shown = health if svc_all else health[:services_cap] %}
-{% for svc in shown %}
-  <div class="comp">
-    <div class="comp-hd">
-      <b>{{ svc.label }}</b>
-      {% if svc.mini_pts %}
-      <svg class="spark" viewBox="0 0 120 40" preserveAspectRatio="none" aria-hidden="true">
-        <path d="{{ svc.mini_pts }}" fill="none" stroke="var(--link)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
-      </svg>
-      {% endif %}
-      <span class="muted mono">{% if svc.uptime_pct is not none %}{{ svc.uptime_pct }}%{% else %}—{% endif %}</span>
-    </div>
-    <div class="upbar">
-      {% for d in svc.days %}
-      <i class="{{ d.state }}" title="{{ d.date }} · {{ t('st.' ~ d.state) }}{% if d.uptime_pct is not none %} · {{ d.uptime_pct }}%{% endif %}{% if d.is_today %} · {% if d.uptime_pct is none %}{{ t('tip.today_nodata') }}{% else %}{{ t('tip.today') }}{% endif %}{% endif %}"></i>
-      {% endfor %}
-    </div>
-    <div class="comp-ax">
-      <span>{{ t('axis.window', days=window_days) }}</span><span class="ln"></span>
-      <span>{% if svc.uptime_pct is not none %}{{ t('comp.uptime', uptime=svc.uptime_pct, p95=svc.p95_ms if svc.p95_ms is not none else '—') }}{% endif %}</span>
-      <span class="ln"></span><span>{{ t('axis.today') }}</span>
-    </div>
-  </div>
-{% else %}
-  <div class="comp muted">{{ t('st.nodata') }}</div>
-{% endfor %}
-</div>
-{% if not svc_all and health|length > services_cap %}
-<p><a href="{{ qurl(svc_all=1) }}">{{ t('comp.expand', n=health|length - services_cap) }}</a></p>
-{% elif svc_all and health|length > services_cap %}
-<p><a href="{{ qurl(svc_all=None) }}">{{ t('comp.collapse') }}</a></p>
-{% endif %}
-
-<div class="secrow"><span class="sec">{{ t('sec.hostself') }}</span></div>
-<div class="self">
-  <div class="ln1">
-    <span class="k">{{ t('host.host') }}</span>
-    {% if hygiene.hygiene_alerts %}
-      {% for h in hygiene.hygiene_alerts %}
-      <span class="{{ 'crit' if h.severity == 'critical' else 'warn' }}">{{ rule_label(h.rule, lang) }} {{ h.subject }}</span>
-      {% endfor %}
-    {% else %}
-      <span class="ok">{{ t('host.host.ok') }} ✓</span>
-    {% endif %}
-  </div>
-  <div class="ln1">
-    <span class="k">{{ t('host.self') }}</span>
-    <span>{{ t('host.engine') }}
-      {% if host_self.probe_engine_live is none %}<span class="muted">{{ t('host.engine.unknown') }}</span>
-      {% elif host_self.probe_engine_live %}<span class="ok">{{ t('host.engine.live') }} ✓</span>
-      {% else %}<span class="crit">{{ t('host.engine.stale') }}</span>{% endif %}</span>
-    <span>{{ t('host.channels') }}
-      <span class="{{ 'ok' if posture.channels else 'muted' }}">{% if posture.channels %}{{ posture.channels|join('、') }}{% else %}{{ t('footer.none') }}{% endif %}</span></span>
-    <span>{{ t('host.layers') }}
-      <span class="muted">prom{{ '✓' if posture.layers.prometheus else '✗' }}
-      loki{{ '✓' if posture.layers.loki else '✗' }}
-      docker{{ '✓' if posture.layers.docker else '✗' }}
-      LLM{{ '✓' if posture.layers.llm else '✗' }}</span></span>
-    <span>{{ t('host.llm') }}
-      {% if host_self.llm.active %}<span class="vio">{{ host_self.llm.active }} ✓</span>
-      {% if host_self.llm.fallback_ready %}<span class="tag">{{ t('host.llm.fallback', model=host_self.llm.fallback) }}</span>{% endif %}
-      {% else %}<span class="muted">{{ t('host.llm.off') }}</span>{% endif %}</span>
-  </div>
-</div>
-
-<div class="secrow"><span class="sec">{{ t('sec.events') }}</span></div>
-{% for e in events['items'] %}
-<div class="ev">
-  <div class="top">
+<div class="secrow"><span class="sec">{{ t('sec.attention') }}</span></div>
+{% if needs_attention %}
+<div class="attn">
+  {% for e in needs_attention[:10] %}
+  <a class="arow" href="{{ eurl(e.id) }}">
     <span class="dot {{ e.severity }}" title="{{ t('sev.' ~ e.severity) }}"></span>
-    <b>{{ rule_label(e.rule, lang) }}</b> <span class="mono">{{ e.subject }}</span>
-    <span class="chip {{ 'ok' if e.lifecycle == 'recovered' else '' }}">{{ t('life.' ~ e.lifecycle) }}</span>
+    <b>{{ e.label }}</b>
+    <span class="rl">{{ rule_label(e.rule, lang) }}</span>
     {% if e.is_scan_failure %}<span class="chip warn">{{ t('ev.scanfail') }}</span>{% endif %}
-    <span class="when mono">{{ e.ts_str }}{% if e.resolved_str %} → {{ e.resolved_str }}{% endif %}</span>
-  </div>
-  {% if e.summary or e.has_evidence %}
-  <details>
-    <summary class="chip ai">🧠 {{ t('ev.ai') }}</summary>
-    {% if e.summary %}<div class="diag">{% if lang != diag_lang %}<div class="diag-lang">{{ t('ev.diag_lang', lang=diag_lang) }}</div>{% endif %}<div class="lbl">{{ t('ev.summary') }}</div><div class="body">{{ e.summary }}</div></div>{% endif %}
-    <p><a href="{{ eurl(e.id) }}">{{ t('ev.detail') }}</a></p>
-  </details>
-  {% else %}
-  <p><a href="{{ eurl(e.id) }}">{{ t('ev.detail') }}</a></p>
+    <span class="when mono">{{ e.ts_str }}</span>
+    <span class="go">→</span>
+  </a>
+  {% endfor %}
+  {% if needs_attention|length > 10 %}
+  <a class="arow more" href="{{ tab_url('/events') }}">{{ t('attn.more', n=needs_attention|length - 10) }} →</a>
   {% endif %}
 </div>
 {% else %}
-<div class="ev muted">{{ t('ev.empty') }}</div>
-{% endfor %}
-
-{% if events.total_pages > 1 %}
-<div class="pager">
-  {% if events.page > 1 %}<a href="{{ qurl(ev_page=events.page - 1) }}">{{ t('ev.prev') }}</a>{% endif %}
-  <span>{{ t('ev.page', page=events.page, total=events.total_pages, count=events.total) }}</span>
-  {% if events.page < events.total_pages %}<a href="{{ qurl(ev_page=events.page + 1) }}">{{ t('ev.next') }}</a>{% endif %}
-</div>
+<div class="allclear">✓ {{ t('sec.allclear') }}</div>
 {% endif %}
 
-<div class="footer mono">docker:{{ posture.docker.mode }}{% if posture.docker.read_only %}{{ t('footer.docker_readonly') }}{% endif %} ·
-  {{ t('footer.notify', channels=posture.channels|join('、') if posture.channels else t('footer.none')) }} ·
-  {% if posture.env_redaction %}{{ t('footer.env') }}{% for r in posture.env_redaction %}{{ r.subject }} {{ r.count }}{% if not loop.last %}、{% endif %}{% endfor %}{% endif %}</div>
+<div class="rollup">
+  <a class="rcard" href="{{ tab_url('/services') }}">
+    <span class="rk">{{ t('roll.services') }}</span>
+    <span class="rv">{{ rollup.services.total }}
+      <span class="ok">{{ rollup.services.ok }}✓</span>
+      {% if rollup.services.problem %}<span class="crit">{{ rollup.services.problem }} {{ t('roll.problem') }}</span>{% endif %}
+      {% if rollup.services.nodata %}<span class="muted">{{ rollup.services.nodata }} {{ t('st.nodata') }}</span>{% endif %}
+    </span>
+  </a>
+  <a class="rcard" href="{{ tab_url('/hygiene') }}">
+    <span class="rk">{{ t('roll.hygiene') }}</span>
+    <span class="rv">{% if rollup.hygiene_alert_count %}<span class="warn">{{ t('roll.hyg_alerts', n=rollup.hygiene_alert_count) }}</span>{% else %}<span class="ok">{{ t('roll.hyg_ok') }} ✓</span>{% endif %}</span>
+  </a>
+  <div class="rcard">
+    <span class="rk">{{ t('roll.report') }}</span>
+    <span class="rv">{% if rollup.last_report_date %}{{ rollup.last_report_date }}{% else %}<span class="muted">{{ t('roll.report_never') }}</span>{% endif %}</span>
+  </div>
+</div>
 </div>
 {% endblock %}
