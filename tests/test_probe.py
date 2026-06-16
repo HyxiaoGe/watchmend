@@ -84,6 +84,37 @@ def test_load_targets_parses_optional_label(tmp_path):
     assert by_name["audio"].name == "audio"
 
 
+def test_load_targets_empty_file_returns_empty(tmp_path):
+    # 空 services.yaml(compose bind-mount 缺文件被建成空文件,或用户清空内容):
+    # safe_load -> None,不得崩,回退空清单(_load_targets_or_disable 转 vendor-only)
+    path = tmp_path / "services.yaml"
+    path.write_text("", encoding="utf-8")
+    assert load_targets(str(path)) == []
+
+
+def test_load_targets_null_services_returns_empty(tmp_path):
+    # 裸 `services:`(无缩进子项)被 YAML 解析成 null:回退空清单,不得 TypeError
+    path = tmp_path / "services.yaml"
+    path.write_text("services:\n", encoding="utf-8")
+    assert load_targets(str(path)) == []
+
+
+def test_load_targets_missing_services_key_returns_empty(tmp_path):
+    # 文件只有 defaults、没有 services 键:回退空清单,不得 KeyError
+    path = tmp_path / "services.yaml"
+    path.write_text("defaults:\n  timeout: 3.0\n", encoding="utf-8")
+    assert load_targets(str(path)) == []
+
+
+def test_load_targets_non_list_services_raises(tmp_path):
+    # services 写成非列表标量(services: 0 / true / 字符串)= 显式类型错误,响亮失败,
+    # 不静默吞成 vendor-only(空/缺/null 才降级,见上三例)
+    path = tmp_path / "services.yaml"
+    path.write_text("services: 0\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="services"):
+        load_targets(str(path))
+
+
 @respx.mock
 async def test_probe_one_ok_records_status_and_latency():
     respx.get("http://nginx-proxy/health").mock(return_value=httpx.Response(200))

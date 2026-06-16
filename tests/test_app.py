@@ -126,14 +126,25 @@ def test_load_targets_or_disable_missing_file_returns_empty(tmp_path):
     assert _load_targets_or_disable(str(tmp_path / "nope.yaml")) == []
 
 
-def test_load_targets_or_disable_bad_yaml_still_raises(tmp_path):
-    # 文件存在但内容坏=显式配置错误,必须响亮失败而非静默降级
+def test_load_targets_or_disable_empty_services_degrades_to_vendor_only(tmp_path):
+    # 空文件 / 裸 `services:` / 缺 services 键 = "没有内部服务",回退 vendor-only(不 crash-loop)。
+    # 国内新用户最易踩的坑:清空 services.yaml 或留裸键,本会让容器无限重启。
+    from sentinel.app import _load_targets_or_disable
+
+    for content in ("", "services:\n", "defaults: {}\n"):
+        path = tmp_path / "svc.yaml"
+        path.write_text(content, encoding="utf-8")
+        assert _load_targets_or_disable(str(path)) == []
+
+
+def test_load_targets_or_disable_malformed_still_raises(tmp_path):
+    # 真正格式坏(服务项缺 name 等必填字段)=显式配置错误,仍须响亮失败而非静默降级
     import pytest
 
     from sentinel.app import _load_targets_or_disable
 
     bad = tmp_path / "bad.yaml"
-    bad.write_text("defaults: {}\n", encoding="utf-8")  # 缺 services 键
+    bad.write_text("services:\n  - host: x.local\n    path: /health\n", encoding="utf-8")
     with pytest.raises(KeyError):
         _load_targets_or_disable(str(bad))
 

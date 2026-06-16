@@ -47,7 +47,11 @@ not a *write*.
 `X.Y.Z` is the new version.
 
 1. Branch: `git switch -c release/vX.Y.Z`
-2. Bump `version` in `pyproject.toml`, then `uv lock`.
+2. Bump `version` in `pyproject.toml`, then `uv lock`. Also bump the pinned
+   `ghcr.io/hyxiaoge/watchmend:X.Y.Z` tag in `docker-compose.image.yml` to the
+   same version — the README's image-based deploy reads it, and
+   `tests/test_compose_image.py` (run by `make check` in step 4) fails if it
+   drifts from `pyproject.toml`.
 3. Cut the changelog in **both** files: move the entries under `## [Unreleased]`
    into a new `## [X.Y.Z] - <YYYY-MM-DD>` block, leave a fresh empty
    `## [Unreleased]`, and add the compare-link reference at the bottom.

@@ -21,7 +21,10 @@ _WATCHED_POLICIES = frozenset({"always", "unless-stopped", "on-failure"})
 # 用子串匹配而非 startswith:生产镜像带 registry 前缀(如 ghcr.io/<org>/watchmend:0.1.1),
 # startswith("watchmend") 会漏掉它 → 把巡检本体当普通退出容器误报 container_down。
 _SELF_IMAGE_SUBSTR = "watchmend"
-_SOCKET_PROXY_IMAGE = "tecnativa/docker-socket-proxy"
+# socket 代理有多源同义镜像:docker-compose.yml 用 tecnativa(Docker Hub),
+# 镜像版 docker-compose.image.yml 用 lscr.io/linuxserver/socket-proxy(国内可达同源 fork)。
+# 两者都按镜像名子串排除,免得换源后边车被当普通容器误报 container_down。
+_SOCKET_PROXY_SUBSTRS = ("tecnativa/docker-socket-proxy", "linuxserver/socket-proxy")
 
 
 async def run_docker_scan(
@@ -63,7 +66,7 @@ async def run_docker_scan(
         name = names[0].lstrip("/")
         image = row.get("Image") or ""
         # 自身/socket 代理跳过(按镜像子串识别,兼容 registry 前缀,不依赖容器命名)
-        if _SELF_IMAGE_SUBSTR in image or _SOCKET_PROXY_IMAGE in image:
+        if _SELF_IMAGE_SUBSTR in image or any(p in image for p in _SOCKET_PROXY_SUBSTRS):
             continue
         if name in exclude:
             continue

@@ -1,0 +1,91 @@
+# 镜像版部署:不本地构建,直接拉 ghcr 预构建镜像跑 WatchMend(单容器)。
+# 自包含、零外部 docker 网络依赖,适合「全新机器 / 没有现成 prom-loki-反代网络 /
+# 在 GFW 后面」的场景。对照 docker-compose.yml(源码构建,挂外部 egress/metrics 网),
+# 这份是开箱即用的替代品。用法:
+#
+#   git clone https://github.com/HyxiaoGe/watchmend && cd watchmend
+#   cp .env.example .env                      # 按注释填:至少一个通知渠道,其余按需
+#   cp services.example.yaml services.yaml    # 改成你自己的探针清单(或把 services 改成空列表 services: [] 只看外部状态页)
+#   mkdir -p data                             # SQLite 落盘目录(不建会被 docker 创成 root 属主目录)
+#   docker compose -f docker-compose.image.yml up -d
+#   curl http://127.0.0.1:8765/health         # 验活
+#
+# 注意:这条路径不经 make,没有 Makefile 的渠道门禁与 services.yaml/llm.yaml 预置。
+#   - 通知渠道:.env 里**一个都不填会崩溃重启**(应用启动期断言「至少一个渠道」,
+#     compose 的 restart: unless-stopped 会把这次启动异常变成无限重启)。填了语法
+#     合法但假的值也能起来(只校验非空,不校验可达),只是投递会每分钟失败刷日志。
+#   - services.yaml:缺文件不崩(回落「仅外部状态页」模式),但要监控内部服务就得 cp 后编辑;
+#     只看外部状态页就把 services 改成 `services: []`(最清晰)。裸 `services:`、空文件、缺文件
+#     都会安全回落「仅外部状态页」模式(不崩);只有真正格式坏(如服务项缺 name)才响亮失败。
+#   - LLM 诊断:本路径走 .env 的 LLM_BASE_URL/LLM_API_KEY/LLM_MODEL 启用即可,
+#     **不挂 llm.yaml**——无 make 用户不会预置占位文件,直接挂会被 docker 创成同名空目录。
+services:
+  sentinel:
+    # 固定补丁版本(仓库策略:绝不用 :latest/:main,只用显式版本号)。
+    # 发新版后记得同步 bump 这里(见 RELEASING.md);想换更新版先去 releases 页看最新 tag。
+    image: ghcr.io/hyxiaoge/watchmend:0.11.0
+    container_name: watchmend
+    restart: unless-stopped
+    mem_limit: 256m
+    env_file: .env
+    environment:
+      SENTINEL_DB_PATH: /data/sentinel.db
+    volumes:
+      - ./data:/data
+      # 探针清单:cp services.example.yaml services.yaml 后按自己的服务编辑。
+      # 缺文件时 docker 会创成空目录 → 应用回落「仅外部状态页」模式(不崩,但内部探针静默关闭)。
+      - ./services.yaml:/app/services.yaml:ro
+      # 刻意不挂 ./llm.yaml:无 make 预置占位时直接挂会被 docker 创成同名空目录。
+      # 镜像版的 LLM 诊断走 .env 的 LLM_BASE_URL/LLM_API_KEY/LLM_MODEL(详见上方注释)。
+    ports:
+      # 仅绑宿主机 127.0.0.1:面板与编排写 API 共用此端口,默认零公网暴露。
+      # 本机直接开 http://127.0.0.1:8765;远程走 SSH 隧道:ssh -L 8765:127.0.0.1:8765 you@your-server
+      # 要对外暴露:务必先在 .env 设 SENTINEL_DIAG_TOKEN(否则写 API 无鉴权)。
+      - "127.0.0.1:8765:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+    # 关 docker 巡检:注释掉下方 docker-proxy service、本服务的 depends_on docker-proxy
+    # 与 docker_proxy 网络,并清空 .env 的 SENTINEL_DOCKER_HOST(.env.example 预置值是
+    # tcp://docker-proxy:2375,留着却不起 proxy 会让 docker_scan 每 60s 连不上刷错误日志)。
+    depends_on:
+      - docker-proxy          # 减少冷启动时 docker 数据源故障噪音
+    networks:
+      - default               # compose 隐式默认网:承载出网(状态页/GitHub/LLM/飞书),勿删
+      - docker_proxy          # 专用内部网,经此连 tcp://docker-proxy:2375
+
+  # docker socket 只读代理边车:WatchMend 容器永不挂裸 socket,只连此 proxy 的只读 TCP。
+  # 这里用 lscr.io/linuxserver/socket-proxy 而非 docker-compose.yml 里的 tecnativa/
+  # docker-socket-proxy——后者只在 Docker Hub,Hub 在国内被墙拉不动;lscr.io 国内可达,
+  # 且是同源 fork,环境变量接口一致(CONTAINERS/POST/EVENTS/VERSION/INFO,POST 默认 0 = 只读,
+  # 本项目试用机实测一致)。不需要 docker 巡检就整段注释掉(连同 sentinel 的 docker_proxy 网络与下方网络定义)。
+  # 自排除:巡检按镜像名子串自动排除自带的 socket 代理,tecnativa 与 linuxserver/socket-proxy
+  #    (lscr fork)都覆盖,无需手动设 SENTINEL_DOCKER_EXCLUDE;仅当你换用名字不含上述子串的
+  #    其它代理镜像时,才在 .env 按容器名排除 SENTINEL_DOCKER_EXCLUDE=watchmend-docker-proxy。
+  docker-proxy:
+    # 按摘要锁定(仓库 pin 策略):同源只读 socket 代理,国内可达。
+    image: lscr.io/linuxserver/socket-proxy@sha256:1a210e6688649c3c8217faa29172dbbb46d9f9a0afb62b1c4b9987a612057a4d
+    container_name: watchmend-docker-proxy
+    restart: unless-stopped
+    mem_limit: 64m
+    environment:
+      CONTAINERS: 1          # 唯一需显式开的开关:放行 /containers/*(ps/inspect/logs/stats)
+      EVENTS: 0              # 关事件流(默认放行,纵深防御显式关)
+      VERSION: 0
+      INFO: 0
+      # POST 默认 0 → 整 API 只读;EXEC/容器增删改全拒
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro   # proxy 挂真 socket,sentinel 不挂
+    networks:
+      - docker_proxy        # 仅在专用内部网,不外泄无鉴权的 2375
+
+# 不重新声明 egress/metrics 外部网:这份是自包含部署,
+# 隐式 default 网已承载所有出网流量(状态页/GitHub/LLM/飞书)。
+networks:
+  # compose 自管的专用内部网:只有 sentinel + docker-proxy 加入。
+  # internal: true → 不通外网、与其它容器隔离,无鉴权的 2375 不外泄。
+  docker_proxy:
+    driver: bridge
+    internal: true

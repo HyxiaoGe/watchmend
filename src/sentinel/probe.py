@@ -25,14 +25,27 @@ class ProbeTarget:
 
 def load_targets(path: str) -> list[ProbeTarget]:
     """解析 services.yaml:显式清单不自动发现;url 与 host+path 二选一。"""
-    data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    # 空文件/裸 `services:`/缺 services 键都按"无内部服务"处理,回退空清单(vendor-only),
+    # 不崩——这是国内新用户最易踩的坑(清空或留裸键 → 容器 crash-loop)。真正格式坏
+    # (顶层标量/列表、services 写成非列表、服务项缺 name/host 等)仍响亮失败(显式配置错误)。
+    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     defaults = data.get("defaults") or {}
     base = (data.get("nginx_base") or "http://nginx-proxy").rstrip("/")
     default_timeout = float(defaults.get("timeout", 5.0))
     default_expect = int(defaults.get("expect_status", 200))
 
+    # None/缺省 → 空清单(vendor-only);写成非列表标量(services: 0/true/字符串)= 类型错误,
+    # 不静默吞成空,响亮失败让用户察觉(空列表 [] 正常走零次循环)。
+    services = data.get("services")
+    if services is None:
+        services = []
+    elif not isinstance(services, list):
+        raise ValueError(
+            f"services.yaml 'services' 必须是列表(或留空/省略),实际为 {type(services).__name__}"
+        )
+
     targets: list[ProbeTarget] = []
-    for item in data["services"]:
+    for item in services:
         expect = int(item.get("expect_status", default_expect))
         timeout = float(item.get("timeout", default_timeout))
         if "url" in item:

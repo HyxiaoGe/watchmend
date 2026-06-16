@@ -78,6 +78,35 @@ Most data sources are optional — leave one empty and that layer turns off clea
 All 40+ settings (thresholds, cooldowns, verbosity…) are documented inline in
 [.env.example](.env.example).
 
+## China / prebuilt-image deployment (turnkey)
+
+Pick this over `make up` when you want the prebuilt [ghcr](https://github.com/HyxiaoGe/watchmend/pkgs/container/watchmend) image (no source build), you have **no** existing prometheus/loki/reverse-proxy docker networks, or you're **behind the GFW**. It uses a self-contained [`docker-compose.image.yml`](docker-compose.image.yml): image-based (no `build:`), no external `egress`/`metrics` networks, and the read-only docker-socket proxy swapped for a China-reachable same-source fork.
+
+> You **still clone the repo** — only the image build is skipped, not the repo (the compose, `.env.example`, and `services.example.yaml` all live here).
+
+**Step 0 — install Docker (China, if missing)**: `curl -fsSL https://get.docker.com | sh -s -- --mirror Aliyun` (plain `get.docker.com` fails on the GPG-key fetch from download.docker.com inside China, `curl` exit 35).
+
+```bash
+git clone https://github.com/HyxiaoGe/watchmend && cd watchmend
+cp .env.example .env                      # fill AT LEAST ONE notification channel
+cp services.example.yaml services.yaml    # your probe list, or set the services block to exactly `services: []` for vendor-status-only
+mkdir -p data                             # SQLite persistence dir
+docker compose -f docker-compose.image.yml up -d
+curl http://127.0.0.1:8765/health
+```
+
+> **A channel is mandatory.** This path skips the Makefile gate, so running `docker compose up` with **zero channels in `.env` crash-loops** the container: the app asserts "at least one channel" during startup and `restart: unless-stopped` turns that into an infinite restart. A syntactically-valid-but-fake value boots (channels are checked for presence, not reachability), but delivery then fails and retries every minute (log noise) — double-check the token.
+
+> **`services.yaml`**: edit it to your own probe list, or for vendor-status-only set the `services` block to `services: []` (clearest). A bare `services:` key, an empty file, or a missing file all **degrade safely to vendor-status-only** (no crash); only genuinely malformed config (e.g. a service entry missing the required `name`) fails loudly.
+
+> **Image version**: `docker-compose.image.yml` hard-pins a specific `image:` tag (the repo never uses `:latest`). It may be stale by the time you read this — check the [releases page](https://github.com/HyxiaoGe/watchmend/releases) and bump the `image:` line to upgrade.
+
+> **Docker layer** (on by default): the bundled read-only socket proxy is `lscr.io/linuxserver/socket-proxy`, not `tecnativa/docker-socket-proxy` (Docker Hub is blocked in China; `lscr.io` is reachable and the env interface — `CONTAINERS`/`POST`/`EVENTS`…, POST defaults to `0` = read-only — is identical). Two notes: the patrol auto-excludes the bundled socket proxy by image-name substring (both `tecnativa` and the `lscr` fork are covered), so no manual `SENTINEL_DOCKER_EXCLUDE` is needed — only set one if you swap in a different proxy image whose name lacks those substrings; to turn the layer off, follow the inline comments and clear `SENTINEL_DOCKER_HOST`.
+
+> **LLM diagnosis** in this path is enabled via `.env` `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL` (DeepSeek `api.deepseek.com` / Moonshot CN `api.moonshot.cn` are the natural picks behind the GFW; OpenAI/Anthropic/Gemini direct-connect is unreachable there). The `llm.yaml` registry + `make llm-init` hot-reload flow is for the `make up` build path; this compose deliberately does not mount `llm.yaml`. See [`## LLM diagnosis (optional)`](#llm-diagnosis-optional).
+
+> **Access**: the port is bound to `127.0.0.1` only (zero public exposure). On the box itself open `http://127.0.0.1:8765` directly; for a remote box tunnel first — `ssh -L 8765:127.0.0.1:8765 you@your-server`, then open `http://127.0.0.1:8765` locally. Before exposing it (LAN bind / reverse proxy), set `SENTINEL_DIAG_TOKEN` — see [`## Evidence Panel (read-only)`](#evidence-panel-read-only).
+
 ## LLM diagnosis (optional)
 
 **Not locked to one platform.** WatchMend speaks the standard OpenAI
