@@ -1,5 +1,11 @@
 # tests/test_changelog_panel.py
+import tomllib
+from pathlib import Path
+
 from sentinel.panel.changelog import Release, Section, parse_changelog
+
+_ROOT = Path(__file__).resolve().parents[1]
+_CHANGELOGS = ("CHANGELOG.md", "CHANGELOG.zh-CN.md")
 
 _SAMPLE = """\
 # Changelog
@@ -91,3 +97,29 @@ def test_load_releases_missing_returns_empty(monkeypatch):
 
     monkeypatch.setattr(changelog, "_resolve", lambda lang: None)
     assert changelog.load_releases("en") == []
+
+
+def test_pyproject_force_includes_changelogs():
+    cfg = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    fi = cfg["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
+    for name in _CHANGELOGS:
+        assert fi.get(name) == f"sentinel/_changelog/{name}", f"force-include 缺 {name}"
+
+
+def test_dockerfile_copies_changelogs_before_install():
+    lines = (_ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines()
+    copy_idx = next(
+        (
+            i
+            for i, ln in enumerate(lines)
+            if ln.startswith("COPY") and all(n in ln for n in _CHANGELOGS)
+        ),
+        None,
+    )
+    install_idx = next(
+        (i for i, ln in enumerate(lines) if "uv pip install" in ln and ln.rstrip().endswith(".")),
+        None,
+    )
+    assert copy_idx is not None, "Dockerfile 未 COPY 两个 changelog"
+    assert install_idx is not None, "未找到 wheel 安装行"
+    assert copy_idx < install_idx, "CHANGELOG COPY 必须在 wheel 安装之前"
