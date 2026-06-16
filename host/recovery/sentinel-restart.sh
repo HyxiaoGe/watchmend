@@ -19,7 +19,12 @@ target="$1"
 [[ "$target" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || die "容器名 '$target' 格式非法,仅允许字母数字与 . _ -" 1
 
 # 校验 1:目标必须是当前正在运行的容器(挡掉拼错/垃圾输入)
-if ! docker ps --format '{{.Names}}' | grep -qxF -- "$target"; then
+# 先把 docker ps 输出落地再 grep:`docker ps | grep -q` 的管道里,grep -q 命中即关读端,
+# producer 仍在写会吃 SIGPIPE,叠加 set -o pipefail 会把整条管道判失败 → 偶发误判"不在运行中"
+# (多容器、目标靠前时尤甚)。落地后 grep 无管道、无竞态;docker ps 真失败(守护进程不可达)
+# 也单独以 exit 2 报错,不被混成"grep 无匹配"。
+running="$(docker ps --format '{{.Names}}')" || die "docker ps 失败,无法确认运行状态" 2
+if ! grep -qxF -- "$target" <<< "$running"; then
     die "容器 '$target' 不在运行中容器列表内,拒绝" 1
 fi
 
