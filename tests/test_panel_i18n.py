@@ -116,9 +116,6 @@ def test_phase1_panel_keys_present_both_langs():
         "tab.events",
         "tab.hygiene",
         "hero.uptime_label",
-        "hero.days_clean",
-        "hero.open",
-        "hero.no_events",
         "sec.services",
     ]
     for lang in ("zh", "en"):
@@ -131,5 +128,3 @@ def test_phase1_format_keys_accept_params():
 
     t = make_translator("zh")
     assert t("hero.uptime_label") == "今日可用率"  # 今日口径,无窗口占位
-    assert "5" in t("hero.days_clean", n=5)
-    assert "2" in t("hero.open", open=2)

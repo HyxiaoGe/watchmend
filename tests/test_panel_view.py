@@ -670,14 +670,57 @@ def test_overall_ring_empty_health_is_all_zero():
     assert overall_ring([]) == {"ok": 0.0, "degraded": 0.0, "partial": 0.0, "down": 0.0}
 
 
-def test_days_clean_floor_division():
-    from sentinel.panel.view import _days_clean
+async def test_overview_d90_window_spans_full_history_not_probe_window(tmp_path, monkeypatch):
+    # P2 回归:HERO 的 7/30/90d 均值是与探针条 window 无关的滚动 SLO,固定按保留史跨度计算。
+    # 即便用户看 window=30,d90 也须真覆盖 90 天(含 31-90 天前旧数据),而非被切片钳成 d30 克隆。
+    settings = _settings(monkeypatch)  # 保留史默认 90
+    store = Store(str(tmp_path / "s.db"))
+    today = NOW.date()
+    for d in range(1, 31):  # 近 30 天 100% 可用
+        store.upsert_probe_daily(
+            "api",
+            (today - timedelta(days=d)).isoformat(),
+            total=100,
+            ok_count=100,
+            p50=10.0,
+            p95=20.0,
+        )
+    for d in range(31, 90):  # 更旧的 31-89 天前 90% 可用 → 两窗口必然不同
+        store.upsert_probe_daily(
+            "api",
+            (today - timedelta(days=d)).isoformat(),
+            total=100,
+            ok_count=90,
+            p50=10.0,
+            p95=20.0,
+        )
+    ov = await view.build_overview(store, settings, now=NOW, window_days=30)
+    win = ov["hero"]["windows"]
+    assert win["d30"]["mean"] is not None and win["d90"]["mean"] is not None
+    # d30 只见近 30 天(全 100),d90 含旧的 90% 段 → 严格更低,证明 d90 跨越了 window=30 不再克隆 d30。
+    assert win["d30"]["mean"] == 100.0
+    assert win["d90"]["mean"] < win["d30"]["mean"]
+    store.close()
 
-    now_ts = 1_000_000
-    assert _days_clean(now_ts - 3 * 86400 - 10, now_ts) == 3  # 3 天多 → 3
-    assert _days_clean(now_ts - 100, now_ts) == 0  # 不足 1 天 → 0
-    assert _days_clean(now_ts + 500, now_ts) == 0  # 未来 ts(时钟漂移)→ 钳 0
-    assert _days_clean(None, now_ts) is None  # 从无事件
+
+async def test_overview_short_history_suppresses_truncated_d90(tmp_path, monkeypatch):
+    # 保留史 < 90d 且看 window=30 时:序列不足 90 桶,d90 须报 None("–")而非把 30d 截断窗冒充 90d。
+    settings = _settings(monkeypatch, SENTINEL_PANEL_HISTORY_DAYS="30")
+    store = Store(str(tmp_path / "s.db"))
+    today = NOW.date()
+    for d in range(1, 30):
+        store.upsert_probe_daily(
+            "api",
+            (today - timedelta(days=d)).isoformat(),
+            total=100,
+            ok_count=100,
+            p50=10.0,
+            p95=20.0,
+        )
+    ov = await view.build_overview(store, settings, now=NOW, window_days=30)
+    win = ov["hero"]["windows"]
+    assert win["d30"]["mean"] == 100.0  # 满窗:真实
+    assert win["d90"]["mean"] is None and win["d90"]["delta"] is None  # 不足整窗 → None
 
 
 def test_overall_trend_series_per_day_equal_weight():
