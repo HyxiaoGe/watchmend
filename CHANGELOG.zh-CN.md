@@ -10,6 +10,13 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-16
+
+### 新增
+- 更新日志面板:零-JS 的 `/changelog` 页离线展示本次构建的更新说明(及完整历史)。
+  双语变更日志已烤进镜像,无需联网即可查看。版本胶囊点击进入此页。
+- 更新标记:有新版可升级时,浏览器标签标题加 `●` 前缀,后台标签在下次刷新时即提示更新。
+
 ## [0.10.1] - 2026-06-16
 
 ### 新增
@@ -161,7 +168,8 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 ### 安全
 - docker 元数据与环境值的密钥泄漏遮蔽。
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.9.0...v0.9.1
