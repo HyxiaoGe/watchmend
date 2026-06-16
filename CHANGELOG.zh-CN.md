@@ -10,6 +10,21 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-06-17
+
+### 新增
+- 国内 / 镜像版部署:独立的 `docker-compose.image.yml` 直拉预构建镜像
+  `ghcr.io/hyxiaoge/watchmend`(不本地构建),自带只读 `lscr.io/linuxserver/socket-proxy`
+  边车——二者国内均可达(Docker Hub 被墙)——并在 README 增加开箱即用部署段。
+- 发版守护:`tests/test_compose_image.py` 钉住 `docker-compose.image.yml` 的镜像
+  tag 与 `pyproject.toml` 版本一致。
+
+### 修复
+- `services.yaml` 解析:空文件、裸 `services:`、缺 `services` 键现在安全回落
+  「仅外部状态页」模式,而非让容器 crash-loop;`services` 写成非列表标量仍响亮失败。
+- docker 巡检自排除现在也匹配 `linuxserver/socket-proxy`(lscr)fork,镜像版 compose
+  自带的 socket 代理边车不再被误报为 down 容器。
+
 ## [0.11.0] - 2026-06-16
 
 ### 新增
@@ -168,7 +183,8 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 ### 安全
 - docker 元数据与环境值的密钥泄漏遮蔽。
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.9.1...v0.10.0
