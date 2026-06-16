@@ -1,6 +1,7 @@
 {% extends "_base.html" %}
 {% block title %}{{ t('hdr.title') }}{% endblock %}
 {% block body %}
+{% from "_macros.html" import tip with context %}
 <div class="wrap">
 <p class="crumb"><a href="{{ back_url }}">← {{ t('tab.events') }}</a></p>
 {% if detail is none %}
@@ -31,7 +32,7 @@
     </svg>
     <div class="ring-center">
       <span class="num">{% if detail.confidence_level %}{{ t('conf.' ~ detail.confidence_level) }}{% else %}—{% endif %}</span>
-      <span class="cap">{{ t('ev.confidence') }}</span>
+      <span class="cap">{{ tip(t('ev.confidence'), 'confidence', 'conf', 'l') }}</span>
     </div>
   </div>
   <div class="dh-body">

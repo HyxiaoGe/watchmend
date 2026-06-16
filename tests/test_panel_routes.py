@@ -49,7 +49,6 @@ async def test_overview_renders(tmp_path, monkeypatch):
     resp = await _get(app, "/")
     assert resp.status_code == 200
     assert "证据台" in resp.text  # hdr.title
-    assert "永不自动执行" in resp.text  # footer.readonly
     # 总览只保留概览级:待关注(当前未结告警)+ 汇总链接;明细去子页
     assert "待关注" in resp.text  # sec.attention
     assert "Loki 巡检失败" in resp.text  # 未结告警进待关注:rule_label(scan_failed_loki, zh)
@@ -1382,4 +1381,127 @@ async def test_nav_present_on_all_base_pages(tmp_path, monkeypatch):
     for path in ("/services", "/events", "/hygiene"):
         html = (await _get(app, path)).text
         assert f"v{__version__}" in html, path
+    store.close()
+
+
+async def test_overview_glossary_uptime_tip(tmp_path, monkeypatch):
+    # 今日可用率 caption 包成 hover 解释气泡(零-JS,环内 caption 用 pos=l)
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.insert_event(
+        ts=1700000000,
+        rule="scan_failed_loki",
+        subject="log_scan",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    html = (await _get(app, "/")).text
+    assert 'class="tip' in html
+    assert 'role="tooltip"' in html
+    assert 'id="tip-uptoday"' in html
+    assert 'aria-describedby="tip-uptoday"' in html
+    assert "探测成功的时间占比" in html  # gloss.uptime_today
+    store.close()
+
+
+async def test_overview_glossary_kpi_tips_unique_ids(tmp_path, monkeypatch):
+    # 三个窗口均值气泡 id 必须互不相同(防 aria-describedby 撞 id);MTTR 亦有气泡
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.insert_event(
+        ts=1700000000,
+        rule="scan_failed_loki",
+        subject="log_scan",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    html = (await _get(app, "/")).text
+    for uid in ("tip-win7", "tip-win30", "tip-win90"):
+        assert html.count(f'id="{uid}"') == 1, uid
+    assert 'id="tip-mttr"' in html
+    assert "每日可用率的平均值" in html  # gloss.win_mean
+    assert "平均恢复时间" in html  # gloss.mttr
+    store.close()
+
+
+async def test_service_detail_glossary_tips(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    today = datetime.now(tz).date()
+    now_ts = int(datetime.now(tz).timestamp())
+    for i in range(1, 8):
+        store.upsert_probe_daily(
+            "api",
+            (today - timedelta(days=i)).isoformat(),
+            total=10,
+            ok_count=10,
+            p50=10.0,
+            p95=20.0,
+        )
+    store.add_probe_samples(
+        [ProbeSample(ts=now_ts - 30, service="api", ok=True, status_code=200, latency_ms=18.0)]
+    )
+    app = _build_app(store, settings)
+    html = (await _get(app, "/service/api?lang=zh")).text
+    for uid in ("tip-p95", "tip-baseline", "tip-threshold"):
+        assert f'id="{uid}"' in html, uid
+    assert "95% 的请求响应快于此延迟" in html  # gloss.p95
+    store.close()
+
+
+async def test_event_detail_glossary_confidence_tip(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch, LLM_BASE_URL="http://llm/v1", LLM_MODEL="m")
+    store = Store(str(tmp_path / "s.db"))
+    eid = store.insert_event(
+        ts=1700000000,
+        rule="container_down",
+        subject="postgres",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="pending",
+        cooldown_until=0,
+    )
+    store.set_diagnosis(
+        eid,
+        status="done",
+        diagnosis_json=json.dumps({"summary": "OOM", "confidence": "high"}),
+        tools_json=json.dumps([]),
+    )
+    app = _build_app(store, settings)
+    html = (await _get(app, f"/event/{eid}")).text
+    assert 'id="tip-conf"' in html
+    assert 'class="tip l"' in html  # 环内 caption 用 pos=l(向右展开)
+    assert "AI 诊断对该结论的置信度" in html  # gloss.confidence
+    store.close()
+
+
+async def test_footer_removed(tmp_path, monkeypatch):
+    # 底部静态信任声明页脚已删(意义不大,且 localhost-only 在 LAN 暴露部署上不准)
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    html = (await _get(app, "/")).text
+    assert 'class="footer' not in html
+    assert "建议命令永不自动执行" not in html  # footer.readonly zh
+    assert "localhost-only" not in html
+    html_en = (await _get(app, "/?lang=en")).text
+    assert "localhost-only" not in html_en
+    assert "never auto-run" not in html_en  # footer.readonly en
     store.close()

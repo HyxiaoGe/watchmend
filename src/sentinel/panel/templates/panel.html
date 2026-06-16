@@ -1,5 +1,6 @@
 {% extends "_base.html" %}
 {% block body %}
+{% from "_macros.html" import tip with context %}
 <div class="wrap">
 
 {# —— HERO:去重状态环(环段=今日 4 态分布、中心=今日可用率带阈值色)+ 环旁 KPI 事实 —— #}
@@ -19,7 +20,7 @@
     </svg>
     <div class="ring-center {{ hero.uptime_grade }}">
       <span class="num">{% if hero.uptime_pct is not none %}{{ hero.uptime_pct }}<span class="pct">%</span>{% else %}—{% endif %}</span>
-      <span class="cap">{{ t('hero.uptime_label') }}</span>
+      <span class="cap">{{ tip(t('hero.uptime_label'), 'uptime_today', 'uptoday', 'l') }}</span>
     </div>
   </div>
   <div class="kpis">
@@ -33,7 +34,7 @@
     {% set w = hero.windows[wk] %}
     <div class="kpi">
       <span class="num">{% if w.mean is not none %}{{ w.mean }}<span class="pct">%</span>{% else %}<span class="nodata">–</span>{% endif %}{% if w.delta is not none %}{% set arrow = '▲' if w.dir == 'up' else ('▼' if w.dir == 'down' else '→') %} <span class="delta {{ w.dir }}">{{ arrow }}{{ '%+.1f'|format(w.delta) }}</span>{% endif %}</span>
-      <span class="cap">{{ t('ov.win_mean', days=wd) }}</span>
+      <span class="cap">{{ tip(t('ov.win_mean', days=wd), 'win_mean', 'win' ~ wd) }}</span>
     </div>
     {% endfor %}
     {# 开放事件:总数 + 按严重度(calm/busy 读法一致)#}
@@ -49,7 +50,7 @@
     {# MTTR(近 30d 已恢复,过滤 point 事件)#}
     <div class="kpi">
       <span class="num">{{ fmt_duration(hero.mttr.mean_s) }}</span>
-      <span class="cap">{{ t('ov.mttr') }}{% if hero.mttr.n %} · {{ t('ov.mttr_worst', dur=fmt_duration(hero.mttr.worst_s)) }}{% endif %}</span>
+      <span class="cap">{{ tip(t('ov.mttr'), 'mttr', 'mttr') }}{% if hero.mttr.n %} · {{ t('ov.mttr_worst', dur=fmt_duration(hero.mttr.worst_s)) }}{% endif %}</span>
     </div>
   </div>
 </div>

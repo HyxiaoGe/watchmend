@@ -28,6 +28,16 @@ MESSAGES: dict[str, dict[str, str]] = {
         "st.down": "不可用",
         "st.nodata": "无数据",
         "tip.nodata": "这一天没有数据。",
+        # 字段解释气泡(hover/focus,见 _macros.html）
+        "gloss.uptime_today": "今天截至当前,该范围内探测成功的时间占比;低于阈值会标红。",
+        "gloss.win_mean": "该时间窗内每日可用率的平均值;箭头表示近期趋势(相对上一周期的升降)。",
+        "gloss.mttr": (
+            "平均恢复时间:近 30 天已恢复事件从触发到恢复的平均时长;「最长」为其中耗时最久的一次。"
+        ),
+        "gloss.p95": "95% 的请求响应快于此延迟;比平均值更能反映尾部慢请求。",
+        "gloss.baseline": "近期正常时段的 p95 基准,用作慢响应对比的锚点。",
+        "gloss.threshold": "触发慢响应告警的延迟线:max(基线×倍率, 基线+余量)。",
+        "gloss.confidence": "AI 诊断对该结论的置信度(高/中/低),取决于证据是否充分。",
         "axis.window": "{days} 天前",
         "axis.today": "今天",
         "host.engine": "探针引擎",
@@ -152,7 +162,6 @@ MESSAGES: dict[str, dict[str, str]] = {
         "hyg.incidents": "未结事件",
         "hyg.status_page": "状态页 →",
         "hyg.all_clear": "体检通过 · 无告警",
-        "footer.readonly": "只读 · localhost-only · env 值全遮蔽 · 建议命令永不自动执行",
     },
     "en": {
         "hdr.title": "WatchMend Evidence Panel",
@@ -175,6 +184,33 @@ MESSAGES: dict[str, dict[str, str]] = {
         "st.down": "Major outage",
         "st.nodata": "No data",
         "tip.nodata": "No data exists for this day.",
+        # Field glossary tooltips (hover/focus; see _macros.html)
+        "gloss.uptime_today": (
+            "Share of time probes succeeded today, up to now; turns red below threshold."
+        ),
+        "gloss.win_mean": (
+            "Average of daily uptime over this window; "
+            "the arrow shows the recent trend (vs. the previous period)."
+        ),
+        "gloss.mttr": (
+            "Mean time to recovery: average trigger-to-recovery duration for events "
+            'resolved in the last 30 days; "worst" is the single longest.'
+        ),
+        "gloss.p95": (
+            "95% of requests are faster than this latency; "
+            "captures tail slowness better than the average."
+        ),
+        "gloss.baseline": (
+            "A p95 baseline from recent normal periods, used as the comparison anchor."
+        ),
+        "gloss.threshold": (
+            "The latency line that triggers a slow-response alert: "
+            "max(baseline×ratio, baseline+margin)."
+        ),
+        "gloss.confidence": (
+            "The AI diagnosis's confidence in this conclusion (high/medium/low), "
+            "based on evidence sufficiency."
+        ),
         "axis.window": "{days} days ago",
         "axis.today": "Today",
         "host.engine": "Probe engine",
@@ -299,8 +335,6 @@ MESSAGES: dict[str, dict[str, str]] = {
         "hyg.incidents": "Open incidents",
         "hyg.status_page": "Status page →",
         "hyg.all_clear": "All clear · no alerts",
-        "footer.readonly": "read-only · localhost-only · env values redacted · "
-        "suggested commands never auto-run",
     },
 }
 

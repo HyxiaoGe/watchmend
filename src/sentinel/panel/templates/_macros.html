@@ -1,0 +1,7 @@
+{# 字段解释气泡:把一段 label 包成 hover/focus 触发体 + 解释气泡(零-JS,纯 CSS)。
+   文案取自 i18n gloss.<key>;uid 须页面内唯一(用作 id + aria-describedby)。
+   pos: 'c' 居中(默认)| 'l' 左锚开向右 | 'r' 右锚开向左(供 overflow:hidden 之外的锚点防溢出)。
+   以 `{% from "_macros.html" import tip with context %}` 引入(with context 让宏可见 t)。 #}
+{% macro tip(label, key, uid, pos='c') -%}
+<span class="tip{% if pos != 'c' %} {{ pos }}{% endif %}" tabindex="0" aria-describedby="tip-{{ uid }}">{{ label }}<span class="tippop" id="tip-{{ uid }}" role="tooltip">{{ t('gloss.' ~ key) }}</span></span>
+{%- endmacro %}
