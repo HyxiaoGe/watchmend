@@ -58,3 +58,36 @@ def test_parse_returns_dataclasses():
 
 def test_parse_empty_text():
     assert parse_changelog("") == []
+
+
+def test_resolve_finds_source_tree_changelog():
+    # 源码树(无 wheel):回落仓库根的真实 CHANGELOG
+    from sentinel.panel.changelog import _resolve
+
+    assert _resolve("en") is not None and _resolve("en").name == "CHANGELOG.md"
+    assert _resolve("zh") is not None and _resolve("zh").name == "CHANGELOG.zh-CN.md"
+    # 未知 lang 回落 en
+    assert _resolve("de").name == "CHANGELOG.md"
+
+
+def test_load_releases_includes_pyproject_version():
+    # 运行版本必须能解析出对应版本块(防 bump 后渲染不出当前块)
+    import tomllib
+    from pathlib import Path
+
+    from sentinel.panel.changelog import load_releases
+
+    pv = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]["version"]
+    for lang in ("en", "zh"):
+        versions = {r.version for r in load_releases(lang)}
+        assert pv in versions, f"{lang}: changelog 缺当前版本 {pv}"
+
+
+def test_load_releases_missing_returns_empty(monkeypatch):
+    # 文件定位失败 → [](页面降级空态,不抛错)
+    from sentinel.panel import changelog
+
+    monkeypatch.setattr(changelog, "_resolve", lambda lang: None)
+    assert changelog.load_releases("en") == []

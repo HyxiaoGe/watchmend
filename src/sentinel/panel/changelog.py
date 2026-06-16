@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 _VERSION_RE = re.compile(r"^## \[(\d+\.\d+\.\d+)\](?:\s*-\s*(\S+))?\s*$")
 _SECTION_RE = re.compile(r"^### (.+?)\s*$")
@@ -72,3 +73,26 @@ def parse_changelog(text: str) -> list[Release]:
 
     flush_rel()
     return releases
+
+
+_FILES = {"zh": "CHANGELOG.zh-CN.md", "en": "CHANGELOG.md"}
+
+
+def _resolve(lang: str) -> Path | None:
+    """包内 force-include 副本优先(装 wheel),回落仓库根(源码/测试)。"""
+    name = _FILES.get(lang, _FILES["en"])
+    packaged = Path(__file__).resolve().parent.parent / "_changelog" / name
+    if packaged.is_file():
+        return packaged
+    root = Path(__file__).resolve().parents[3] / name  # src/sentinel/panel/ → 仓库根
+    if root.is_file():
+        return root
+    return None
+
+
+def load_releases(lang: str) -> list[Release]:
+    """定位 → 读 → 解析;定位失败返回 [](降级空态)。"""
+    path = _resolve(lang)
+    if path is None:
+        return []
+    return parse_changelog(path.read_text(encoding="utf-8"))
