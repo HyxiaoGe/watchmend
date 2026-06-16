@@ -740,6 +740,47 @@ def test_service_windows_nodata_and_gaps():
     assert w["d1"] == 100.0  # 末 1 天有数据
 
 
+def test_open_by_severity():
+    from types import SimpleNamespace
+
+    from sentinel.panel.view import _open_by_severity
+
+    events = [
+        SimpleNamespace(severity="critical"),
+        SimpleNamespace(severity="warning"),
+        SimpleNamespace(severity="warning"),
+    ]
+    assert _open_by_severity(events) == {"total": 3, "critical": 1, "warning": 2}
+    assert _open_by_severity([]) == {"total": 0, "critical": 0, "warning": 0}
+
+
+def test_service_state_counts():
+    from sentinel.panel.view import _service_state_counts
+
+    def row(state):
+        return {"days": [{"state": state}]}
+
+    health = [row("down"), row("partial"), row("degraded"), row("ok"), row("ok"), row("nodata")]
+    assert _service_state_counts(health) == {
+        "total": 6,
+        "ok": 2,
+        "degraded": 1,
+        "partial": 1,
+        "down": 1,
+        "nodata": 1,
+    }
+    # 空 days → nodata
+    assert _service_state_counts([{"days": []}])["nodata"] == 1
+    assert _service_state_counts([]) == {
+        "total": 0,
+        "ok": 0,
+        "degraded": 0,
+        "partial": 0,
+        "down": 0,
+        "nodata": 0,
+    }
+
+
 async def test_build_overview_exposes_hero_and_mini(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))

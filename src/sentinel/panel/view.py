@@ -161,6 +161,29 @@ def _delta_dir(delta: float | None, eps: float = 0.05) -> str:
     return "up" if delta > 0 else "down"
 
 
+def _row_state(r: dict) -> str:
+    """健康行现态 = 最后一日(今日)格状态;空 days → nodata。与 overall_ring 同口径。"""
+    days = r.get("days") or []
+    return days[-1]["state"] if days else "nodata"
+
+
+def _open_by_severity(open_events: list) -> dict:
+    """未结事件按严重度计数(severity ∈ {critical, warning})+ 总数。纯计数,事件已 fetch。"""
+    crit = sum(1 for e in open_events if e.severity == "critical")
+    warn = sum(1 for e in open_events if e.severity == "warning")
+    return {"total": len(open_events), "critical": crit, "warning": warn}
+
+
+def _service_state_counts(health: list[dict]) -> dict:
+    """服务按现态四分 + nodata 计数(替代旧 rollup 的 problem 折叠,保留严重度梯度)。"""
+    counts = {"total": len(health), "ok": 0, "degraded": 0, "partial": 0, "down": 0, "nodata": 0}
+    for r in health:
+        st = _row_state(r)
+        if st in counts:
+            counts[st] += 1
+    return counts
+
+
 def _service_windows(row: dict) -> dict:
     """单服务 SLO 看板三窗口可用率(今日/7d/30d),纯取健康行 days[].uptime_pct 求均值。
     无数据窗口 → None(模板渲 "–" 灰,永不染绿)。零新读。"""
