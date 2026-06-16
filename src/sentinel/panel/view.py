@@ -161,6 +161,17 @@ def _delta_dir(delta: float | None, eps: float = 0.05) -> str:
     return "up" if delta > 0 else "down"
 
 
+def _service_windows(row: dict) -> dict:
+    """单服务 SLO 看板三窗口可用率(今日/7d/30d),纯取健康行 days[].uptime_pct 求均值。
+    无数据窗口 → None(模板渲 "–" 灰,永不染绿)。零新读。"""
+    series = [d.get("uptime_pct") for d in (row.get("days") or [])]
+    return {
+        "d1": _window_mean(series, 1),
+        "d7": _window_mean(series, 7),
+        "d30": _window_mean(series, 30),
+    }
+
+
 def _hhmm(ts: int, tz: timezone) -> str:
     return datetime.fromtimestamp(ts, tz).strftime("%H:%M")
 

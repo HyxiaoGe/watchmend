@@ -708,6 +708,38 @@ def test_window_delta_and_dir():
     assert _delta_dir(None) == "flat"
 
 
+def _row_days(uptimes):
+    return {"days": [{"uptime_pct": u} for u in uptimes]}
+
+
+def test_service_windows():
+    from sentinel.panel.view import _service_windows
+
+    # 35 天:前 5 天=90,后 30 天=100;今日(末)=100
+    row = _row_days([90.0] * 5 + [100.0] * 30)
+    w = _service_windows(row)
+    assert w["d1"] == 100.0  # 今日(末 1 天)
+    assert w["d7"] == 100.0  # 末 7 天全 100
+    assert w["d30"] == 100.0  # 末 30 天全 100
+    # 末 30 天里掺 5 天 90:row=[90]*10 + [100]*25 → d30=(90*5+100*25)/30
+    row2 = _row_days([90.0] * 10 + [100.0] * 25)
+    assert _service_windows(row2)["d30"] == round((90 * 5 + 100 * 25) / 30, 1)
+
+
+def test_service_windows_nodata_and_gaps():
+    from sentinel.panel.view import _service_windows
+
+    # 全 None(无数据服务)→ 三窗口皆 None,绝不染绿
+    assert _service_windows(_row_days([None] * 10)) == {"d1": None, "d7": None, "d30": None}
+    # 空 days
+    assert _service_windows({"days": []}) == {"d1": None, "d7": None, "d30": None}
+    # 部分 None 跳过:末 7 天 = [100,None,100,100,None,100,100] → 5 个 100 均值 100
+    row = _row_days([100.0, None, 100.0, 100.0, None, 100.0, 100.0])
+    w = _service_windows(row)
+    assert w["d7"] == 100.0
+    assert w["d1"] == 100.0  # 末 1 天有数据
+
+
 async def test_build_overview_exposes_hero_and_mini(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
