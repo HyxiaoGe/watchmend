@@ -829,6 +829,70 @@ async def test_overview_slo_board_shape(tmp_path, monkeypatch):
     store.close()
 
 
+async def test_overview_ring_threshold_color_class(tmp_path, monkeypatch):
+    # 今日可用率 50%（< partial 99.5）→ 环中心阈值色 class = bad（红）。
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    now_ts = int(datetime.now(tz).timestamp())
+    store.add_probe_samples(
+        [
+            ProbeSample(ts=now_ts - 10, service="api", ok=True, status_code=200, latency_ms=10.0),
+            ProbeSample(ts=now_ts - 11, service="api", ok=False, status_code=500, latency_ms=None),
+        ]
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/")
+    assert r.status_code == 200
+    assert 'class="ring-center bad"' in r.text  # 阈值色按 uptime_grade,非硬编码
+    store.close()
+
+
+async def test_overview_roster_state_tint_and_nodata_never_green(tmp_path, monkeypatch):
+    # 服务表整行底色按现态着色;无数据窗口渲染灰 "–"，整行不染绿。
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    today = datetime.now(tz).date()
+    now_ts = int(datetime.now(tz).timestamp())
+    # down 服务：今日 1 ok / 4 → 25% < 50% → down
+    store.add_probe_samples(
+        [
+            ProbeSample(
+                ts=now_ts - 10, service="downsvc", ok=True, status_code=200, latency_ms=9.0
+            ),
+            ProbeSample(
+                ts=now_ts - 11, service="downsvc", ok=False, status_code=500, latency_ms=None
+            ),
+            ProbeSample(
+                ts=now_ts - 12, service="downsvc", ok=False, status_code=500, latency_ms=None
+            ),
+            ProbeSample(
+                ts=now_ts - 13, service="downsvc", ok=False, status_code=500, latency_ms=None
+            ),
+        ]
+    )
+    # nodata 服务：仅历史日数据，今日无样本 → 今日态 nodata、今日窗口无值
+    store.upsert_probe_daily(
+        "ndsvc", (today - timedelta(days=1)).isoformat(), total=10, ok_count=10, p50=1.0, p95=2.0
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/")
+    assert r.status_code == 200
+    assert 'class="rrow down"' in r.text  # 整行 down 态着色 class
+    assert 'class="rrow nodata"' in r.text  # 无数据行（永不染绿）
+    assert "rw nodata" in r.text  # 无数据窗口单元格灰 "–"，不显示为绿/100%
+    store.close()
+
+
 async def test_services_list_renders(tmp_path, monkeypatch):
     from datetime import datetime, timedelta, timezone
 

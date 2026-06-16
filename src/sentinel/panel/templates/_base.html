@@ -13,7 +13,7 @@
     /* Phase 1 重设计新增 */
     --rad-lg:14px; --p50-fill:rgba(88,166,255,.08);
     --hero-glow:radial-gradient(120% 120% at 50% 0%, rgba(163,113,247,.10), transparent 60%);
-    --fz-hero:clamp(2.6rem,7vw,4.2rem); --fz-display:clamp(1.4rem,3vw,2rem);
+    --fz-display:clamp(1.4rem,3vw,2rem);
     --ring-sz:clamp(120px,18vw,168px);
     /* Phase 2:延迟双线 token(语义别名,不引新色相) */
     --p50:var(--link); --p95:var(--st-degraded); --p95-fill:rgba(210,153,34,.13);
@@ -89,18 +89,51 @@
   .hero-ring { position:relative; width:var(--ring-sz); height:var(--ring-sz); }
   .hero-ring svg { width:100%; height:100%; display:block; }
   .ring-center { position:absolute; inset:0; display:flex; flex-direction:column;
-    align-items:center; justify-content:center; }
+    align-items:center; justify-content:center; text-align:center; padding:0 6px; }
   .ring-center .num { font-family:ui-monospace,Menlo,monospace; font-variant-numeric:tabular-nums;
     font-size:var(--fz-display); font-weight:700; color:var(--st-ok); }
+  .ring-center.warn .num { color:var(--st-degraded); }
   .ring-center.bad .num { color:var(--st-down); }
+  .ring-center.nodata .num { color:var(--mut); }
   .ring-center .pct { font-size:.55em; color:var(--mut); }
-  .hero-stats { display:flex; gap:clamp(20px,5vw,56px); flex-wrap:wrap; align-items:flex-end; }
-  .hstat .num { display:block; font-family:ui-monospace,Menlo,monospace; font-variant-numeric:tabular-nums;
-    font-size:var(--fz-hero); line-height:1; color:var(--st-ok); }
-  .hstat.bad .num { color:var(--st-down); }
-  .hstat .cap { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
-  .hero-trend { grid-column:1 / -1; margin-top:8px; }
-  .hero-trend svg { width:100%; height:64px; display:block; }
+  .ring-center .cap { color:var(--mut); font-size:10px; text-transform:uppercase; letter-spacing:.4px; margin-top:3px; }
+  /* —— SLO 看板:环旁 KPI 事实网格(去重后填实环旁空白)—— */
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit, minmax(124px, 1fr));
+    gap:clamp(12px,2.4vw,20px) clamp(16px,3vw,30px); align-content:center; }
+  .kpi { display:flex; flex-direction:column; gap:3px; min-width:0; }
+  .kpi .num { font-family:ui-monospace,Menlo,monospace; font-variant-numeric:tabular-nums;
+    font-size:clamp(1.05rem,2.1vw,1.45rem); line-height:1.15; font-weight:600; color:var(--txt);
+    display:flex; align-items:baseline; gap:5px; flex-wrap:wrap; }
+  .kpi .num .pct { font-size:.6em; color:var(--mut); margin-left:1px; }
+  .kpi .num .nodata { color:var(--mut); }
+  .kpi .cap { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+  .kpi .delta { font-size:.6em; font-weight:600; }
+  .delta.up { color:var(--st-ok); } .delta.down { color:var(--st-down); } .delta.flat { color:var(--mut); }
+  .kpi .sev { font-size:.62em; font-weight:600; }
+  .sev.crit { color:var(--st-down); } .sev.warn { color:var(--st-degraded); }
+  /* —— SLO 看板:服务可用率表(最差优先,整行点进 /service,整行底色按现态着色)—— */
+  .roster { border:1px solid var(--line); border-radius:var(--rad); background:var(--panel); overflow:hidden; margin:4px 0; }
+  .rhead, .rrow { display:grid; grid-template-columns:minmax(0,1fr) 58px 58px 58px minmax(70px,auto) 16px;
+    align-items:center; gap:10px; padding:9px 14px; }
+  .rhead { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid var(--line); }
+  .rrow { border-bottom:1px solid var(--line); text-decoration:none; color:var(--txt); }
+  .rrow:last-child { border-bottom:0; }
+  .rrow:hover { background:var(--viobg); }
+  .rrow.down { box-shadow:inset 3px 0 0 var(--st-down); }
+  .rrow.partial { box-shadow:inset 3px 0 0 var(--st-partial); }
+  .rrow.degraded { box-shadow:inset 3px 0 0 var(--st-degraded); }
+  .rrow.nodata { opacity:.7; }
+  .rname { display:flex; align-items:center; gap:8px; font-weight:600; min-width:0;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .rdot { width:9px; height:9px; border-radius:50%; flex:none; background:var(--st-nodata); }
+  .rdot.ok{background:var(--st-ok)} .rdot.degraded{background:var(--st-degraded)}
+  .rdot.partial{background:var(--st-partial)} .rdot.down{background:var(--st-down)}
+  .rw { text-align:right; font-size:12px; color:var(--txt); }
+  .rhead .rw { color:var(--mut); }
+  .rw.nodata { color:var(--mut); }
+  .rp95 { text-align:right; color:var(--mut); font-size:11px; }
+  .rgo { text-align:right; color:var(--mut); }
+  .rrow.more { display:flex; justify-content:center; color:var(--link); font-size:12px; }
   /* —— 总览:待关注 + 汇总(明细交给子页,本页只放总览级)—— */
   .attn { border:1px solid var(--line); border-radius:var(--rad); background:var(--panel); overflow:hidden; }
   .arow { display:flex; align-items:center; gap:10px; padding:11px 14px; border-bottom:1px solid var(--line);
