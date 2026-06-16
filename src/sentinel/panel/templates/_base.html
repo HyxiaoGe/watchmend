@@ -336,7 +336,7 @@
     <a href="{{ tab_url('/events') }}" class="{{ 'tab-on' if active_tab == 'events' else '' }}" title="{{ t('tab.events') }}">{{ ico['events']|safe }}<span>{{ t('tab.events') }}</span></a>
     <a href="{{ tab_url('/hygiene') }}" class="{{ 'tab-on' if active_tab == 'hygiene' else '' }}" title="{{ t('tab.hygiene') }}">{{ ico['hygiene']|safe }}<span>{{ t('tab.hygiene') }}</span></a>
   </nav>
-  <span class="sub mono">{% if refresh_seconds %}{{ t('hdr.refreshed', ts=now_str) }} · {{ refresh_seconds }}s{% endif %}{% if posture %} · LLM:{% if posture.llm.enabled %}{{ posture.llm.model }}{% if posture.llm.pending_restart %} {{ t('llm.pending_restart') }}{% else %} ✓{% endif %}{% else %}{{ t('host.llm.off') }}{% endif %}{% endif %}{% if active_tab == 'events' %} · <a href="{{ qurl(ev_page=1) }}">{{ t('nav.latest') }}</a>{% endif %}</span>
+  <span class="sub mono">{% set sep = joiner(' · ') %}{% if refresh_seconds %}{{ sep() }}<span title="{{ t('hdr.refreshed', ts=now_str) }} · {{ refresh_seconds }}s">↻ {{ now_str[11:16] }}</span>{% endif %}{% if posture and posture.llm.enabled %}{{ sep() }}{{ t('llm.ai') }}{% if posture.llm.pending_restart %} · {{ t('llm.pending_restart') }}{% else %} ✓{% endif %}{% endif %}{% if active_tab == 'events' %}{{ sep() }}<a href="{{ qurl(ev_page=1) }}">{{ t('nav.latest') }}</a>{% endif %}</span>
 </div>
 {% endif %}
 {% block body %}{% endblock %}
