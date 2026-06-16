@@ -916,7 +916,7 @@ async def test_services_list_renders(tmp_path, monkeypatch):
     assert 'class="srow"' in r.text  # 服务行
     assert "API Gateway" in r.text  # 显示名 label
     assert "/service/api?" in r.text  # 整行点进服务详情(携带偏好)
-    assert 'class="tab-on">服务</a>' in r.text  # 「服务」标签为当前页高亮
+    assert 'class="tab-on" title="服务"' in r.text  # 「服务」标签为当前页高亮
     store.close()
 
 
@@ -993,7 +993,7 @@ async def test_service_detail_renders(tmp_path, monkeypatch):
     assert 'class="crumb"' in r.text  # 面包屑回服务列表
     assert "/services?" in r.text
     assert 'class="lat-chart"' in r.text  # 延迟时序大图
-    assert 'class="tab-on">服务</a>' in r.text  # 「服务」标签高亮
+    assert 'class="tab-on" title="服务"' in r.text  # 「服务」标签高亮
     assert '<meta http-equiv="refresh"' not in r.text  # 详情页不自动刷新
     store.close()
 
@@ -1074,7 +1074,7 @@ async def test_events_list_renders(tmp_path, monkeypatch):
     assert r.status_code == 200
     assert 'class="filters"' in r.text  # 筛选条
     assert "API Gateway" in r.text  # 服务显示名(卡片 + 筛选 chip)
-    assert 'class="tab-on">事件</a>' in r.text  # 「事件」标签高亮
+    assert 'class="tab-on" title="事件"' in r.text  # 「事件」标签高亮
     store.close()
 
 
@@ -1201,7 +1201,7 @@ async def test_hygiene_renders_tristate_and_nav(tmp_path, monkeypatch):
     assert 'class="hcard ok"' in r.text  # backup 健康卡
     assert 'class="hcard unevaluated"' in r.text  # disk/cert 未评估(灰态,不画绿)
     assert "未启用" in r.text  # hyg.unevaluated
-    assert 'class="tab-on">体检</a>' in r.text  # 「体检」标签高亮
+    assert 'class="tab-on" title="体检"' in r.text  # 「体检」标签高亮
     store.close()
 
 
@@ -1278,4 +1278,66 @@ async def test_hygiene_disabled_panel_404(tmp_path, monkeypatch):
     app = _build_app(store, settings)
     r = await _get(app, "/hygiene")
     assert r.status_code == 404
+    store.close()
+
+
+# —— 导航重设计:版本胶囊 + 图标导航 + 更新提示 ——
+async def test_nav_shows_version_pill_and_icon_nav(tmp_path, monkeypatch):
+    from sentinel import __version__
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    html = (await _get(app, "/")).text
+    assert f"v{__version__}" in html  # 版本胶囊
+    assert 'class="tabs"' in html  # 图标导航行
+    assert "<svg" in html  # 内联 SVG 图标
+    assert 'aria-label="中文"' in html and 'aria-label="English"' in html  # 语言控件可达名
+    store.close()
+
+
+async def test_nav_no_update_dot_when_no_meta(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    html = (await _get(app, "/")).text
+    assert '<i class="updot">' not in html  # 无 meta → 不亮更新点元素
+    store.close()
+
+
+async def test_nav_shows_update_when_meta_set(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.set_meta("latest_known_version", "v999.0.0")
+    store.set_meta("latest_release_url", "https://github.com/x/y/releases/v999.0.0")
+    app = _build_app(store, settings)
+    html = (await _get(app, "/")).text
+    assert '<i class="updot">' in html  # 琥珀更新点元素
+    assert "999.0.0" in html  # 更新命令含目标版本
+    assert "https://github.com/x/y/releases/v999.0.0" in html  # release 链接
+    # 版本胶囊 aria-label 在有更新时也播报"有新版"(屏幕阅读器不只听到当前版本)
+    assert '· 新版 v999.0.0 可用"' in html
+    store.close()
+
+
+async def test_nav_sanitizes_poisoned_release_url(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.set_meta("latest_known_version", "v999.0.0")
+    store.set_meta("latest_release_url", "javascript:alert(1)")
+    app = _build_app(store, settings)
+    html = (await _get(app, "/")).text
+    assert "javascript:alert(1)" not in html  # _safe_http_url 抹空
+    store.close()
+
+
+async def test_nav_present_on_all_base_pages(tmp_path, monkeypatch):
+    from sentinel import __version__
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    for path in ("/services", "/events", "/hygiene"):
+        html = (await _get(app, path)).text
+        assert f"v{__version__}" in html, path
     store.close()

@@ -35,7 +35,6 @@
   a { color:var(--link); text-decoration:none; }
   .hdr { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; }
   .hdr b { font-size:15px; } .hdr .sub { color:var(--mut); font-size:11px; }
-  .nav { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:10px 0; }
   .seg { display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
   .seg a { color:var(--mut); font-size:11px; padding:3px 10px; }
   .seg a.on { background:var(--vio); color:#fff; }
@@ -79,10 +78,24 @@
   .footer { color:var(--mut); font-size:11px; border-top:1px solid var(--line); margin-top:14px; padding-top:8px; }
   h1 { font-size:1.05rem; } h2 { font-size:.95rem; border-bottom:1px solid var(--line); padding-bottom:.3rem; margin-top:1.3rem; }
   /* —— Phase 1 重设计:导航壳 + 英雄区 + sparkline —— */
-  .tabs { display:flex; gap:4px; margin:2px 0 10px; flex-wrap:wrap; }
-  .tabs a { font-size:13px; padding:5px 12px; border-radius:7px; color:var(--mut); }
+  .tabs { display:flex; gap:4px; flex-wrap:wrap; }
+  .tabs a { display:inline-flex; align-items:center; gap:6px; font-size:13px; padding:5px 12px; border-radius:7px; color:var(--mut); }
+  .tabs a .ico { width:15px; height:15px; flex:none; }
   .tabs a:hover { background:var(--panel); }
   .tabs a.tab-on { background:var(--vio); color:#fff; }
+  /* —— 导航重设计:工具簇(行1 右上) + 图标导航行(行2) + 版本胶囊/更新弹层 —— */
+  .tools { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .navrow { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:8px 0 10px; }
+  .navrow .sub { color:var(--mut); font-size:11px; }
+  .verwrap { position:relative; display:inline-flex; }
+  .ver { display:inline-flex; align-items:center; gap:5px; font-size:11px; padding:3px 9px; border:1px solid var(--line); border-radius:7px; color:var(--mut); background:var(--panel); }
+  a.ver.up { color:var(--txt); }
+  .ver .updot { width:6px; height:6px; border-radius:50%; background:var(--st-degraded); display:inline-block; box-shadow:0 0 0 2px rgba(210,153,34,.2); }
+  .verpop { position:absolute; top:calc(100% + 6px); right:0; z-index:20; min-width:230px; display:none; flex-direction:column; gap:7px; padding:11px 13px; border:1px solid var(--line); border-radius:var(--rad); background:var(--panel); box-shadow:0 6px 20px rgba(0,0,0,.35); }
+  .verwrap:hover .verpop, .verwrap:focus-within .verpop { display:flex; }
+  .verpop b { font-size:12px; color:var(--st-degraded); }
+  .verpop code { font-size:11px; color:var(--link); white-space:pre-wrap; word-break:break-all; }
+  .verpop a { font-size:11px; }
   .hero { display:grid; grid-template-columns:auto 1fr; gap:clamp(16px,3vw,32px); align-items:center;
     border:1px solid var(--line); border-radius:var(--rad-lg); background:var(--panel) var(--hero-glow);
     box-shadow:inset 0 1px 0 rgba(255,255,255,.04); padding:clamp(20px,4vw,36px); margin:12px 0; }
@@ -280,31 +293,50 @@
 </head>
 <body>
 {% if active_tab is defined %}
+{% set ico = {
+  'overview': '<svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>',
+  'services': '<svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="3" width="12" height="4" rx="1"/><rect x="2" y="9" width="12" height="4" rx="1"/><circle cx="4.6" cy="5" r=".7" fill="currentColor" stroke="none"/><circle cx="4.6" cy="11" r=".7" fill="currentColor" stroke="none"/></svg>',
+  'events': '<svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5 14.5 13.5H1.5z"/><path d="M8 6.4v3.1" stroke-linecap="round"/><circle cx="8" cy="11.6" r=".7" fill="currentColor" stroke="none"/></svg>',
+  'hygiene': '<svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.8 13.2 4v4.2c0 3.4-2.4 5.4-5.2 6.2C5.2 13.6 2.8 11.6 2.8 8.2V4z"/><path d="M5.7 8.1 7.3 9.7 10.4 6.3" stroke-linecap="round"/></svg>'
+} %}
 <div class="hdr">
   <b>{{ t('hdr.title') }}</b>
-  <span class="sub mono">{% if refresh_seconds %}{{ t('hdr.refreshed', ts=now_str) }} · {{ refresh_seconds }}s{% endif %}{% if posture %} · LLM:{% if posture.llm.enabled %}{{ posture.llm.model }}{% if posture.llm.pending_restart %} {{ t('llm.pending_restart') }}{% else %} ✓{% endif %}{% else %}{{ t('host.llm.off') }}{% endif %}{% endif %}</span>
+  <div class="tools">
+    <span class="verwrap">
+      {% if nav and nav.update_available and nav.release_url %}
+      <a class="ver up mono" href="{{ nav.release_url }}" target="_blank" rel="noopener" aria-label="{{ t('ver.current', ver=nav.version) }} · {{ t('update.available', ver=nav.latest_version) }}">v{{ nav.version }}<i class="updot"></i></a>
+      <span class="verpop" role="note">
+        <b>{{ t('update.available', ver=nav.latest_version) }}</b>
+        <code>{{ t('update.command', ver=nav.latest_tag) }}</code>
+        <a href="{{ nav.release_url }}" target="_blank" rel="noopener">{{ t('update.notes') }} →</a>
+      </span>
+      {% else %}
+      <span class="ver mono" aria-label="{{ t('ver.current', ver=nav.version if nav else '') }}">v{{ nav.version if nav else '' }}</span>
+      {% endif %}
+    </span>
+    <span class="seg">
+      <a href="{{ qurl(win=30) }}" class="{{ 'on' if window_days == 30 else '' }}">{{ t('win.label', days=30) }}</a>
+      <a href="{{ qurl(win=history_days) }}" class="{{ 'on' if window_days == history_days else '' }}">{{ t('win.label', days=history_days) }}</a>
+    </span>
+    <span class="seg">
+      <a href="{{ qurl(theme='dark') }}" class="{{ 'on' if theme == 'dark' else '' }}" title="{{ t('theme.dark') }}" aria-label="{{ t('theme.dark') }}">☾</a>
+      <a href="{{ qurl(theme='light') }}" class="{{ 'on' if theme == 'light' else '' }}" title="{{ t('theme.light') }}" aria-label="{{ t('theme.light') }}">☀</a>
+      <a href="{{ qurl(theme='system') }}" class="{{ 'on' if theme == 'system' else '' }}" title="{{ t('theme.system') }}" aria-label="{{ t('theme.system') }}">◐</a>
+    </span>
+    <span class="seg">
+      <a href="{{ qurl(lang='zh') }}" class="{{ 'on' if lang == 'zh' else '' }}" title="中文" aria-label="中文">中</a>
+      <a href="{{ qurl(lang='en') }}" class="{{ 'on' if lang == 'en' else '' }}" title="English" aria-label="English">EN</a>
+    </span>
+  </div>
 </div>
-<nav class="tabs">
-  <a href="{{ tab_url('/') }}" class="{{ 'tab-on' if active_tab == 'overview' else '' }}">{{ t('tab.overview') }}</a>
-  <a href="{{ tab_url('/services') }}" class="{{ 'tab-on' if active_tab == 'services' else '' }}">{{ t('tab.services') }}</a>
-  <a href="{{ tab_url('/events') }}" class="{{ 'tab-on' if active_tab == 'events' else '' }}">{{ t('tab.events') }}</a>
-  <a href="{{ tab_url('/hygiene') }}" class="{{ 'tab-on' if active_tab == 'hygiene' else '' }}">{{ t('tab.hygiene') }}</a>
-</nav>
-<div class="nav">
-  <span class="seg">
-    <a href="{{ qurl(win=30) }}" class="{{ 'on' if window_days == 30 else '' }}">{{ t('win.label', days=30) }}</a>
-    <a href="{{ qurl(win=history_days) }}" class="{{ 'on' if window_days == history_days else '' }}">{{ t('win.label', days=history_days) }}</a>
-  </span>
-  <span class="seg">
-    <a href="{{ qurl(theme='dark') }}" class="{{ 'on' if theme == 'dark' else '' }}">{{ t('theme.dark') }}</a>
-    <a href="{{ qurl(theme='light') }}" class="{{ 'on' if theme == 'light' else '' }}">{{ t('theme.light') }}</a>
-    <a href="{{ qurl(theme='system') }}" class="{{ 'on' if theme == 'system' else '' }}">{{ t('theme.system') }}</a>
-  </span>
-  <span class="seg">
-    <a href="{{ qurl(lang='zh') }}" class="{{ 'on' if lang == 'zh' else '' }}">中</a>
-    <a href="{{ qurl(lang='en') }}" class="{{ 'on' if lang == 'en' else '' }}">EN</a>
-  </span>
-  {% if active_tab == 'events' %}<a href="{{ qurl(ev_page=1) }}">{{ t('nav.latest') }}</a>{% endif %}
+<div class="navrow">
+  <nav class="tabs">
+    <a href="{{ tab_url('/') }}" class="{{ 'tab-on' if active_tab == 'overview' else '' }}" title="{{ t('tab.overview') }}">{{ ico['overview']|safe }}<span>{{ t('tab.overview') }}</span></a>
+    <a href="{{ tab_url('/services') }}" class="{{ 'tab-on' if active_tab == 'services' else '' }}" title="{{ t('tab.services') }}">{{ ico['services']|safe }}<span>{{ t('tab.services') }}</span></a>
+    <a href="{{ tab_url('/events') }}" class="{{ 'tab-on' if active_tab == 'events' else '' }}" title="{{ t('tab.events') }}">{{ ico['events']|safe }}<span>{{ t('tab.events') }}</span></a>
+    <a href="{{ tab_url('/hygiene') }}" class="{{ 'tab-on' if active_tab == 'hygiene' else '' }}" title="{{ t('tab.hygiene') }}">{{ ico['hygiene']|safe }}<span>{{ t('tab.hygiene') }}</span></a>
+  </nav>
+  <span class="sub mono">{% if refresh_seconds %}{{ t('hdr.refreshed', ts=now_str) }} · {{ refresh_seconds }}s{% endif %}{% if posture %} · LLM:{% if posture.llm.enabled %}{{ posture.llm.model }}{% if posture.llm.pending_restart %} {{ t('llm.pending_restart') }}{% else %} ✓{% endif %}{% else %}{{ t('host.llm.off') }}{% endif %}{% endif %}{% if active_tab == 'events' %} · <a href="{{ qurl(ev_page=1) }}">{{ t('nav.latest') }}</a>{% endif %}</span>
 </div>
 {% endif %}
 {% block body %}{% endblock %}

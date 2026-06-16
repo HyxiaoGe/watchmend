@@ -15,8 +15,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, Response
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from sentinel import __version__
 from sentinel.config import Settings
 from sentinel.panel import i18n, prefs, view
+from sentinel.update_check import is_newer
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _env = Environment(
@@ -49,6 +51,23 @@ def _nav_helpers(path: str, *, lang: str, theme: str, window_days: int, **transi
         return p + "?" + urlencode({"lang": lang, "theme": theme, "win": window_days})
 
     return qurl, tab_url
+
+
+def _nav_context(store) -> dict:
+    """全局版本/更新态(每页注入 _base 头部)。只读 meta,绝不外呼;
+    比对运行版本判断是否有新版;release_url 经 _safe_http_url 净化防 scheme 注入。"""
+    latest = store.get_meta("latest_known_version")
+    available = bool(latest and is_newer(latest, __version__))
+    return {
+        "version": __version__,
+        "update_available": available,
+        "latest_version": latest if available else None,
+        # 镜像标签去 v 前缀(更新命令用);仅有新版时才给
+        "latest_tag": (latest[1:] if latest.startswith("v") else latest)
+        if (available and latest)
+        else None,
+        "release_url": view._safe_http_url(store.get_meta("latest_release_url")),
+    }
 
 
 def _read_prefs(request: Request, settings: Settings) -> tuple[str, str, int]:
@@ -137,6 +156,7 @@ def register_panel_routes(app: FastAPI) -> None:
             return "/service/" + quote(name, safe="") + "?" + prefs_qs
 
         html = _env.get_template("panel.html").render(
+            nav=_nav_context(state.store),
             **overview,
             t=t,
             lang=lang,
@@ -193,6 +213,7 @@ def register_panel_routes(app: FastAPI) -> None:
         # 面包屑回到父标签「事件」,携带 lang/theme/win 不丢上下文(issue #11 claim 4)
         back_url = "/events?" + urlencode({"lang": lang, "theme": theme, "win": window_days})
         html = _env.get_template("event.html").render(
+            nav=_nav_context(state.store),
             detail=detail,
             t=i18n.make_translator(lang),
             lang=lang,
@@ -238,6 +259,7 @@ def register_panel_routes(app: FastAPI) -> None:
             )
 
         html = _env.get_template("services.html").render(
+            nav=_nav_context(state.store),
             **data,
             t=i18n.make_translator(lang),
             lang=lang,
@@ -289,6 +311,7 @@ def register_panel_routes(app: FastAPI) -> None:
             return f"/event/{event_id}?" + prefs_qs
 
         html = _env.get_template("service.html").render(
+            nav=_nav_context(state.store),
             detail=detail,
             t=i18n.make_translator(lang),
             lang=lang,
@@ -349,6 +372,7 @@ def register_panel_routes(app: FastAPI) -> None:
             )
 
         html = _env.get_template("events.html").render(
+            nav=_nav_context(state.store),
             **data,
             t=i18n.make_translator(lang),
             lang=lang,
@@ -387,6 +411,7 @@ def register_panel_routes(app: FastAPI) -> None:
             )
 
         html = _env.get_template("hygiene.html").render(
+            nav=_nav_context(state.store),
             **data,
             t=i18n.make_translator(lang),
             lang=lang,
