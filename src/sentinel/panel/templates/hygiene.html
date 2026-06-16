@@ -53,7 +53,7 @@
     <details>
       <summary class="muted" style="font-size:11px">{{ t('hyg.components') }} {{ u.components|length }} · {{ t('hyg.incidents') }} {{ u.incidents|length }}</summary>
       {% if u.components %}<div class="dcomps">{% for c in u.components %}<span class="c"><i class="{{ c.state }}"></i>{{ c.name }}</span>{% endfor %}</div>{% endif %}
-      {% if u.incidents %}<div class="dinc">{% for inc in u.incidents %}<a href="{{ inc.url }}" target="_blank" rel="noopener noreferrer">⚠ {{ inc.title }}</a>{% endfor %}</div>{% endif %}
+      {% if u.incidents %}<div class="dinc">{% for inc in u.incidents %}{% if inc.url %}<a href="{{ inc.url }}" target="_blank" rel="noopener noreferrer">⚠ {{ inc.title }}</a>{% else %}<span>⚠ {{ inc.title }}</span>{% endif %}{% endfor %}</div>{% endif %}
     </details>
     {% endif %}
   </div>

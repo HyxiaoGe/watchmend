@@ -1168,7 +1168,14 @@ async def test_hygiene_alert_card_links_to_event(tmp_path, monkeypatch):
 
 
 async def test_hygiene_upstream_escaped_and_status_link(tmp_path, monkeypatch):
-    from sentinel.models import Component, ComponentStatus, Indicator, Snapshot
+    from sentinel.models import (
+        Component,
+        ComponentStatus,
+        Incident,
+        IncidentStatus,
+        Indicator,
+        Snapshot,
+    )
 
     settings = _settings(monkeypatch, SENTINEL_PROVIDERS="anthropic")
     store = Store(str(tmp_path / "s.db"))
@@ -1177,10 +1184,21 @@ async def test_hygiene_upstream_escaped_and_status_link(tmp_path, monkeypatch):
         Snapshot(
             provider="anthropic",
             display_name="<x>Corp",
-            indicator=Indicator.NONE,
+            indicator=Indicator.MINOR,
             status_url="https://status.example.com",
             components=[Component(key="api", name="API", status=ComponentStatus.OPERATIONAL)],
-            incidents=[],
+            incidents=[
+                Incident(
+                    key="bad",
+                    title="poisoned link",
+                    status=IncidentStatus.INVESTIGATING,
+                    impact=Indicator.MINOR,
+                    url="javascript:alert(1)",  # 投毒 shortlink
+                    started_at=None,
+                    updated_at=None,
+                    latest_update_id="u1",
+                )
+            ],
             fetched_at="2026-06-16T00:00:00Z",
         ),
     )
@@ -1189,6 +1207,8 @@ async def test_hygiene_upstream_escaped_and_status_link(tmp_path, monkeypatch):
     assert r.status_code == 200
     assert "<x>Corp" not in r.text and "&lt;x&gt;Corp" in r.text  # 显示名转义
     assert "https://status.example.com" in r.text  # 状态页链接
+    assert "javascript:" not in r.text  # 投毒 shortlink 不落进 href(scheme 白名单)
+    assert "poisoned link" in r.text  # 标题仍展示(降级为纯文本,无链接)
     store.close()
 
 

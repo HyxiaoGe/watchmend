@@ -1131,6 +1131,15 @@ def _local_hygiene(store: Store, settings: Settings, *, tz: timezone) -> list[di
     return [backup, disk, cert]
 
 
+def _safe_http_url(u: str | None) -> str:
+    """外部来源 URL 的 scheme 白名单:仅放行 http(s),其余(javascript:/data: 等)抹成空。
+    jinja autoescape 只转义引号/尖括号,不拦 URL scheme,故须在 view 层数据边界过滤,
+    防上游被投毒的 incident.shortlink/status_url 落进 href 成可点击 XSS(零-JS 铁律)。"""
+    if isinstance(u, str) and u.lower().startswith(("http://", "https://")):
+        return u
+    return ""
+
+
 def _upstream_deps(store: Store, settings: Settings) -> list[dict]:
     """上游依赖健康(providers status snapshot,§8.4)。Indicator→state 映射;
     components + 未解决 incidents 供 <details> 展开;链到 status_url。Snapshot=None → nodata。
@@ -1159,7 +1168,7 @@ def _upstream_deps(store: Store, settings: Settings) -> list[dict]:
             {
                 "title": i.title,
                 "status": i.status.value,
-                "url": i.url,
+                "url": _safe_http_url(i.url),
                 "impact": _INDICATOR_STATE.get(i.impact.value, "nodata"),
             }
             for i in snap.incidents
@@ -1172,7 +1181,7 @@ def _upstream_deps(store: Store, settings: Settings) -> list[dict]:
                 "state": _INDICATOR_STATE.get(snap.indicator.value, "nodata"),
                 "components": comps,
                 "incidents": incs,
-                "status_url": snap.status_url,
+                "status_url": _safe_http_url(snap.status_url),
                 "has_data": True,
             }
         )
