@@ -267,7 +267,9 @@ async def test_overview_llm_pill_from_config(tmp_path, monkeypatch):
     app.state.llm_config = LLMConfig(settings)
     resp = await _get(app, "/")
     assert resp.status_code == 200
-    assert "deepseek-chat" in resp.text  # 面板 LLM 标识反映 llm.yaml(env 留空也对)
+    assert "deepseek-chat" not in resp.text  # 模型名/provider 不再暴露在面板
+    assert "LLM:" not in resp.text  # 旧前缀去除
+    assert "AI 诊断 ✓" in resp.text  # 改中性指示器(llm.yaml active → 诊断在跑)
     store.close()
 
 
@@ -301,7 +303,8 @@ async def test_overview_pending_restart_badge_and_open_lifecycle(tmp_path, monke
     app.state.diag_job_registered = False  # 启动后才配 → 未注册
     resp = await _get(app, "/")
     assert resp.status_code == 200
-    assert "诊断待重启" in resp.text
+    assert "AI 诊断" in resp.text and "待重启" in resp.text  # 中性指示 + 待重启态
+    assert "deepseek-chat" not in resp.text  # 仍不泄露模型名
     assert "investigating" not in resp.text  # pending 生命周期标 open,不是 investigating
     store.close()
 
@@ -1328,6 +1331,45 @@ async def test_nav_sanitizes_poisoned_release_url(tmp_path, monkeypatch):
     app = _build_app(store, settings)
     html = (await _get(app, "/")).text
     assert "javascript:alert(1)" not in html  # _safe_http_url 抹空
+    store.close()
+
+
+async def test_nav_status_slim_refresh_and_neutral_ai(tmp_path, monkeypatch):
+    # 行2 右侧只读态:刷新只留 ↻ HH:MM(完整日期/间隔进 title),LLM 改中性「AI 诊断 ✓」不泄露模型名
+    import re
+
+    from sentinel.llm_config import LLMConfig
+
+    path = tmp_path / "llm.yaml"
+    path.write_text(
+        "active: deepseek\nproviders:\n  deepseek:\n"
+        "    base_url: https://api.deepseek.com/v1\n    model: deepseek-chat\n    api_key: ''\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SENTINEL_LLM_CONFIG_FILE", str(path))
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    app.state.llm_config = LLMConfig(settings)
+    html = (await _get(app, "/")).text
+    assert re.search(r"↻ \d{2}:\d{2}", html)  # 刷新只留时间
+    assert "AI 诊断 ✓" in html  # 中性 AI 指示
+    assert "deepseek-chat" not in html and "LLM:" not in html  # 模型名/旧前缀去除
+    # 完整时间戳 + 间隔退到 title 悬停(不在可见正文堆叠)
+    assert 'title="刷新于' in html
+    store.close()
+
+
+async def test_nav_no_ai_indicator_when_llm_off(tmp_path, monkeypatch):
+    # LLM 未配置 → 顶栏不显示 AI 指示(不挂「未配置」噪音),只留刷新
+    import re
+
+    settings = _settings(monkeypatch)  # 无 llm.yaml / LLM_*
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    html = (await _get(app, "/")).text
+    assert re.search(r"↻ \d{2}:\d{2}", html)
+    assert "AI 诊断" not in html  # 关态不显示 AI 行
     store.close()
 
 
