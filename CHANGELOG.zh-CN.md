@@ -132,7 +132,7 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
   - **多通道通知**:飞书富卡片 + Telegram + ntfy + 通用 webhook;任一渠道成功即
     落库;启动期门禁拦截零渠道配置。
   - **只读证据台**(`:8765`):状态机可视化(已分析 / 已恢复)、诊断证据链捕获、
-    env 值遮蔽、HTML 转义;写端点受 `DIAG_TOKEN` 保护。
+    env 值遮蔽、HTML 转义;写端点受 `SENTINEL_DIAG_TOKEN` 保护。
   - **声明式 LLM 配置**(`llm.yaml`):active/fallback failover、`api_key_env`
     只存变量名(永不存 key)、mtime 热加载免重启、无 / 空配置回落老 `LLM_*` env
     (零 breaking);诊断与日报总结同口径走 failover。
@@ -143,18 +143,21 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [0.1.1] - 2026-06-13
 
-### 新增
-- 首个发布的容器镜像(`ghcr.io/hyxiaoge/watchmend`),容器内 LLM driver 经端到端
-  验证(DeepSeek)。
-
-### 安全
-- docker 元数据与环境值的密钥泄漏遮蔽。
+### 修复
+- 干净 VM 开箱即用(全新 VM 验收抓到的两个问题):demo cadvisor 镜像
+  v0.49.1→v0.55.1(适配 Docker 29 / API 1.44+,旧版 cadvisor 的 docker factory
+  注册失败致容器指标全空);disk-forecast 体检加 24h 历史门槛,新装机只见装机 /
+  拉镜像的写盘斜率不再被外推成误报「磁盘即将写满」(历史不足时视为未评估)。
 
 ## [0.1.0] - 2026-06-12
 
 ### 新增
 - WatchMend 首个开源版(由内部 dev-ops-sentinel 改名)。核心监控:外部状态页
-  探针、飞书告警 / 恢复、可选 LLM 根因诊断、体检检查、只读证据台。
+  探针、飞书告警 / 恢复、可选 LLM 根因诊断、体检检查、只读证据台。经 CI 发布
+  工作流发布容器镜像 `ghcr.io/hyxiaoge/watchmend`。
+
+### 安全
+- docker 元数据与环境值的密钥泄漏遮蔽。
 
 [Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.0...HEAD
 [0.10.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.9.1...v0.10.0

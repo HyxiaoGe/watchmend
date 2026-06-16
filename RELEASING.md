@@ -54,9 +54,15 @@ not a *write*.
 4. `make check` (ruff + format + pytest + leak check) must be green.
 5. Open a PR; both CI checks (`checks` + `demo-smoke`) must be green.
 6. Merge with `gh pr merge --merge --delete-branch` (preserve granular history).
-7. `gh release create vX.Y.Z` with notes taken from that version's changelog block.
-8. The `release.yml` workflow builds and pushes the dual-arch image to
-   `ghcr.io/hyxiaoge/watchmend:X.Y.Z` and `:X.Y` automatically.
+7. Sync your local default branch to the merged commit
+   (`git switch main && git pull`), then `gh release create vX.Y.Z` with notes
+   from that version's changelog block. With no `--target`, this creates and
+   **pushes** the git tag `vX.Y.Z` at the current default-branch HEAD — and that
+   pushed tag (not the Release object) is what fires `release.yml`, which triggers
+   on `push: tags: ["v*"]`. Do not tag from an unsynced commit, and do not create
+   the release from the GitHub UI against another target.
+8. Reacting to the pushed tag, the `release.yml` workflow builds and pushes the
+   dual-arch image to `ghcr.io/hyxiaoge/watchmend:X.Y.Z` and `:X.Y` automatically.
 9. Verify: `docker buildx imagetools inspect ghcr.io/hyxiaoge/watchmend:X.Y.Z`
    (do not build locally — CI owns the push).
 

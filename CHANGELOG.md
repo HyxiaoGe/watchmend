@@ -158,7 +158,7 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
     gate blocks a zero-channel configuration.
   - **Read-only evidence panel** (`:8765`): state-machine visualization
     (analyzed vs recovered), diagnosis evidence-chain capture, env-value
-    redaction, HTML escaping; write endpoints protected by `DIAG_TOKEN`.
+    redaction, HTML escaping; write endpoints protected by `SENTINEL_DIAG_TOKEN`.
   - **Declarative LLM config** (`llm.yaml`): active/fallback failover,
     `api_key_env` stores only the variable name (never the key), mtime
     hot-reload without restart, and fallback to legacy `LLM_*` env when
@@ -171,12 +171,14 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ## [0.1.1] - 2026-06-13
 
-### Added
-- First published container image (`ghcr.io/hyxiaoge/watchmend`) with the
-  in-container LLM driver verified end-to-end (DeepSeek).
-
-### Security
-- Secret-leak redaction across docker metadata and environment values.
+### Fixed
+- Clean-VM onboarding (two issues caught in fresh-VM acceptance): bumped the demo
+  cadvisor image v0.49.1→v0.55.1 so container metrics work on Docker 29 (API
+  1.44+, where older cadvisor's docker factory fails to register and metrics come
+  back empty), and gated the disk-forecast hygiene check behind a 24h-history
+  probe so a brand-new machine's install / image-pull write slope no longer
+  extrapolates into a false "disk filling up" alert (treated as unevaluated until
+  enough history exists).
 
 ## [0.1.0] - 2026-06-12
 
@@ -184,7 +186,11 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 - Initial open-source release of WatchMend (renamed from the internal
   dev-ops-sentinel). Core monitor: external status-page probes, Feishu
   alerts / recovery, optional LLM root-cause diagnosis, hygiene checks, and a
-  read-only evidence panel.
+  read-only evidence panel. Published as a container image on
+  `ghcr.io/hyxiaoge/watchmend` via a CI release workflow.
+
+### Security
+- Secret-leak redaction across docker metadata and environment values.
 
 [Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.0...HEAD
 [0.10.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.9.1...v0.10.0
