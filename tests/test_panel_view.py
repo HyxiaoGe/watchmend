@@ -669,6 +669,45 @@ def test_overall_trend_series_empty_health():
     assert _overall_trend_series([]) == []
 
 
+def test_uptime_grade_thresholds():
+    from sentinel.panel.view import uptime_grade
+
+    assert uptime_grade(None, green=99.9, partial=99.5) == "nodata"
+    assert uptime_grade(100.0, green=99.9, partial=99.5) == "ok"
+    assert uptime_grade(99.9, green=99.9, partial=99.5) == "ok"  # 绿界含等于
+    assert uptime_grade(99.7, green=99.9, partial=99.5) == "warn"
+    assert uptime_grade(99.5, green=99.9, partial=99.5) == "warn"  # 琥珀界含等于
+    assert uptime_grade(99.4, green=99.9, partial=99.5) == "bad"
+    assert uptime_grade(0.0, green=99.9, partial=99.5) == "bad"
+
+
+def test_window_mean():
+    from sentinel.panel.view import _window_mean
+
+    series = [98.0, 99.0, 100.0, 100.0, 99.0, 100.0, 100.0]  # 左早右今
+    assert _window_mean(series, 3) == 99.7  # 末 3 = (99+100+100)/3=99.666→99.7
+    assert _window_mean(series, 100) == round(sum(series) / 7, 1)  # 窗口超长 → 取全部
+    assert _window_mean([None, None], 2) is None  # 全 None → None
+    assert _window_mean([99.0, None, 100.0], 3) == 99.5  # 跳过 None
+    assert _window_mean([], 7) is None
+
+
+def test_window_delta_and_dir():
+    from sentinel.panel.view import _delta_dir, _window_delta
+
+    # 末 2 天 = (100+100)/2=100;前 2 天 = (98+98)/2=98 → delta +2.0
+    series = [97.0, 97.0, 98.0, 98.0, 100.0, 100.0]
+    assert _window_delta(series, 2) == 2.0
+    # 前一个窗口无数据 → None(无可比基线)
+    assert _window_delta([100.0, 100.0], 2) is None
+    assert _window_delta([None, None, 100.0, 100.0], 2) is None  # 前窗全 None
+    assert _delta_dir(2.0) == "up"
+    assert _delta_dir(-2.0) == "down"
+    assert _delta_dir(0.0) == "flat"
+    assert _delta_dir(0.02) == "flat"  # 在 eps 内
+    assert _delta_dir(None) == "flat"
+
+
 async def test_build_overview_exposes_hero_and_mini(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))

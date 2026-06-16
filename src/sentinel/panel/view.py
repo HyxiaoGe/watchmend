@@ -122,6 +122,45 @@ def _overall_trend_series(health: list[dict]) -> list[float | None]:
     return series
 
 
+def uptime_grade(pct: float | None, *, green: float, partial: float) -> str:
+    """今日可用率阈值分级 → 阈值色 class。None(无数据)→ nodata;
+    ≥green → ok(绿);≥partial → warn(琥珀);以下 → bad(红)。环中心大号与服务表共用。"""
+    if pct is None:
+        return "nodata"
+    if pct >= green:
+        return "ok"
+    if pct >= partial:
+        return "warn"
+    return "bad"
+
+
+def _window_mean(series: list[float | None], days: int) -> float | None:
+    """趋势序列(左早右今)最近 `days` 天非 None 点的均值,round1。全 None/空 → None。"""
+    window = series[-days:] if days > 0 else []
+    vals = [v for v in window if v is not None]
+    if not vals:
+        return None
+    return round(sum(vals) / len(vals), 1)
+
+
+def _window_delta(series: list[float | None], days: int) -> float | None:
+    """最近 `days` 窗口均值 − 紧邻的前一个等长窗口均值,round1。
+    任一窗口无数据(无可比基线)→ None。用于 KPI 的 ▲/▼ 趋势箭头。"""
+    cur = _window_mean(series, days)
+    prior_slice = series[-2 * days : -days] if days > 0 else []
+    prior_vals = [v for v in prior_slice if v is not None]
+    if cur is None or not prior_vals:
+        return None
+    return round(cur - sum(prior_vals) / len(prior_vals), 1)
+
+
+def _delta_dir(delta: float | None, eps: float = 0.05) -> str:
+    """Δ 方向 class:None/在 ±eps 内 → flat;>eps → up;<-eps → down。"""
+    if delta is None or abs(delta) <= eps:
+        return "flat"
+    return "up" if delta > 0 else "down"
+
+
 def _hhmm(ts: int, tz: timezone) -> str:
     return datetime.fromtimestamp(ts, tz).strftime("%H:%M")
 
