@@ -23,6 +23,8 @@ def test_panel_redesign_field_defaults():
     assert s.sentinel_panel_partial_uptime_pct == 99.5
     assert s.sentinel_llm_lang == "zh"
     assert s.sentinel_event_feed_days == 30
+    assert s.sentinel_panel_overview_roster_cap == 6  # 总览服务表截断行数
+    assert s.sentinel_panel_green_uptime_pct == 99.9  # ≥此 → 今日可用率绿(阈值色绿界)
 
 
 def test_panel_redesign_fields_overridable(monkeypatch):
@@ -33,3 +35,11 @@ def test_panel_redesign_fields_overridable(monkeypatch):
     assert s.sentinel_panel_default_theme == "light"
     assert s.sentinel_panel_history_days == 30
     assert s.sentinel_llm_lang == "en"
+
+
+def test_overview_knobs_overridable(monkeypatch):
+    monkeypatch.setenv("SENTINEL_PANEL_OVERVIEW_ROSTER_CAP", "8")
+    monkeypatch.setenv("SENTINEL_PANEL_GREEN_UPTIME_PCT", "99.95")
+    s = Settings(_env_file=None)
+    assert s.sentinel_panel_overview_roster_cap == 8
+    assert s.sentinel_panel_green_uptime_pct == 99.95

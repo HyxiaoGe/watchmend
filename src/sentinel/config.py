@@ -97,6 +97,8 @@ class Settings(BaseSettings):
     sentinel_panel_page_size: int = 8  # 事件流每页条数
     sentinel_panel_red_uptime_pct: float = 50.0  # 当日 uptime 低于此 → down（红）
     sentinel_panel_partial_uptime_pct: float = 99.5  # 低于此（且≥red）→ partial（橙）
+    sentinel_panel_green_uptime_pct: float = 99.9  # ≥此→今日可用率绿；≥partial 琥珀；以下红
+    sentinel_panel_overview_roster_cap: int = 6  # 总览服务表截断行数（其余折叠 → /services）
     sentinel_llm_lang: str = "zh"  # 此后新生成的诊断语言（zh|en）；历史不回溯翻译
     sentinel_event_feed_days: int = 30  # 事件流纳入"近 N 天"的窗口（open 不受限）
 
