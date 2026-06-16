@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from sentinel.config import Settings
 from sentinel.findings import HYGIENE_RULES, EventRecord
-from sentinel.report import aggregate_window
+from sentinel.report import aggregate_window, percentile
 from sentinel.store import Store
 
 _REFRESH_SECONDS = 30
@@ -20,6 +20,10 @@ _STATE_RANK = {"down": 0, "partial": 1, "degraded": 2, "ok": 3, "nodata": 4}
 # 自身/代理永不计入“在监容器”(与 scan_docker 同口径:按镜像子串识别,兼容 registry 前缀)
 _SELF_IMAGE_SUBSTR = "watchmend"
 _SOCKET_PROXY_IMAGE = "tecnativa/docker-socket-proxy"
+# 服务详情:延迟大图上打竖线注释的事件规则(与该服务延迟/可用直接相关)
+_LATENCY_EVENT_RULES = frozenset({"latency_degraded", "service_down"})
+_SAMPLE_WINDOW_SECONDS = 2 * _DAY_SECONDS  # 逐次延迟图窗口(近 48h)
+_SAMPLE_CAP = 240  # 逐次图下采样上限(防 DOM 膨胀)
 
 
 def _svg_line(values: list[float | None], *, w: float, h: float, pad_frac: float = 0.08) -> dict:
@@ -339,10 +343,12 @@ def _service_health_bars(
                 st = today_stats.get(svc)
                 uptime = st.uptime_pct if (st and st.total) else None
                 p95 = st.p95_ms if st else None
+                p50 = st.p50_ms if st else None
             else:
                 row = daily_idx.get((svc, ds))
                 uptime = (row.ok_count / row.total * 100) if (row and row.total) else None
                 p95 = row.p95_ms if row else None
+                p50 = row.p50_ms if row else None
             state = _day_state(uptime, ev_idx.get((ds, svc), frozenset()), settings)
             days.append(
                 {
@@ -350,9 +356,9 @@ def _service_health_bars(
                     "state": state,
                     "is_today": is_today,
                     "uptime_pct": round(uptime, 1) if uptime is not None else None,
-                    "p95_ms": round(p95, 1)
-                    if p95 is not None
-                    else None,  # 逐日 p95(服务页迷你/大图复用)
+                    # 逐日 p50/p95(服务页迷你 sparkline + 延迟大图复用)
+                    "p95_ms": round(p95, 1) if p95 is not None else None,
+                    "p50_ms": round(p50, 1) if p50 is not None else None,
                 }
             )
         st = today_stats.get(svc)
@@ -585,6 +591,254 @@ def build_services_list(
         "refresh_seconds": _REFRESH_SECONDS,
         "window_days": window_days,
         "services": health,
+    }
+
+
+def _latency_chart(
+    p50: list[float | None], p95: list[float | None], *, w: float = 600.0, h: float = 120.0
+) -> dict:
+    """p50/p95 双线共享 y 轴 + p50–p95 区间面积(spec §6 sparkline 详情大图)。
+    共享 y 轴:两线同尺度才能读出"带宽=p50→p95 差"。ymin/ymax 取两序列窗口极值留 10% padding。
+    <2 有效点 → 三者皆空串;含缺口的线自然断开,面积仅在两线均无缺口时填充。"""
+    n = len(p50)
+    allnums = [v for v in (list(p50) + list(p95)) if v is not None]
+    if n < 2 or len(allnums) < 2:
+        return {"p50_d": "", "p95_d": "", "band_d": ""}
+    lo, hi = min(allnums), max(allnums)
+    span = (hi - lo) or 1.0
+    pad = span * 0.10
+    lo -= pad
+    hi += pad
+    rng = (hi - lo) or 1.0
+
+    def x_of(i: int) -> float:
+        return i / (n - 1) * w
+
+    def y_of(v: float) -> float:
+        return h - (v - lo) / rng * h
+
+    def path_of(series: list[float | None]) -> str:
+        parts: list[str] = []
+        gap = True
+        for i, v in enumerate(series):
+            if v is None:
+                gap = True
+                continue
+            parts.append(f"{'M' if gap else 'L'}{x_of(i):.1f},{y_of(v):.1f}")
+            gap = False
+        return " ".join(parts)
+
+    if None not in p50 and None not in p95:
+        top = " ".join(f"{x_of(i):.1f},{y_of(v):.1f}" for i, v in enumerate(p95))
+        bot = " ".join(f"{x_of(i):.1f},{y_of(v):.1f}" for i, v in reversed(list(enumerate(p50))))
+        band_d = f"M{top} L{bot} Z"
+    else:
+        band_d = ""
+    return {"p50_d": path_of(p50), "p95_d": path_of(p95), "band_d": band_d}
+
+
+def _downsample(items: list, cap: int) -> list:
+    """等间隔下采样到 ≤cap 个(防逐次图 DOM 膨胀)。"""
+    n = len(items)
+    if n <= cap:
+        return items
+    step = n / cap
+    return [items[min(n - 1, int(i * step))] for i in range(cap)]
+
+
+def _sample_latency_series(samples: list, *, cap: int = _SAMPLE_CAP) -> list[float | None]:
+    """逐次延迟序列(升序、已下采样):ok 取 latency_ms,超时/失败 → None 断线。"""
+    ordered = _downsample(sorted(samples, key=lambda s: s.ts), cap)
+    return [s.latency_ms if (s.ok and s.latency_ms is not None) else None for s in ordered]
+
+
+def _status_code_buckets(samples: list) -> list[dict]:
+    """状态码分布(status_code is None → timeout 桶)。按出现次数降序、同数按码名。空 → []。"""
+    counts: dict[str, int] = {}
+    for s in samples:
+        key = "timeout" if s.status_code is None else str(s.status_code)
+        counts[key] = counts.get(key, 0) + 1
+    total = sum(counts.values()) or 1
+    items = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [{"code": k, "count": v, "pct": round(v / total * 100, 1)} for k, v in items]
+
+
+def _event_x_marks(
+    events: list[EventRecord], *, start_ts: int, end_ts: int, tz: timezone, w: float = 600.0
+) -> list[dict]:
+    """事件 ts → 时序大图 x 像素(同 viewBox 叠竖线,可点进 /event/{id})。窗口外丢弃。"""
+    span = (end_ts - start_ts) or 1
+    out: list[dict] = []
+    for e in events:
+        if e.ts < start_ts or e.ts > end_ts:
+            continue
+        x = (e.ts - start_ts) / span * w
+        out.append(
+            {
+                "id": e.id,
+                "x": round(min(max(x, 0.0), w), 1),
+                "severity": e.severity,
+                "rule": e.rule,
+                "ts_str": _hhmm(e.ts, tz),
+            }
+        )
+    return out
+
+
+def _latency_compare(
+    store: Store, settings: Settings, service: str, *, current_p95: float | None, before_date: str
+) -> dict:
+    """p95 三方对比(spec §8.2:必须复刻 probe_rules.py 阈值口径,否则误导)。
+    baseline = get_recent_daily_p95s(service, before_date, limit=7) 均值(与引擎同口径);
+    threshold = max(baseline*ratio, baseline+margin_ms)。无基线 → baseline/threshold=None。"""
+    p95s = store.get_recent_daily_p95s(service, before_date=before_date, limit=7)
+    if not p95s:
+        return {
+            "current_ms": round(current_p95) if current_p95 is not None else None,
+            "baseline_ms": None,
+            "threshold_ms": None,
+            "fill_pct": None,
+            "breached": None,
+            "baseline_days": 0,
+        }
+    baseline = sum(p95s) / len(p95s)
+    threshold = max(
+        baseline * settings.sentinel_latency_ratio,
+        baseline + settings.sentinel_latency_margin_ms,
+    )
+    fill = breached = None
+    if current_p95 is not None and threshold:
+        fill = round(min(current_p95 / threshold * 100, 100))
+        breached = current_p95 > threshold
+    return {
+        "current_ms": round(current_p95) if current_p95 is not None else None,
+        "baseline_ms": round(baseline),
+        "threshold_ms": round(threshold),
+        "fill_pct": fill,  # current 占阈值百分比(进度条宽度,封顶 100)
+        "breached": breached,
+        "baseline_days": len(p95s),
+    }
+
+
+def build_service_detail(
+    store: Store,
+    settings: Settings,
+    name: str,
+    *,
+    now: datetime,
+    window_days: int = 30,
+    gran: str = "daily",
+    page: int = 1,
+    service_labels: dict[str, str] | None = None,
+    llm_config=None,
+    diag_registered: bool | None = None,
+) -> dict | None:
+    """服务详情 view-model(实用页 §8.2,主角=延迟时序大图)。
+    完全无数据(无逐日行 + 近 24h 无样本 + 无相关事件)→ None(路由 404)。
+    gran='samples' → 近 48h 逐次延迟(下采样);否则逐日 p50/p95。零新取数。"""
+    tz = (
+        now.tzinfo
+        if isinstance(now.tzinfo, timezone)
+        else timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    )
+    now_ts = int(now.timestamp())
+    today_local = datetime.fromtimestamp(now_ts, tz).date()
+    midnight_ts = int(
+        datetime(today_local.year, today_local.month, today_local.day, tzinfo=tz).timestamp()
+    )
+    posture = _llm_posture(llm_config, settings, diag_registered=diag_registered)
+    diag_active = posture["enabled"] and not posture["pending_restart"]
+    today_samples = store.get_probe_samples_since(midnight_ts)
+    health = _service_health_bars(
+        store,
+        settings,
+        now_ts=now_ts,
+        tz=tz,
+        window_days=window_days,
+        today_samples=today_samples,
+        service_labels=service_labels,
+    )
+    row = next((b for b in health if b["service"] == name), None)
+    # 24h 滚动样本:当前 p95(24h)+ 状态码分布
+    day_samples = [
+        s for s in store.get_probe_samples_since(now_ts - _DAY_SECONDS) if s.service == name
+    ]
+    # 该服务相关事件(事件流窗口内 + 仍 open 的更早),ts 降序
+    window_start = now_ts - settings.sentinel_event_feed_days * _DAY_SECONDS
+    recent = [e for e in store.get_events_since(window_start) if e.subject == name]
+    older_open = [e for e in store.get_open_events() if e.subject == name and e.ts < window_start]
+    svc_events = sorted(older_open + recent, key=lambda e: e.ts, reverse=True)
+    if row is None and not day_samples and not svc_events:
+        return None
+    label = (service_labels or {}).get(name, name)
+    state = row["days"][-1]["state"] if (row and row["days"]) else "nodata"
+
+    ok_lat_24h = [s.latency_ms for s in day_samples if s.ok and s.latency_ms is not None]
+    current_p95 = percentile(ok_lat_24h, 95)
+    compare = _latency_compare(
+        store, settings, name, current_p95=current_p95, before_date=today_local.isoformat()
+    )
+
+    if gran == "samples":
+        win_start = now_ts - _SAMPLE_WINDOW_SECONDS
+        win_samples = sorted(
+            (s for s in store.get_probe_samples_since(win_start) if s.service == name),
+            key=lambda s: s.ts,
+        )
+        lat = _sample_latency_series(win_samples)
+        chart = {
+            "mode": "samples",
+            "single_d": _svg_line(lat, w=600.0, h=120.0)["line_d"],
+            "p50_d": "",
+            "p95_d": "",
+            "band_d": "",
+        }
+        x_start = win_samples[0].ts if win_samples else win_start
+        x_end = win_samples[-1].ts if win_samples else now_ts
+    else:
+        days = row["days"] if row else []
+        c = _latency_chart([d["p50_ms"] for d in days], [d["p95_ms"] for d in days])
+        chart = {"mode": "daily", "single_d": "", **c}
+        start_date = today_local - timedelta(days=window_days - 1)
+        x_start = int(
+            datetime(start_date.year, start_date.month, start_date.day, tzinfo=tz).timestamp()
+        )
+        x_end = now_ts
+
+    ann_events = [e for e in svc_events if e.rule in _LATENCY_EVENT_RULES]
+    marks = _event_x_marks(ann_events, start_ts=x_start, end_ts=x_end, tz=tz, w=600.0)
+    status_codes = _status_code_buckets(day_samples)
+
+    size = max(1, settings.sentinel_panel_page_size)
+    total = len(svc_events)
+    total_pages = max(1, (total + size - 1) // size)
+    page = min(max(1, page), total_pages)
+    start = (page - 1) * size
+    ev_items = [
+        _event_view(e, tz, diag_active=diag_active) for e in svc_events[start : start + size]
+    ]
+
+    return {
+        "now_str": now.strftime("%Y-%m-%d %H:%M"),
+        "service": name,
+        "label": label,
+        "state": state,
+        "window_days": window_days,
+        "gran": gran,
+        "uptime_pct": row["uptime_pct"] if row else None,
+        "p95_ms": row["p95_ms"] if row else None,
+        "compare": compare,
+        "chart": chart,
+        "marks": marks,
+        "status_codes": status_codes,
+        "days": row["days"] if row else [],
+        "posture": {"llm": posture},
+        "events": {
+            "items": ev_items,
+            "page": page,
+            "total_pages": total_pages,
+            "total": total,
+        },
     }
 
 

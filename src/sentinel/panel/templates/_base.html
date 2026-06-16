@@ -15,6 +15,8 @@
     --hero-glow:radial-gradient(120% 120% at 50% 0%, rgba(163,113,247,.10), transparent 60%);
     --fz-hero:clamp(2.6rem,7vw,4.2rem); --fz-display:clamp(1.4rem,3vw,2rem);
     --ring-sz:clamp(120px,18vw,168px);
+    /* Phase 2:延迟双线 token(语义别名,不引新色相) */
+    --p50:var(--link); --p95:var(--st-degraded); --p95-fill:rgba(210,153,34,.13);
   }
   :root[data-theme="light"] {
     --bg:#ffffff; --panel:#f6f8fa; --line:#d0d7de; --txt:#1f2328; --mut:#656d76;
@@ -118,6 +120,41 @@
     font-size:16px; min-width:60px; text-align:right; color:var(--st-ok); }
   .srow .supct.bad { color:var(--st-down); } .srow .supct.warn { color:var(--st-degraded); }
   .srow .supct.none { color:var(--mut); }
+  /* —— Phase 2:服务详情 —— */
+  .crumb { color:var(--mut); font-size:11px; margin:2px 0 4px; }
+  .sd-head { display:flex; align-items:center; gap:11px; margin:6px 0 2px; flex-wrap:wrap; }
+  .sd-head .sdot { width:13px; height:13px; border-radius:50%; flex:none; background:var(--st-nodata); }
+  .sd-head .sdot.ok{background:var(--st-ok)} .sd-head .sdot.degraded{background:var(--st-degraded)}
+  .sd-head .sdot.partial{background:var(--st-partial)} .sd-head .sdot.down{background:var(--st-down)}
+  .sd-head h1 { font-size:var(--fz-display); margin:0; line-height:1.1; }
+  .sd-head .upt { margin-left:auto; font-family:ui-monospace,Menlo,monospace;
+    font-variant-numeric:tabular-nums; font-size:var(--fz-display); color:var(--st-ok); }
+  .sd-head .upt.bad { color:var(--st-down); } .sd-head .upt.warn { color:var(--st-degraded); }
+  .sd-head .upt.none { color:var(--mut); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--rad);
+    padding:16px 18px; margin:10px 0; }
+  .lat3 { display:flex; gap:28px; flex-wrap:wrap; }
+  .lat3 .cell .v { font-family:ui-monospace,Menlo,monospace; font-variant-numeric:tabular-nums;
+    font-size:var(--fz-display); display:block; line-height:1.1; }
+  .lat3 .cell .v .u { font-size:.5em; color:var(--mut); margin-left:1px; }
+  .lat3 .cell .v.breach { color:var(--st-down); }
+  .lat3 .cell .k { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+  .bar { height:8px; border-radius:999px; background:var(--st-nodata); margin-top:12px; overflow:hidden; }
+  .bar > i { display:block; height:100%; background:var(--st-ok); border-radius:999px; }
+  .bar > i.breach { background:var(--st-down); }
+  .chart-wrap { margin-top:4px; }
+  .lat-chart { width:100%; height:120px; display:block; }
+  .lat-chart a { cursor:pointer; }
+  .chart-legend { display:flex; gap:14px; color:var(--mut); font-size:11px; margin-top:4px; flex-wrap:wrap; }
+  .chart-legend span { display:flex; gap:5px; align-items:center; }
+  .chart-legend i { width:14px; height:2px; display:inline-block; }
+  .codes { display:flex; flex-direction:column; gap:7px; }
+  .coderow { display:flex; align-items:center; gap:10px; font-size:12px; }
+  .coderow .cc { font-family:ui-monospace,Menlo,monospace; min-width:60px; }
+  .coderow .cbar { flex:1; height:8px; border-radius:4px; background:var(--st-nodata); overflow:hidden; }
+  .coderow .cbar > i { display:block; height:100%; background:var(--st-ok); }
+  .coderow .cbar > i.bad { background:var(--st-down); } .coderow .cbar > i.other { background:var(--link); }
+  .coderow .cn { color:var(--mut); font-family:ui-monospace,Menlo,monospace; min-width:96px; text-align:right; }
 </style>
 </head>
 <body>

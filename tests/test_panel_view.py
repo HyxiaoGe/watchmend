@@ -739,3 +739,202 @@ def test_build_services_list_shape(tmp_path, monkeypatch):
     # 逐日 p95 已挂在 days 上(服务详情大图复用)
     assert any(d.get("p95_ms") is not None for d in svcs[0]["days"])
     store.close()
+
+
+# —— Phase 2:服务详情 view 单测 ——
+
+
+def test_latency_chart_dual_line_and_band():
+    from sentinel.panel.view import _latency_chart
+
+    c = _latency_chart([10.0, 12.0, 11.0], [20.0, 30.0, 25.0])
+    assert c["p50_d"].startswith("M") and "L" in c["p50_d"]
+    assert c["p95_d"].startswith("M") and "L" in c["p95_d"]
+    # 无缺口 → p50–p95 区间面积闭合(M…L…Z)
+    assert c["band_d"].startswith("M") and c["band_d"].endswith("Z")
+
+
+def test_latency_chart_too_few_points_empty():
+    from sentinel.panel.view import _latency_chart
+
+    c = _latency_chart([10.0], [20.0])
+    assert c == {"p50_d": "", "p95_d": "", "band_d": ""}
+
+
+def test_latency_chart_gap_drops_band_keeps_lines():
+    from sentinel.panel.view import _latency_chart
+
+    c = _latency_chart([10.0, None, 12.0], [20.0, 25.0, 30.0])
+    assert c["band_d"] == ""  # 任一线含缺口 → 不填面积
+    assert c["p50_d"].count("M") == 2  # 缺口处折线断开后重新起笔
+    assert c["p95_d"].startswith("M")
+
+
+def test_status_code_buckets_timeout_and_order():
+    from sentinel.panel.view import _status_code_buckets
+
+    samples = [
+        ProbeSample(ts=1, service="api", ok=True, status_code=200, latency_ms=5.0),
+        ProbeSample(ts=2, service="api", ok=True, status_code=200, latency_ms=6.0),
+        ProbeSample(ts=3, service="api", ok=False, status_code=500, latency_ms=None),
+        ProbeSample(ts=4, service="api", ok=False, status_code=None, latency_ms=None),
+    ]
+    buckets = _status_code_buckets(samples)
+    assert buckets[0]["code"] == "200" and buckets[0]["count"] == 2
+    codes = {b["code"] for b in buckets}
+    assert "timeout" in codes  # status_code None → timeout 桶
+    assert sum(b["count"] for b in buckets) == 4
+    assert abs(sum(b["pct"] for b in buckets) - 100.0) < 0.5
+
+
+def test_status_code_buckets_empty():
+    from sentinel.panel.view import _status_code_buckets
+
+    assert _status_code_buckets([]) == []
+
+
+def test_sample_latency_series_breaks_on_failure_and_downsamples():
+    from sentinel.panel.view import _sample_latency_series
+
+    samples = [
+        ProbeSample(ts=10, service="api", ok=True, status_code=200, latency_ms=11.0),
+        ProbeSample(ts=20, service="api", ok=False, status_code=500, latency_ms=None),
+        ProbeSample(ts=30, service="api", ok=True, status_code=200, latency_ms=13.0),
+    ]
+    lat = _sample_latency_series(samples, cap=10)
+    assert lat == [11.0, None, 13.0]  # 失败样本 → None 断线
+    many = [
+        ProbeSample(ts=i, service="api", ok=True, status_code=200, latency_ms=float(i))
+        for i in range(100)
+    ]
+    assert len(_sample_latency_series(many, cap=20)) == 20  # 下采样到 cap
+
+
+def test_event_x_marks_in_window_and_clamp():
+    from sentinel.findings import EventRecord
+    from sentinel.panel.view import _event_x_marks
+
+    def ev(eid, ts):
+        return EventRecord(
+            id=eid,
+            ts=ts,
+            rule="latency_degraded",
+            subject="api",
+            severity="warning",
+            status="open",
+            detail="d",
+            payload_json="{}",
+            diagnosis_status="skipped",
+            diagnosis_json=None,
+            cooldown_until=0,
+            resolved_ts=None,
+        )
+
+    marks = _event_x_marks(
+        [ev(1, 0), ev(2, 500), ev(3, 1000), ev(4, 5000)],
+        start_ts=0,
+        end_ts=1000,
+        tz=TZ,
+        w=600.0,
+    )
+    ids = [m["id"] for m in marks]
+    assert ids == [1, 2, 3]  # ts=5000 在窗外被丢弃
+    assert all(0.0 <= m["x"] <= 600.0 for m in marks)
+    assert marks[0]["x"] == 0.0 and marks[2]["x"] == 600.0
+
+
+def test_latency_compare_replicates_engine_threshold(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    today = NOW.date()
+    # 7 日基线均 100ms;ratio=2.0、margin=500 → threshold=max(200, 600)=600
+    for i in range(1, 8):
+        store.upsert_probe_daily(
+            "api",
+            (today - timedelta(days=i)).isoformat(),
+            total=10,
+            ok_count=10,
+            p50=50.0,
+            p95=100.0,
+        )
+    cmp = view._latency_compare(
+        store, settings, "api", current_p95=700.0, before_date=today.isoformat()
+    )
+    assert cmp["baseline_ms"] == 100
+    assert cmp["threshold_ms"] == 600  # max(100*2, 100+500)
+    assert cmp["breached"] is True  # 700 > 600
+    assert cmp["baseline_days"] == 7
+    store.close()
+
+
+def test_latency_compare_no_baseline(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    cmp = view._latency_compare(
+        store, settings, "api", current_p95=42.0, before_date=NOW.date().isoformat()
+    )
+    assert cmp["baseline_ms"] is None and cmp["threshold_ms"] is None
+    assert cmp["breached"] is None and cmp["fill_pct"] is None
+    assert cmp["current_ms"] == 42  # current 仍回填
+    store.close()
+
+
+def test_build_service_detail_daily_shape(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    today = NOW.date()
+    store.upsert_probe_daily(
+        "api", (today - timedelta(days=1)).isoformat(), total=100, ok_count=100, p50=10.0, p95=20.0
+    )
+    store.add_probe_samples(
+        [ProbeSample(ts=NOW_TS - 30, service="api", ok=True, status_code=200, latency_ms=12.0)]
+    )
+    d = view.build_service_detail(store, settings, "api", now=NOW, window_days=30)
+    assert d is not None
+    assert d["service"] == "api" and d["state"] == "ok"
+    assert d["chart"]["mode"] == "daily"
+    assert d["gran"] == "daily"
+    assert d["status_codes"][0]["code"] == "200"
+    assert len(d["days"]) == 30
+    assert d["events"]["page"] == 1
+    store.close()
+
+
+def test_build_service_detail_samples_mode(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.add_probe_samples(
+        [
+            ProbeSample(ts=NOW_TS - 60, service="api", ok=True, status_code=200, latency_ms=11.0),
+            ProbeSample(ts=NOW_TS - 30, service="api", ok=True, status_code=200, latency_ms=13.0),
+        ]
+    )
+    d = view.build_service_detail(store, settings, "api", now=NOW, gran="samples")
+    assert d is not None
+    assert d["chart"]["mode"] == "samples"
+    assert d["chart"]["single_d"].startswith("M")  # 逐次单线
+    store.close()
+
+
+def test_build_service_detail_missing_returns_none(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    assert view.build_service_detail(store, settings, "ghost", now=NOW) is None
+    store.close()
+
+
+def test_build_service_detail_related_events_and_marks(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.add_probe_samples(
+        [ProbeSample(ts=NOW_TS - 30, service="api", ok=True, status_code=200, latency_ms=12.0)]
+    )
+    _seed_open(store, "latency_degraded", "api", ts=NOW_TS - 3600)
+    _seed_open(store, "service_down", "other", ts=NOW_TS - 3600)  # 别的服务,不该出现
+    # 逐日模式 x 轴跨整窗(午夜→now),1h 前的事件落在窗内可标注
+    d = view.build_service_detail(store, settings, "api", now=NOW, gran="daily")
+    assert d["events"]["total"] == 1
+    assert d["events"]["items"][0]["rule"] == "latency_degraded"
+    # latency 类事件叠到时序图 x 标记上
+    assert any(m["rule"] == "latency_degraded" for m in d["marks"])
+    store.close()

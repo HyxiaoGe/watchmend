@@ -901,3 +901,90 @@ async def test_services_list_worst_first_and_xss(tmp_path, monkeypatch):
     # down 服务排到 ok 服务前(worst-first)
     assert r.text.index("&lt;x&gt;svc") < r.text.index("ok-svc")
     store.close()
+
+
+async def test_service_detail_renders(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    today = datetime.now(tz).date()
+    now_ts = int(datetime.now(tz).timestamp())
+    for i in range(1, 8):
+        store.upsert_probe_daily(
+            "api",
+            (today - timedelta(days=i)).isoformat(),
+            total=10,
+            ok_count=10,
+            p50=10.0,
+            p95=20.0,
+        )
+    store.add_probe_samples(
+        [ProbeSample(ts=now_ts - 30, service="api", ok=True, status_code=200, latency_ms=18.0)]
+    )
+    app = _build_app(store, settings)
+    app.state.service_labels = {"api": "API Gateway"}
+    r = await _get(app, "/service/api?lang=zh")
+    assert r.status_code == 200
+    assert "API Gateway" in r.text  # 显示名 label
+    assert 'class="crumb"' in r.text  # 面包屑回服务列表
+    assert "/services?" in r.text
+    assert 'class="lat-chart"' in r.text  # 延迟时序大图
+    assert 'class="tab-on">服务</a>' in r.text  # 「服务」标签高亮
+    assert '<meta http-equiv="refresh"' not in r.text  # 详情页不自动刷新
+    store.close()
+
+
+async def test_service_detail_404(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    r = await _get(app, "/service/ghost?lang=zh")
+    assert r.status_code == 404
+    assert "服务不存在" in r.text  # svc.notfound
+    store.close()
+
+
+async def test_service_detail_samples_toggle(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    now_ts = int(datetime.now(tz).timestamp())
+    store.add_probe_samples(
+        [
+            ProbeSample(ts=now_ts - 60, service="api", ok=True, status_code=200, latency_ms=11.0),
+            ProbeSample(ts=now_ts - 30, service="api", ok=True, status_code=200, latency_ms=13.0),
+        ]
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/service/api?gran=samples")
+    assert r.status_code == 200
+    assert "gran=samples" in r.text  # 逐次/逐日切换链接保留
+    store.close()
+
+
+async def test_service_detail_name_escaped(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    now_ts = int(datetime.now(tz).timestamp())
+    store.add_probe_samples(
+        [ProbeSample(ts=now_ts - 30, service="<x>svc", ok=True, status_code=200, latency_ms=10.0)]
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/service/%3Cx%3Esvc")
+    assert r.status_code == 200
+    assert "<x>svc" not in r.text  # 服务名 h1 转义
+    assert "&lt;x&gt;svc" in r.text
+    store.close()

@@ -1,0 +1,124 @@
+{% extends "_base.html" %}
+{% block title %}{{ t('hdr.title') }}{% endblock %}
+{% block body %}
+<div class="wrap">
+<p class="crumb"><a href="{{ services_url }}">← {{ t('tab.services') }}</a></p>
+{% if detail is none %}
+<h1>{{ t('svc.notfound') }}</h1>
+<p class="muted">{{ t('svc.notfound_hint') }}</p>
+{% else %}
+<div class="sd-head">
+  <span class="sdot {{ detail.state }}" title="{{ t('st.' ~ detail.state) }}"></span>
+  <h1>{{ detail.label }}</h1>
+  <span class="upt {{ 'bad' if detail.state == 'down' else ('warn' if detail.state in ('partial', 'degraded') else ('none' if detail.uptime_pct is none else '')) }}">{% if detail.uptime_pct is not none %}{{ detail.uptime_pct }}%{% else %}—{% endif %}</span>
+</div>
+<p class="muted" style="font-size:11px;margin:0 0 8px">{{ t('svc.col_uptime') }}</p>
+
+<div class="card">
+  <div class="lat3">
+    <div class="cell">
+      <span class="v {{ 'breach' if detail.compare.breached else '' }}">{% if detail.compare.current_ms is not none %}{{ detail.compare.current_ms }}<span class="u">ms</span>{% else %}—{% endif %}</span>
+      <span class="k">{{ t('svc.cur_p95') }}</span>
+    </div>
+    <div class="cell">
+      <span class="v">{% if detail.compare.baseline_ms is not none %}{{ detail.compare.baseline_ms }}<span class="u">ms</span>{% else %}—{% endif %}</span>
+      <span class="k">{% if detail.compare.baseline_ms is not none %}{{ t('svc.baseline', days=detail.compare.baseline_days) }}{% else %}{{ t('svc.no_baseline') }}{% endif %}</span>
+    </div>
+    <div class="cell">
+      <span class="v">{% if detail.compare.threshold_ms is not none %}{{ detail.compare.threshold_ms }}<span class="u">ms</span>{% else %}—{% endif %}</span>
+      <span class="k">{{ t('svc.threshold') }}</span>
+    </div>
+  </div>
+  {% if detail.compare.fill_pct is not none %}
+  <div class="bar"><i class="{{ 'breach' if detail.compare.breached else '' }}" style="width:{{ detail.compare.fill_pct }}%"></i></div>
+  {% endif %}
+</div>
+
+<div class="secrow">
+  <span class="sec">{{ t('svc.latency') }}</span>
+  <span class="seg">
+    <a href="{{ qurl(gran=none) }}" class="{{ 'on' if detail.gran != 'samples' else '' }}">{{ t('svc.gran_daily') }}</a>
+    <a href="{{ qurl(gran='samples') }}" class="{{ 'on' if detail.gran == 'samples' else '' }}">{{ t('svc.gran_samples') }}</a>
+  </span>
+</div>
+<div class="card chart-wrap">
+{% set has_line = detail.chart.p50_d or detail.chart.p95_d or detail.chart.single_d %}
+{% if has_line %}
+  <svg class="lat-chart" viewBox="0 0 600 120" preserveAspectRatio="none">
+    {% if detail.chart.band_d %}<path d="{{ detail.chart.band_d }}" fill="var(--p95-fill)" stroke="none"/>{% endif %}
+    {% if detail.chart.mode == 'daily' %}
+      {% if detail.chart.p50_d %}<path d="{{ detail.chart.p50_d }}" fill="none" stroke="var(--p50)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>{% endif %}
+      {% if detail.chart.p95_d %}<path d="{{ detail.chart.p95_d }}" fill="none" stroke="var(--p95)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>{% endif %}
+    {% else %}
+      <path d="{{ detail.chart.single_d }}" fill="none" stroke="var(--p95)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+    {% endif %}
+    {% for m in detail.marks %}
+    <a href="{{ eurl(m.id) }}"><line x1="{{ m.x }}" y1="0" x2="{{ m.x }}" y2="120" stroke="var(--st-{{ 'down' if m.severity == 'critical' else 'degraded' }})" stroke-width="1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"><title>{{ rule_label(m.rule, lang) }} · {{ m.ts_str }}</title></line></a>
+    {% endfor %}
+  </svg>
+  <div class="chart-legend">
+    {% if detail.chart.mode == 'daily' %}<span><i style="background:var(--p50)"></i>p50</span>{% endif %}
+    <span><i style="background:var(--p95)"></i>p95</span>
+    {% if detail.marks %}<span><i style="background:var(--st-down)"></i>{{ t('tab.events') }}</span>{% endif %}
+  </div>
+{% else %}
+  <div class="muted">{{ t('svc.no_latency') }}</div>
+{% endif %}
+</div>
+
+<div class="secrow"><span class="sec">{{ t('svc.codes') }}</span></div>
+<div class="card codes">
+{% for c in detail.status_codes %}
+  {% set is_to = c.code == 'timeout' %}
+  {% set is_bad = is_to or c.code[0] in '45' %}
+  {% set is_ok = c.code[0] == '2' %}
+  <div class="coderow">
+    <span class="cc {{ 'crit' if is_bad else ('ok' if is_ok else 'muted') }}">{{ c.code }}</span>
+    <span class="cbar"><i class="{{ 'bad' if is_bad else ('' if is_ok else 'other') }}" style="width:{{ c.pct }}%"></i></span>
+    <span class="cn">{{ c.count }} · {{ c.pct }}%</span>
+  </div>
+{% else %}
+  <div class="muted">{{ t('svc.no_codes') }}</div>
+{% endfor %}
+</div>
+
+{% if detail.days %}
+<div class="secrow"><span class="sec">{{ t('svc.heatmap') }}</span></div>
+<div class="comps"><div class="comp">
+  <div class="upbar">
+    {% for d in detail.days %}
+    <i class="{{ d.state }}" title="{{ d.date }} · {{ t('st.' ~ d.state) }}{% if d.uptime_pct is not none %} · {{ d.uptime_pct }}%{% endif %}"></i>
+    {% endfor %}
+  </div>
+  <div class="comp-ax">
+    <span>{{ t('axis.window', days=detail.window_days) }}</span><span class="ln"></span><span>{{ t('axis.today') }}</span>
+  </div>
+</div></div>
+{% endif %}
+
+<div class="secrow"><span class="sec">{{ t('svc.events') }}</span></div>
+{% for e in detail.events['items'] %}
+<div class="ev">
+  <div class="top">
+    <span class="dot {{ e.severity }}" title="{{ t('sev.' ~ e.severity) }}"></span>
+    <b>{{ rule_label(e.rule, lang) }}</b>
+    <span class="chip {{ 'ok' if e.lifecycle == 'recovered' else '' }}">{{ t('life.' ~ e.lifecycle) }}</span>
+    {% if e.is_scan_failure %}<span class="chip warn">{{ t('ev.scanfail') }}</span>{% endif %}
+    <span class="when mono">{{ e.ts_str }}{% if e.resolved_str %} → {{ e.resolved_str }}{% endif %}</span>
+  </div>
+  {% if e.summary %}<div class="diag"><div class="lbl">{{ t('ev.summary') }}</div><div class="body">{{ e.summary }}</div></div>{% endif %}
+  <p><a href="{{ eurl(e.id) }}">{{ t('ev.detail') }}</a></p>
+</div>
+{% else %}
+<div class="ev muted">{{ t('ev.empty') }}</div>
+{% endfor %}
+{% if detail.events.total_pages > 1 %}
+<div class="pager">
+  {% if detail.events.page > 1 %}<a href="{{ qurl(ev_page=detail.events.page - 1) }}">{{ t('ev.prev') }}</a>{% endif %}
+  <span>{{ t('ev.page', page=detail.events.page, total=detail.events.total_pages, count=detail.events.total) }}</span>
+  {% if detail.events.page < detail.events.total_pages %}<a href="{{ qurl(ev_page=detail.events.page + 1) }}">{{ t('ev.next') }}</a>{% endif %}
+</div>
+{% endif %}
+{% endif %}
+</div>
+{% endblock %}
