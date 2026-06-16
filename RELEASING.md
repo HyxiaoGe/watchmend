@@ -66,6 +66,16 @@ not a *write*.
 9. Verify: `docker buildx imagetools inspect ghcr.io/hyxiaoge/watchmend:X.Y.Z`
    (do not build locally — CI owns the push).
 
+## Changelog in the image
+
+Starting with the changelog-panel feature, the wheel (and therefore the image)
+bundles a copy of `CHANGELOG.md` / `CHANGELOG.zh-CN.md` (hatch `force-include` →
+`sentinel/_changelog/`), so the panel's `/changelog` page shows the running
+version's notes offline. Cutting the changelog during a release automatically
+flows into the next image — no manual sync. This is still additive and
+rollback-safe: the changelog is a read-only static file, and the N-1 image
+carries its own copy.
+
 ## Rollback
 
 Image tags are immutable and pinned. To roll back, set the deployed image tag to

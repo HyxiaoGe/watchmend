@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {% if refresh_seconds %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endif %}
-<title>{% block title %}{{ t('hdr.title') if t else 'WatchMend' }}{% endblock %}</title>
+<title>{% if nav and nav.update_available %}● {% endif %}{% block title %}{{ t('hdr.title') if t else 'WatchMend' }}{% endblock %}</title>
 <style>
   :root {
     --bg:#0d1117; --panel:#161b22; --line:#2a313c; --txt:#c9d1d9; --mut:#8b949e;
@@ -314,15 +314,14 @@
   <b>{{ t('hdr.title') }}</b>
   <div class="tools">
     <span class="verwrap">
+      <a class="ver mono{% if nav and nav.update_available %} up{% endif %}" href="{{ tab_url('/changelog') }}"
+         aria-label="{{ t('ver.current', ver=nav.version if nav else '') }}{% if nav and nav.update_available %} · {{ t('update.available', ver=nav.latest_version) }}{% endif %}">v{{ nav.version if nav else '' }}{% if nav and nav.update_available %}<i class="updot"></i>{% endif %}</a>
       {% if nav and nav.update_available and nav.release_url %}
-      <a class="ver up mono" href="{{ nav.release_url }}" target="_blank" rel="noopener" aria-label="{{ t('ver.current', ver=nav.version) }} · {{ t('update.available', ver=nav.latest_version) }}">v{{ nav.version }}<i class="updot"></i></a>
       <span class="verpop" role="note">
         <b>{{ t('update.available', ver=nav.latest_version) }}</b>
         <code>{{ t('update.command', ver=nav.latest_tag) }}</code>
         <a href="{{ nav.release_url }}" target="_blank" rel="noopener">{{ t('update.notes') }} →</a>
       </span>
-      {% else %}
-      <span class="ver mono" aria-label="{{ t('ver.current', ver=nav.version if nav else '') }}">v{{ nav.version if nav else '' }}</span>
       {% endif %}
     </span>
     <span class="seg">

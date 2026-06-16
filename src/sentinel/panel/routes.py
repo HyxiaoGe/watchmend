@@ -17,7 +17,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from sentinel import __version__
 from sentinel.config import Settings
-from sentinel.panel import i18n, prefs, view
+from sentinel.panel import changelog, i18n, prefs, view
 from sentinel.update_check import is_newer
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -423,6 +423,30 @@ def register_panel_routes(app: FastAPI) -> None:
             tab_url=tab_url,
             eurl=eurl,
             active_tab="hygiene",
+        )
+        resp = HTMLResponse(html)
+        _write_pref_cookies(resp, request, lang, theme, window_days)
+        return resp
+
+    @app.get("/changelog", response_class=HTMLResponse)
+    async def panel_changelog(request: Request) -> HTMLResponse:
+        state = request.app.state
+        settings: Settings = state.settings
+        lang, theme, window_days = _read_prefs(request, settings)
+        qurl, tab_url = _nav_helpers("/changelog", lang=lang, theme=theme, window_days=window_days)
+        t = i18n.make_translator(lang)
+        html = _env.get_template("changelog.html").render(
+            nav=_nav_context(state.store),
+            lang=lang,
+            theme=theme,
+            t=t,
+            qurl=qurl,
+            tab_url=tab_url,
+            active_tab="changelog",
+            window_days=window_days,
+            history_days=settings.sentinel_panel_history_days,
+            releases=changelog.load_releases(lang),
+            current_version=__version__,
         )
         resp = HTMLResponse(html)
         _write_pref_cookies(resp, request, lang, theme, window_days)

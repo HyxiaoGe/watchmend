@@ -136,3 +136,11 @@ def test_phase1_format_keys_accept_params():
 
     t = make_translator("zh")
     assert t("hero.uptime_label") == "今日可用率"  # 今日口径,无窗口占位
+
+
+def test_changelog_panel_keys_present_both_langs():
+    from sentinel.panel.i18n import MESSAGES
+
+    for k in ("changelog.title", "changelog.heading", "changelog.current", "changelog.empty"):
+        assert k in MESSAGES["zh"], f"zh 缺 {k}"
+        assert k in MESSAGES["en"], f"en 缺 {k}"

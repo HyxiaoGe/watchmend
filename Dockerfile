@@ -12,6 +12,7 @@ RUN uv export --frozen --no-dev --no-emit-project -o requirements.txt \
 # (services.yaml 缺失→降级 vendor-only,只监控外部状态页;
 #  llm.yaml 空/缺失→回落 .env 的 LLM_* 变量,见 docker-compose.yml 挂载)
 COPY src ./src
+COPY CHANGELOG.md CHANGELOG.zh-CN.md ./
 RUN uv pip install --system --no-cache --no-deps .
 
 VOLUME ["/data"]
