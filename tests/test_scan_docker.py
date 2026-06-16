@@ -287,6 +287,24 @@ async def test_self_exclude_socket_proxy_image(settings):
     assert active == set()
 
 
+async def test_self_exclude_socket_proxy_lscr_image(settings):
+    # 镜像版部署(docker-compose.image.yml)用 lscr.io/linuxserver/socket-proxy
+    # 替代 tecnativa(Docker Hub 国内被墙);同源 fork,边车同样要按镜像名子串自排除,
+    # 否则换源后边车会被当普通容器误报 container_down。按 compose 实钉的 digest 形式取镜像,
+    # 钉死真实部署的引用形态(docker ps 在按 digest 拉取时 Image 列即此形态),不只测 tag。
+    img = (
+        "lscr.io/linuxserver/socket-proxy"
+        "@sha256:1a210e6688649c3c8217faa29172dbbb46d9f9a0afb62b1c4b9987a612057a4d"
+    )
+    findings, active = await _scan(
+        settings,
+        [_ps_row("docker-proxy", image=img)],
+        {"docker-proxy": _inspect(name="docker-proxy", status="exited", exit_code=1, image=img)},
+    )
+    assert findings == []
+    assert active == set()
+
+
 async def test_removing_skipped_not_in_active(settings):
     findings, active = await _scan(
         settings,
