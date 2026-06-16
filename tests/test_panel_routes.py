@@ -1505,3 +1505,160 @@ async def test_footer_removed(tmp_path, monkeypatch):
     assert "localhost-only" not in html_en
     assert "never auto-run" not in html_en  # footer.readonly en
     store.close()
+
+
+# --- 事件 ⇄ 服务详情 双向导航打通(feat/event-service-nav-links) -----------------
+
+
+def _ts_now(settings):
+    from datetime import datetime, timedelta, timezone
+
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    return int(datetime.now(tz).timestamp())
+
+
+def _real_service(store, name, now_ts):
+    # 给某服务落今日探针样本 → 进 probe_daily∪今日样本 真实服务集
+    from sentinel.models import ProbeSample
+
+    store.add_probe_samples(
+        [ProbeSample(ts=now_ts - 30, service=name, ok=True, status_code=200, latency_ms=12.0)]
+    )
+
+
+def _ev(store, *, ts, rule, subject, severity="critical", status="open"):
+    store.insert_event(
+        ts=ts,
+        rule=rule,
+        subject=subject,
+        severity=severity,
+        status=status,
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+
+
+async def test_service_detail_links_to_events_filter(tmp_path, monkeypatch):
+    # 服务详情「相关事件」给一条「全部相关事件 →」链到 /events?subject=<name>(同源筛选)。
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    now_ts = _ts_now(settings)
+    _real_service(store, "api", now_ts)
+    _ev(store, ts=now_ts - 60, rule="latency_degraded", subject="api", severity="warning")
+    app = _build_app(store, settings)
+    r = await _get(app, "/service/api?lang=zh")
+    assert r.status_code == 200
+    assert "/events?subject=api" in r.text  # 打通:相关事件→事件流(此服务)
+    assert "全部相关事件" in r.text  # svc.all_events
+    store.close()
+
+
+async def test_service_detail_no_events_no_filter_link(tmp_path, monkeypatch):
+    # 无相关事件时不显示「全部相关事件」链接(避免空筛选死链)。
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    now_ts = _ts_now(settings)
+    store.add_probe_samples(
+        [ProbeSample(ts=now_ts - 30, service="api", ok=True, status_code=200, latency_ms=12.0)]
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/service/api?lang=zh")
+    assert r.status_code == 200
+    assert "/events?subject=api" not in r.text
+    store.close()
+
+
+async def test_events_page_links_real_service_only(tmp_path, monkeypatch):
+    # 事件页服务名:真实探针服务可点回 /service/<name>;host 级 subject(disk "/")保持纯文本。
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    now_ts = _ts_now(settings)
+    _real_service(store, "api", now_ts)
+    _ev(store, ts=now_ts - 60, rule="service_down", subject="api")
+    _ev(store, ts=now_ts - 50, rule="disk_usage", subject="/")  # host:无探针样本→非服务
+    app = _build_app(store, settings)
+    r = await _get(app, "/events?lang=zh")
+    assert r.status_code == 200
+    assert "/service/api?" in r.text  # 真实服务可点
+    assert "/service/%2F" not in r.text  # host subject "/" 不可点
+    store.close()
+
+
+async def test_event_detail_subject_links_for_real_service(tmp_path, monkeypatch):
+    # 事件详情:真实服务 subject 链回服务详情;非服务 subject 纯文本。
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    now_ts = _ts_now(settings)
+    _real_service(store, "api", now_ts)
+    _ev(store, ts=now_ts - 60, rule="service_down", subject="api")
+    _ev(store, ts=now_ts - 50, rule="disk_usage", subject="/")
+    app = _build_app(store, settings)
+    rows = store.get_events_since(0)
+    by_subj = {e.subject: e.id for e in rows}
+    r_api = await _get(app, f"/event/{by_subj['api']}?lang=zh")
+    assert r_api.status_code == 200
+    assert "/service/api?" in r_api.text  # 真实服务可点
+    r_disk = await _get(app, f"/event/{by_subj['/']}?lang=zh")
+    assert r_disk.status_code == 200
+    assert "/service/%2F" not in r_disk.text  # host subject 不可点
+    store.close()
+
+
+async def test_events_page_linkified_service_name_escaped(tmp_path, monkeypatch):
+    # 可点服务名仍须转义:href 用 quote 百分号编码,显示文本 autoescape。
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    now_ts = _ts_now(settings)
+    _real_service(store, "<x>svc", now_ts)
+    _ev(store, ts=now_ts - 60, rule="service_down", subject="<x>svc")
+    app = _build_app(store, settings)
+    r = await _get(app, "/events?lang=zh")
+    assert r.status_code == 200
+    assert "<x>svc" not in r.text  # 未转义原串绝不出现
+    assert "&lt;x&gt;svc" in r.text  # 显示文本转义
+    assert "/service/%3Cx%3Esvc" in r.text  # href 路径百分号编码
+    store.close()
+
+
+async def test_event_detail_link_never_dead_for_stale_service(tmp_path, monkeypatch):
+    # P2 回归:事件详情 subject 链接窗口必须与 /service 渲染窗口一致。
+    # 陈旧服务(probe_daily 在 win 外)+ 老已恢复事件:旧实现按固定 90 天历史窗判可点,
+    # 但链接携 win=30 → /service 在 30 天窗找不到数据 → 404 死链。修后 linkability 按同一
+    # window_days 算:可点 ⟹ 该窗口下 /service 必渲染 200。
+    from datetime import datetime, timedelta, timezone
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    today = datetime.now(tz).date()
+    now_ts = int(datetime.now(tz).timestamp())
+    # 60 天前逐日行(>默认 30 天窗、<90 天历史);120 天前已恢复事件(不在 30 天 feed、非 open)
+    store.upsert_probe_daily(
+        "api", (today - timedelta(days=60)).isoformat(), total=10, ok_count=10, p50=10.0, p95=20.0
+    )
+    store.insert_event(
+        ts=now_ts - 120 * 86400,
+        rule="service_down",
+        subject="api",
+        severity="critical",
+        status="resolved",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    eid = store.get_events_since(0)[0].id
+    app = _build_app(store, settings)
+    # 默认窗(30):陈旧服务不在 30 天 probe_daily 内、无 24h 样本 → 不可点(纯文本),无死链
+    r30 = await _get(app, f"/event/{eid}?win=30")
+    assert r30.status_code == 200
+    assert "/service/api?" not in r30.text
+    # win=90:可点;链接携 win=90,/service 必解析为 200(非 404 死链)
+    r90 = await _get(app, f"/event/{eid}?win=90")
+    assert "/service/api?" in r90.text
+    assert (await _get(app, "/service/api?win=90")).status_code == 200
+    store.close()

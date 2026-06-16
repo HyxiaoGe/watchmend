@@ -955,6 +955,19 @@ _EVENT_SEVERITIES = ("critical", "warning")
 _EVENT_STATUSES = ("open", "recovered")
 
 
+def _real_service_names(store: Store, *, now_ts: int, tz: timezone, window_days: int) -> set[str]:
+    """真实探针服务集,且与 /service/{name} 在同一 window_days 下「渲染为 200」的判定对齐:
+    probe_daily(最近 window_days 天) ∪ 近 24h 探针样本(= build_service_detail 的 day_samples 来源)。
+    据此「可点 ⟹ 该 window 下 /service 必渲染 200」,绝不产生 404 死链(链接携带同一 win=window_days);
+    host 指标(disk/mem)、状态页 provider、容器名等非探针 subject 不入这两表,恒为纯文本。
+    复用既有读(get_probe_daily_since / get_probe_samples_since),零新表/列/查询方法。"""
+    today_local = datetime.fromtimestamp(now_ts, tz).date()
+    start_date = today_local - timedelta(days=max(1, window_days) - 1)
+    daily = store.get_probe_daily_since(start_date.isoformat())
+    recent_24h = store.get_probe_samples_since(now_ts - _DAY_SECONDS)
+    return {r.service for r in daily} | {s.service for s in recent_24h}
+
+
 def build_events_list(
     store: Store,
     settings: Settings,
@@ -964,6 +977,7 @@ def build_events_list(
     subject: str | None = None,
     severity: str | None = None,
     status: str | None = None,
+    window_days: int | None = None,
     service_labels: dict[str, str] | None = None,
     llm_config=None,
     diag_registered: bool | None = None,
@@ -985,6 +999,9 @@ def build_events_list(
     older_open = [e for e in store.get_open_events() if e.ts < window_start]
     feed = sorted(older_open + recent, key=lambda e: e.ts, reverse=True)
     labels = service_labels or {}
+    # linkability 与服务页同窗:链接携带 win=wd,故按 wd 算「可点 ⟹ /service 渲染 200」
+    wd = window_days if window_days is not None else settings.sentinel_panel_default_window
+    real_services = _real_service_names(store, now_ts=now_ts, tz=tz, window_days=wd)
     subjects = sorted({e.subject for e in feed})
 
     def keep(e: EventRecord) -> bool:
@@ -1008,6 +1025,7 @@ def build_events_list(
     for e in filtered[start : start + size]:
         v = _event_view(e, tz, diag_active=diag_active)
         v["label"] = labels.get(e.subject, e.subject)  # 展示名;无映射回退 subject
+        v["service_linkable"] = e.subject in real_services  # 仅真实探针服务名可点回详情
         items.append(v)
     return {
         "now_str": now.strftime("%Y-%m-%d %H:%M"),
@@ -1048,7 +1066,13 @@ def _tool_calls_view(tools_json: str | None) -> list[dict]:
 
 
 def build_event_detail(
-    store: Store, settings: Settings, event_id: int, *, llm_config=None, diag_registered=None
+    store: Store,
+    settings: Settings,
+    event_id: int,
+    *,
+    window_days: int | None = None,
+    llm_config=None,
+    diag_registered=None,
 ) -> dict | None:
     """单事件详情 view-model。事件不存在 → None(路由据此 404)。
     settings 用于 llm_enabled 与时间显示时区(spec §6 签名补 settings)。
@@ -1062,6 +1086,12 @@ def build_event_detail(
     diag_active = posture["enabled"] and not posture["pending_restart"]
     ev = _event_view(e, tz, diag_active=diag_active)
     ev["detail"] = e.detail
+    now_ts = int(datetime.now(tz).timestamp())
+    # linkability 与服务页同窗(链接携带 win=wd):可点 ⟹ 该窗口下 /service 渲染 200,不产生死链
+    wd = window_days if window_days is not None else settings.sentinel_panel_default_window
+    ev["service_linkable"] = e.subject in _real_service_names(
+        store, now_ts=now_ts, tz=tz, window_days=wd
+    )  # 仅真实探针服务 subject 链回 /service/{name}
     diagnosis = None
     if e.diagnosis_status == "done" and e.diagnosis_json:
         try:

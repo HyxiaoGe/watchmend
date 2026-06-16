@@ -203,6 +203,7 @@ def register_panel_routes(app: FastAPI) -> None:
             state.store,
             settings,
             event_id,
+            window_days=window_days,
             llm_config=getattr(state, "llm_config", None),
             diag_registered=getattr(state, "diag_job_registered", None),
         )
@@ -212,6 +213,16 @@ def register_panel_routes(app: FastAPI) -> None:
         )
         # 面包屑回到父标签「事件」,携带 lang/theme/win 不丢上下文(issue #11 claim 4)
         back_url = "/events?" + urlencode({"lang": lang, "theme": theme, "win": window_days})
+
+        def surl(name: str) -> str:
+            # 事件 subject → 服务详情(仅 view 标记 service_linkable 的真实服务在模板里用)
+            return (
+                "/service/"
+                + quote(name, safe="")
+                + "?"
+                + urlencode({"lang": lang, "theme": theme, "win": window_days})
+            )
+
         html = _env.get_template("event.html").render(
             nav=_nav_context(state.store),
             detail=detail,
@@ -224,6 +235,7 @@ def register_panel_routes(app: FastAPI) -> None:
             qurl=qurl,
             tab_url=tab_url,
             back_url=back_url,
+            surl=surl,
             active_tab="events",
             diag_lang=settings.sentinel_llm_lang,
         )  # 详情页不传 refresh_seconds → 不自动刷新(spec §3)
@@ -310,6 +322,12 @@ def register_panel_routes(app: FastAPI) -> None:
         def eurl(event_id: int) -> str:
             return f"/event/{event_id}?" + prefs_qs
 
+        def events_url(subject: str) -> str:
+            # 相关事件 → 事件流页按本服务筛选(同源同窗),带偏好
+            return "/events?" + urlencode(
+                {"subject": subject, "lang": lang, "theme": theme, "win": window_days}
+            )
+
         html = _env.get_template("service.html").render(
             nav=_nav_context(state.store),
             detail=detail,
@@ -322,6 +340,7 @@ def register_panel_routes(app: FastAPI) -> None:
             qurl=qurl,
             tab_url=tab_url,
             eurl=eurl,
+            events_url=events_url,
             services_url="/services?" + prefs_qs,
             active_tab="services",
             diag_lang=settings.sentinel_llm_lang,
@@ -351,6 +370,7 @@ def register_panel_routes(app: FastAPI) -> None:
             subject=subject,
             severity=severity,
             status=status,
+            window_days=window_days,
             service_labels=getattr(state, "service_labels", None),
             llm_config=getattr(state, "llm_config", None),
             diag_registered=getattr(state, "diag_job_registered", None),
@@ -371,6 +391,15 @@ def register_panel_routes(app: FastAPI) -> None:
                 {"lang": lang, "theme": theme, "win": window_days}
             )
 
+        def surl(name: str) -> str:
+            # 事件里的服务名 → 服务详情(仅 view 标记 service_linkable 的真实服务在模板里用)
+            return (
+                "/service/"
+                + quote(name, safe="")
+                + "?"
+                + urlencode({"lang": lang, "theme": theme, "win": window_days})
+            )
+
         html = _env.get_template("events.html").render(
             nav=_nav_context(state.store),
             **data,
@@ -384,6 +413,7 @@ def register_panel_routes(app: FastAPI) -> None:
             qurl=qurl,
             tab_url=tab_url,
             eurl=eurl,
+            surl=surl,
             active_tab="events",
         )
         resp = HTMLResponse(html)
