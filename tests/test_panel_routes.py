@@ -123,8 +123,8 @@ async def test_overview_en_light_smoke(tmp_path, monkeypatch):
     r = await _get(app, "/?lang=en&theme=light")
     assert r.status_code == 200
     assert 'data-theme="light"' in r.text and '<html lang="en"' in r.text
-    assert "Services" in r.text  # sec.services en (renamed from sec.health in Task 7)
-    assert "Events" in r.text  # sec.events en
+    assert "Services" in r.text  # tab.services en(导航壳标签)
+    assert "Events" in r.text  # tab.events en(导航壳标签)
     assert "证据台" not in r.text  # 外壳标题区已全英文
     store.close()
 

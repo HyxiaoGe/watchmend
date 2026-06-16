@@ -64,20 +64,13 @@ def test_new_template_keys_present():
         "ev.diag_lang",
         "llm.pending_restart",
         "win.label",
-        "comp.uptime",
-        "comp.expand",
-        "comp.collapse",
-        "host.host",
         "host.self",
-        "host.host.ok",
         "ev.ai",
         "ev.summary",
         "ev.detail",
         "ev.scanfail",
-        "footer.notify",
         "footer.none",
         "footer.docker_readonly",
-        "footer.env",
         "ev.notfound",
         "ev.notfound_hint",
         "ev.commands",
@@ -88,7 +81,6 @@ def test_new_template_keys_present():
     # 带参 key 的 format 占位正确
     t = i18n.make_translator("en")
     assert t("win.label", days=30) == "30d"
-    assert t("comp.expand", n=5) == "Show 5 more"
     assert "back-translated" in t("ev.diag_lang", lang="zh")
 
 

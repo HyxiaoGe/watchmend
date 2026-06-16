@@ -402,37 +402,6 @@ def _host_self(
     }
 
 
-def _event_feed(
-    store: Store,
-    settings: Settings,
-    *,
-    now_ts: int,
-    tz: timezone,
-    open_events: list,
-    page: int,
-    diag_active: bool,
-) -> dict:
-    """事件流：近 N 天发生的事件 + 仍 open 的更早事件，ts 降序、服务端切片分页。
-    page 越上界钳到末页；空流 total_pages=1、items=[]。"""
-    window_start = now_ts - settings.sentinel_event_feed_days * _DAY_SECONDS
-    recent = store.get_events_since(window_start)  # ts >= start, desc
-    older_open = [e for e in open_events if e.ts < window_start]
-    feed = sorted(older_open + recent, key=lambda e: e.ts, reverse=True)
-    size = max(1, settings.sentinel_panel_page_size)  # 防 0/负配置触发除零 → 钳到 ≥1
-    total = len(feed)
-    total_pages = max(1, (total + size - 1) // size)
-    page = min(max(1, page), total_pages)
-    start = (page - 1) * size
-    items = [_event_view(e, tz, diag_active=diag_active) for e in feed[start : start + size]]
-    return {
-        "items": items,
-        "page": page,
-        "total_pages": total_pages,
-        "total": total,
-        "page_size": size,
-    }
-
-
 async def build_overview(
     store: Store,
     settings: Settings,

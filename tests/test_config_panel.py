@@ -19,7 +19,6 @@ def test_panel_redesign_field_defaults():
     assert s.sentinel_panel_history_days == 90
     assert s.sentinel_panel_default_window == 30  # 首屏默认窗口降噪为 30（issue #11）
     assert s.sentinel_panel_page_size == 8
-    assert s.sentinel_panel_services_cap == 6  # 默认仅展示 Top-6，余者展开（issue #11）
     assert s.sentinel_panel_red_uptime_pct == 50.0
     assert s.sentinel_panel_partial_uptime_pct == 99.5
     assert s.sentinel_llm_lang == "zh"
