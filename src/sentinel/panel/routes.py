@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, Response
@@ -48,6 +48,37 @@ def _nav_helpers(path: str, *, lang: str, theme: str, window_days: int, **transi
         return p + "?" + urlencode({"lang": lang, "theme": theme, "win": window_days})
 
     return qurl, tab_url
+
+
+def _read_prefs(request: Request, settings: Settings) -> tuple[str, str, int]:
+    """跨页统一的偏好解析(query > cookie > 配置默认/Accept-Language)。"""
+    q = request.query_params
+    c = request.cookies
+    accept = request.headers.get("accept-language")
+    lang = prefs.resolve_lang(
+        q.get("lang"), c.get("wm_lang"), accept, default=settings.sentinel_panel_default_lang
+    )
+    theme = prefs.resolve_theme(
+        q.get("theme"), c.get("wm_theme"), settings.sentinel_panel_default_theme
+    )
+    window_days = prefs.resolve_window(
+        q.get("win"),
+        c.get("wm_win"),
+        history_days=settings.sentinel_panel_history_days,
+        default=settings.sentinel_panel_default_window,
+    )
+    return lang, theme, window_days
+
+
+def _write_pref_cookies(resp: Response, request: Request, lang: str, theme: str, win: int) -> None:
+    """仅对出现在 querystring 的偏好写 cookie(cookie 跨页兜底,querystring 当次生效)。"""
+    q = request.query_params
+    prefs.apply_pref_cookies(
+        resp,
+        lang=lang if q.get("lang") else None,
+        theme=theme if q.get("theme") else None,
+        window=win if q.get("win") else None,
+    )
 
 
 def register_panel_routes(app: FastAPI) -> None:
@@ -186,6 +217,44 @@ def register_panel_routes(app: FastAPI) -> None:
             theme=theme if q.get("theme") else None,
             window=window_days if q.get("win") else None,
         )
+        return resp
+
+    @app.get("/services", response_class=HTMLResponse)
+    async def panel_services(request: Request) -> HTMLResponse:
+        state = request.app.state
+        settings: Settings = state.settings
+        lang, theme, window_days = _read_prefs(request, settings)
+        data = view.build_services_list(
+            state.store,
+            settings,
+            now=datetime.now(_tz(settings)),
+            window_days=window_days,
+            service_labels=getattr(state, "service_labels", None),
+        )
+        qurl, tab_url = _nav_helpers("/services", lang=lang, theme=theme, window_days=window_days)
+
+        def surl(name: str) -> str:
+            return (
+                "/service/"
+                + quote(name, safe="")
+                + "?"
+                + urlencode({"lang": lang, "theme": theme, "win": window_days})
+            )
+
+        html = _env.get_template("services.html").render(
+            **data,
+            t=i18n.make_translator(lang),
+            lang=lang,
+            theme=theme,
+            rule_label=i18n.rule_label,
+            qurl=qurl,
+            tab_url=tab_url,
+            surl=surl,
+            history_days=settings.sentinel_panel_history_days,
+            active_tab="services",
+        )
+        resp = HTMLResponse(html)
+        _write_pref_cookies(resp, request, lang, theme, window_days)
         return resp
 
     @app.get("/badge.svg")

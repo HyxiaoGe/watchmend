@@ -79,6 +79,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "hero.open": "{open} 个开放异常",
         "hero.no_events": "暂无事件记录",
         "sec.services": "服务一览",
+        "svc.empty": "暂无服务数据",
+        "svc.col_trend": "{days} 天 p95 趋势",
+        "svc.col_uptime": "今日可用率",
         "footer.readonly": "只读 · localhost-only · env 值全遮蔽 · 建议命令永不自动执行",
     },
     "en": {
@@ -153,6 +156,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "hero.open": "{open} open",
         "hero.no_events": "no events yet",
         "sec.services": "Services",
+        "svc.empty": "No service data yet",
+        "svc.col_trend": "{days}d p95 trend",
+        "svc.col_uptime": "today uptime",
         "footer.readonly": "read-only · localhost-only · env values redacted · "
         "suggested commands never auto-run",
     },

@@ -831,3 +831,73 @@ async def test_overview_renders_hero_and_service_sparkline(tmp_path, monkeypatch
     # HERO 下方既有区块未丢(Phase 1 保留)
     assert "事件" in resp.text  # sec.events
     store.close()
+
+
+async def test_services_list_renders(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    today = datetime.now(tz).date()
+    now_ts = int(datetime.now(tz).timestamp())
+    store.upsert_probe_daily(
+        "api", (today - timedelta(days=1)).isoformat(), total=100, ok_count=100, p50=10.0, p95=22.0
+    )
+    store.add_probe_samples(
+        [ProbeSample(ts=now_ts - 30, service="api", ok=True, status_code=200, latency_ms=12.0)]
+    )
+    app = _build_app(store, settings)
+    app.state.service_labels = {"api": "API Gateway"}
+    r = await _get(app, "/services?lang=zh")
+    assert r.status_code == 200
+    assert 'class="srow"' in r.text  # 服务行
+    assert "API Gateway" in r.text  # 显示名 label
+    assert "/service/api?" in r.text  # 整行点进服务详情(携带偏好)
+    assert 'class="tab-on">服务</a>' in r.text  # 「服务」标签为当前页高亮
+    store.close()
+
+
+async def test_services_list_empty(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    r = await _get(app, "/services")
+    assert r.status_code == 200
+    assert "暂无服务数据" in r.text  # svc.empty
+    store.close()
+
+
+async def test_services_list_worst_first_and_xss(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    recent = int(datetime.now(tz).timestamp()) - 30
+    store.add_probe_samples(
+        [
+            ProbeSample(ts=recent, service="ok-svc", ok=True, status_code=200, latency_ms=10.0),
+            # down 服务(1 ok / 3 = 33% < 50%)
+            ProbeSample(ts=recent, service="<x>svc", ok=True, status_code=200, latency_ms=10.0),
+            ProbeSample(
+                ts=recent - 1, service="<x>svc", ok=False, status_code=500, latency_ms=None
+            ),
+            ProbeSample(
+                ts=recent - 2, service="<x>svc", ok=False, status_code=500, latency_ms=None
+            ),
+        ]
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/services")
+    assert r.status_code == 200
+    # 服务名转义(纵深防御:服务名进 sname 与 href)
+    assert "<x>svc" not in r.text
+    assert "&lt;x&gt;svc" in r.text
+    # down 服务排到 ok 服务前(worst-first)
+    assert r.text.index("&lt;x&gt;svc") < r.text.index("ok-svc")
+    store.close()

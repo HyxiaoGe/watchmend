@@ -62,6 +62,12 @@ def _svg_line(values: list[float | None], *, w: float, h: float, pad_frac: float
     return {"line_d": line_d, "area_d": area_d}
 
 
+def _mini_sparkline_points(series: list[float | None], *, w: float = 140.0, h: float = 34.0) -> str:
+    """单线迷你 sparkline 的 SVG path d(复用 _svg_line,只取折线、丢面积)。
+    缺数据(全 None / <2 点)→ 空串,模板据此不渲染。"""
+    return _svg_line(series, w=w, h=h)["line_d"]
+
+
 def overall_uptime_pct(health: list[dict]) -> float | None:
     """各服务今日 uptime 等权均值,排除 nodata(uptime_pct is None)。
     全 nodata / 空 → None。英雄区中心大号数字(标签 "今日可用率")。
@@ -332,9 +338,11 @@ def _service_health_bars(
             if is_today:
                 st = today_stats.get(svc)
                 uptime = st.uptime_pct if (st and st.total) else None
+                p95 = st.p95_ms if st else None
             else:
                 row = daily_idx.get((svc, ds))
                 uptime = (row.ok_count / row.total * 100) if (row and row.total) else None
+                p95 = row.p95_ms if row else None
             state = _day_state(uptime, ev_idx.get((ds, svc), frozenset()), settings)
             days.append(
                 {
@@ -342,6 +350,9 @@ def _service_health_bars(
                     "state": state,
                     "is_today": is_today,
                     "uptime_pct": round(uptime, 1) if uptime is not None else None,
+                    "p95_ms": round(p95, 1)
+                    if p95 is not None
+                    else None,  # 逐日 p95(服务页迷你/大图复用)
                 }
             )
         st = today_stats.get(svc)
@@ -533,6 +544,47 @@ async def build_overview(
         "hero": hero,
         "host_self": host_self,
         "events": events,
+    }
+
+
+def build_services_list(
+    store: Store,
+    settings: Settings,
+    *,
+    now: datetime,
+    window_days: int = 30,
+    service_labels: dict[str, str] | None = None,
+) -> dict:
+    """服务列表 view-model(实用页 §8.2)。复用 _service_health_bars(已 worst-first 排序、
+    含逐日 p95);每服务补现态 state + p95 迷你 sparkline。零新取数。"""
+    tz = (
+        now.tzinfo
+        if isinstance(now.tzinfo, timezone)
+        else timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    )
+    now_ts = int(now.timestamp())
+    today_local = datetime.fromtimestamp(now_ts, tz).date()
+    midnight_ts = int(
+        datetime(today_local.year, today_local.month, today_local.day, tzinfo=tz).timestamp()
+    )
+    today_samples = store.get_probe_samples_since(midnight_ts)
+    health = _service_health_bars(
+        store,
+        settings,
+        now_ts=now_ts,
+        tz=tz,
+        window_days=window_days,
+        today_samples=today_samples,
+        service_labels=service_labels,
+    )
+    for row in health:
+        row["state"] = row["days"][-1]["state"] if row["days"] else "nodata"
+        row["p95_pts"] = _mini_sparkline_points([d["p95_ms"] for d in row["days"]])
+    return {
+        "now_str": now.strftime("%Y-%m-%d %H:%M"),
+        "refresh_seconds": _REFRESH_SECONDS,
+        "window_days": window_days,
+        "services": health,
     }
 
 

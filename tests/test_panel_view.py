@@ -709,3 +709,33 @@ async def test_build_overview_exposes_hero_and_mini(tmp_path, monkeypatch):
     # 每个 health 行都带 mini_pts 字符串
     assert all(isinstance(r["mini_pts"], str) for r in overview["health"])
     store.close()
+
+
+def test_mini_sparkline_points():
+    from sentinel.panel.view import _mini_sparkline_points
+
+    assert _mini_sparkline_points([None, None]) == ""  # 全缺 → 空串(模板不渲染)
+    d = _mini_sparkline_points([10.0, 20.0, 15.0])
+    assert d.startswith("M") and "L" in d  # 折线路径起于 M、续以 L
+
+
+def test_build_services_list_shape(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    today = NOW.date()
+    store.upsert_probe_daily(
+        "api", (today - timedelta(days=1)).isoformat(), total=100, ok_count=100, p50=10.0, p95=20.0
+    )
+    store.add_probe_samples(
+        [ProbeSample(ts=NOW_TS - 30, service="api", ok=True, status_code=200, latency_ms=12.0)]
+    )
+    data = view.build_services_list(store, settings, now=NOW, window_days=30)
+    assert data["window_days"] == 30
+    svcs = data["services"]
+    assert len(svcs) == 1 and svcs[0]["service"] == "api"
+    assert svcs[0]["uptime_pct"] == 100.0  # 今日全 ok
+    assert svcs[0]["state"] == "ok"
+    assert isinstance(svcs[0]["p95_pts"], str)  # 迷你 sparkline path d
+    # 逐日 p95 已挂在 days 上(服务详情大图复用)
+    assert any(d.get("p95_ms") is not None for d in svcs[0]["days"])
+    store.close()
