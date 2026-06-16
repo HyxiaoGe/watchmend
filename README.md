@@ -71,6 +71,56 @@ make up                                   # 或 docker compose up -d --build
 
 全部 40+ 配置项(阈值、冷却、播报粒度…)见 [.env.example](.env.example),每项带注释。
 
+## 国内 / 镜像版部署(开箱即用)
+
+如果你想直接拉 [ghcr](https://github.com/HyxiaoGe/watchmend/pkgs/container/watchmend) 上的预构建镜像(**不本地构建源码**)、机器上**没有**现成的 prometheus/loki/反向代理 docker 网络、或者你**在 GFW 后面**,走这条路径,而不是上面的 `make up`。它用一份自包含的 [`docker-compose.image.yml`](docker-compose.image.yml):镜像版(无 `build:`)、不挂外部 `egress`/`metrics` 网、docker 只读代理边车换成国内可达的同源 fork。
+
+> 上面的 `## 正式部署`(`make up`)假设你能从源码构建、且有/愿意创建外部 docker 网络;这条路径把这些前置都去掉了。**仍需 clone 仓库**——跳过的是镜像构建,不是仓库(compose、`.env.example`、`services.example.yaml` 都在仓库里)。
+
+**Step 0 — 装 Docker(国内,若未装)**:`curl -fsSL https://get.docker.com | sh -s -- --mirror Aliyun`(默认的 `get.docker.com` 在国内会卡在 download.docker.com 拉 GPG key 那步、`curl` exit 35)。
+
+**步骤**:
+
+```bash
+# (a) 取仓库(只跳过镜像构建,仍需 clone 拿配置模板与 compose)
+git clone https://github.com/HyxiaoGe/watchmend && cd watchmend
+
+# (b) 至少填一个通知渠道
+cp .env.example .env        # 编辑:FEISHU_VENDOR_WEBHOOK 或 Telegram/ntfy/webhook 任一
+
+# (c) 探针清单
+cp services.example.yaml services.yaml   # 改成你自己的服务;只盯外部状态页就把 services 改成 services: []
+
+# (d) SQLite 落盘目录(不建会被 docker 创成 root 属主的空目录)
+mkdir -p data
+
+# (e) 起容器(注意 -f 指定这份 compose)
+docker compose -f docker-compose.image.yml up -d
+
+# (f) 验活
+curl http://127.0.0.1:8765/health
+```
+
+> **务必填渠道**:这条路径不经 `make`,没有 Makefile 的渠道门禁。直接 `docker compose up` 时,`.env` 里**一个通知渠道都不填**,容器会**崩溃重启**——应用启动期会断言「至少配置一个渠道」,而 compose 的 `restart: unless-stopped` 会把这次启动异常变成无限重启(`/health` 永远起不来)。填了**语法合法但假的**值能起来(渠道只校验非空、不校验可达),见文末注意。
+
+> **`services.yaml` 写法**:要监控内部服务就 `cp services.example.yaml services.yaml` 后改成你自己的清单;只盯外部状态页就把 `services` 块写成 `services: []`(最清晰直观)。裸 `services:` 键、空文件、缺文件都会**安全回落「仅外部状态页」模式**(不崩);只有真正格式坏(如某服务项缺 `name` 必填字段)才会响亮失败。
+
+**镜像版本**:`docker-compose.image.yml` 里 `image:` 固定钉在某个具体版本(仓库策略不用 `:latest`)。读到这篇时它可能已过时——最新版见 [releases 页](https://github.com/HyxiaoGe/watchmend/releases),想升级就改 `image:` 那行的 tag 再 `docker compose -f docker-compose.image.yml up -d`。
+
+**docker 只读巡检层(默认开)**:这份 compose 自带一个只读 socket 代理边车,但镜像换成了 `lscr.io/linuxserver/socket-proxy` 而非 `## 正式部署` 用的 `tecnativa/docker-socket-proxy`——后者只在 Docker Hub,**Hub 在国内被墙拉不动**;`lscr.io` 国内可达,且是同源 fork,环境变量接口(`CONTAINERS`/`POST`/`EVENTS`…,POST 默认 `0` = 只读)一致。两点注意:① 巡检按镜像名子串自动排除自带的 socket 代理(`tecnativa` 与 `lscr` fork 都覆盖),无需手动设 `SENTINEL_DOCKER_EXCLUDE`(仅当你换用名字不含上述子串的其它代理镜像时,才按容器名排除);② 不需要 docker 巡检就按文件内注释整段关掉,并清空 `.env` 的 `SENTINEL_DOCKER_HOST`(否则它默认连 `tcp://docker-proxy:2375`、连不上会每 60s 刷错误日志)。
+
+**LLM 诊断**:这条路径**用 `.env` 的 `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` 启用**即可(填齐 `LLM_BASE_URL`+`LLM_MODEL` 就开)。国内首选 DeepSeek(`api.deepseek.com`)/ Moonshot 国内站(`api.moonshot.cn`);OpenAI / Anthropic / Gemini 直连在 GFW 后不可达,各平台 `base_url` 与地域备注见 [`## LLM 诊断(可选)`](#llm-诊断可选)。`llm.yaml` 注册表 + `make llm-init` 热加载那套是 `make up` 源码构建路径用的,这份 compose **刻意不挂 `llm.yaml`**(无 `make` 用户不会预置占位文件,直接挂会被 docker 创成同名空目录)。
+
+**访问面板**:端口只绑在宿主机 `127.0.0.1`,**默认零公网暴露**。在机器本机直接开 `http://127.0.0.1:8765`;远程看面板走 SSH 隧道:
+
+```bash
+ssh -L 8765:127.0.0.1:8765 you@your-server   # 然后本地浏览器开 http://127.0.0.1:8765
+```
+
+> 面板与编排写 API 共用 `8765` 端口。**要对外暴露**(LAN 绑定 / 反向代理)**之前**,务必先设 `SENTINEL_DIAG_TOKEN`(`openssl rand -hex 16`),否则写 API 无鉴权——详见 [`## 证据台面板（只读）`](#证据台面板只读) 的安全说明。
+
+> **注意一条**:渠道只校验非空、不校验可达,所以一个**语法合法但 token 写错**的 webhook 能通过启动门禁、容器照常运行,但日报/告警**投递会失败并每分钟重试刷日志**(如飞书 `code=19001 token invalid`)。起来后顺手核对一下渠道凭据。
+
 ## LLM 诊断(可选)
 
 **不锁平台。** WatchMend 走标准 OpenAI `chat/completions` + function calling 协议,
