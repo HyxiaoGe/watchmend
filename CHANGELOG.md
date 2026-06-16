@@ -10,6 +10,15 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-16
+
+### Added
+- Changelog panel: a zero-JS `/changelog` page renders this build's release
+  notes (and full history) offline. The bilingual changelog is baked into the
+  image, so the panel works without network access. The version pill links here.
+- Update marker: when a newer release is available, the browser tab title gets a
+  `●` prefix, so a backgrounded tab surfaces the update on its next refresh.
+
 ## [0.10.1] - 2026-06-16
 
 ### Added
@@ -194,7 +203,8 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 ### Security
 - Secret-leak redaction across docker metadata and environment values.
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.9.0...v0.9.1
