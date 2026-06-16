@@ -50,13 +50,16 @@ async def test_overview_renders(tmp_path, monkeypatch):
     assert resp.status_code == 200
     assert "证据台" in resp.text  # hdr.title
     assert "永不自动执行" in resp.text  # footer.readonly
-    assert "服务一览" in resp.text  # sec.services (renamed from sec.health in Task 7)
-    assert "事件" in resp.text  # sec.events
-    assert "Loki 巡检失败" in resp.text  # rule_label(scan_failed_loki, zh)
+    # 总览只保留概览级:待关注(当前未结告警)+ 汇总链接;明细去子页
+    assert "待关注" in resp.text  # sec.attention
+    assert "Loki 巡检失败" in resp.text  # 未结告警进待关注:rule_label(scan_failed_loki, zh)
+    assert "log_scan" in resp.text  # 压缩行带服务展示名(无映射回退 subject),不留空
+    assert "日报" in resp.text  # roll.report 汇总卡
     store.close()
 
 
-async def test_overview_health_bars_and_states(tmp_path, monkeypatch):
+async def test_services_down_from_daily_aggregate(tmp_path, monkeypatch):
+    # 健康柱条/服务列表的 down 态可由历史 probe_daily 聚合派生(非仅实时样本)。明细在 /services。
     from datetime import datetime, timedelta, timezone
 
     from sentinel.models import ProbeSample
@@ -81,15 +84,15 @@ async def test_overview_health_bars_and_states(tmp_path, monkeypatch):
         ]
     )
     app = _build_app(store, settings)
-    r = await _get(app, "/?win=30")
+    r = await _get(app, "/services?win=30")
     assert r.status_code == 200
-    assert "upbar" in r.text  # 柱条容器
-    assert "down" in r.text  # 含 down 态格子(class 或图例)
+    assert "down" in r.text  # 含 down 态(sdot class)
     assert "api" in r.text  # 服务名出现
     store.close()
 
 
-async def test_overview_health_row_uses_label_with_name_fallback(tmp_path, monkeypatch):
+async def test_services_row_uses_label_with_name_fallback(tmp_path, monkeypatch):
+    # /services 每行展示 services.yaml 的 label;无 label 回退 name。
     from datetime import datetime, timedelta, timezone
 
     from sentinel.models import ProbeSample
@@ -106,10 +109,10 @@ async def test_overview_health_row_uses_label_with_name_fallback(tmp_path, monke
     )
     app = _build_app(store, settings)
     app.state.service_labels = {"audio": "Audio API"}  # 仅 audio 配显示名
-    r = await _get(app, "/?win=30")
+    r = await _get(app, "/services?win=30")
     assert r.status_code == 200
-    assert "<b>Audio API</b>" in r.text  # 有 label → 健康行显示 label
-    assert "<b>auth</b>" in r.text  # 无 label → 回退 name
+    assert ">Audio API</span>" in r.text  # 有 label → 服务行显示 label(sname)
+    assert ">auth</span>" in r.text  # 无 label → 回退 name
     store.close()
 
 
@@ -126,7 +129,8 @@ async def test_overview_en_light_smoke(tmp_path, monkeypatch):
     store.close()
 
 
-async def test_overview_event_ai_diagnosis_inline(tmp_path, monkeypatch):
+async def test_events_ai_diagnosis_inline(tmp_path, monkeypatch):
+    # 事件流就地展示 AI 诊断摘要,已恢复事件仍可点进详情。明细页是 /events。
     from datetime import datetime, timedelta, timezone
 
     settings = _settings(monkeypatch, LLM_BASE_URL="http://llm/v1", LLM_MODEL="m")
@@ -152,10 +156,9 @@ async def test_overview_event_ai_diagnosis_inline(tmp_path, monkeypatch):
     )
     store.resolve_event(eid, resolved_ts=recent + 600)  # 已恢复也必须可点
     app = _build_app(store, settings)
-    r = await _get(app, "/")
+    r = await _get(app, "/events")
     assert "OOM 根因摘要" in r.text  # AI summary 就地可见
     assert f"/event/{eid}" in r.text  # 已恢复事件有详情链接(可点)
-    assert "AI 诊断" in r.text  # ev.ai chip
     store.close()
 
 
@@ -409,19 +412,19 @@ async def test_xss_service_and_detail_and_tooloutput_escaped(tmp_path, monkeypat
         ),
     )
     app = _build_app(store, settings)
-    r_index = await _get(app, "/")
-    r_detail = await _get(app, f"/event/{eid}")
-    for body in (r_index.text, r_detail.text):
-        assert "<script>svc</script>" not in body
+    r_services = await _get(app, "/services")  # 服务名注入点
+    r_detail = await _get(app, f"/event/{eid}")  # subject/detail/summary/tool output 注入点
+    assert "<script>svc</script>" not in r_services.text
+    assert "&lt;script&gt;" in r_services.text  # 服务名实体化
+    for body in (r_detail.text,):
         assert "<script>sub</script>" not in body
         assert "<script>out</script>" not in body
         assert "&lt;script&gt;" in body  # 实体化痕迹存在
-    assert "onerror=alert(1)" not in r_index.text  # index 不渲染 detail 文本
     assert "&lt;img" in r_detail.text  # detail 文本被转义渲染
     store.close()
 
 
-async def test_pagination_links_and_clamp(tmp_path, monkeypatch):
+async def test_events_pagination_links_and_clamp(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
     for i in range(20):  # > page_size(默认 8)→ 多页
@@ -437,41 +440,19 @@ async def test_pagination_links_and_clamp(tmp_path, monkeypatch):
             cooldown_until=0,
         )
     app = _build_app(store, settings)
-    r1 = await _get(app, "/?ev_page=1")
+    r1 = await _get(app, "/events?ev_page=1")
     assert "ev_page=2" in r1.text  # 有下一页链接
-    r_over = await _get(app, "/?ev_page=999")
+    r_over = await _get(app, "/events?ev_page=999")
     assert r_over.status_code == 200  # 越界钳到末页,不崩
     store.close()
 
 
-async def test_services_cap_expand_collapse(tmp_path, monkeypatch):
-    from datetime import datetime, timedelta, timezone
-
-    from sentinel.models import ProbeSample
-
-    settings = _settings(monkeypatch, SENTINEL_PANEL_SERVICES_CAP="2")
-    store = Store(str(tmp_path / "s.db"))
-    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
-    recent = int(datetime.now(tz).timestamp()) - 30
-    store.add_probe_samples(
-        [
-            ProbeSample(ts=recent, service=f"svc{i}", ok=True, status_code=200, latency_ms=1.0)
-            for i in range(5)  # 5 > cap 2
-        ]
-    )
-    app = _build_app(store, settings)
-    r = await _get(app, "/")
-    assert "svc_all=1" in r.text  # 折叠态有「展开剩余」链接
-    r_all = await _get(app, "/?svc_all=1")
-    assert "svc4" in r_all.text  # 展开后全列
-    store.close()
-
-
-async def test_overview_en_no_chinese_footer_leak(tmp_path, monkeypatch):
+async def test_hygiene_en_no_chinese_docker_leak(tmp_path, monkeypatch):
+    # docker 只读标记随姿态移到 /hygiene;en 下不泄漏中文。
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
     app = _build_app(store, settings)
-    r = await _get(app, "/?lang=en")
+    r = await _get(app, "/hygiene?lang=en")
     assert "(read-only)" in r.text  # footer.docker_readonly en
     assert "(只读)" not in r.text  # 不再泄漏中文
     store.close()
@@ -528,10 +509,10 @@ async def test_overview_links_carry_prefs(tmp_path, monkeypatch):
     # 用 win=90(非默认 30)：链接里出现 90 只能来自"读取了 query"，而非默认回退，
     # 否则该断言无法区分"honored query"与"fell back to default"。
     r = await _get(app, "/?lang=en&theme=light&win=90")
-    # eurl 顺序 lang,theme,win；href 内 & 被 jinja 转义成 &amp;
+    # 待关注行 → 事件详情 eurl 顺序 lang,theme,win；href 内 & 被 jinja 转义成 &amp;
     assert f"/event/{eid}?lang=en&amp;theme=light&amp;win=90" in r.text
-    # 「最新」链接 qurl(ev_page=1) 沿用 lang/theme/win 再附 ev_page
-    assert "?lang=en&amp;theme=light&amp;win=90&amp;ev_page=1" in r.text
+    # 汇总卡的子页链接 tab_url 也沿用 lang/theme/win
+    assert "/services?lang=en&amp;theme=light&amp;win=90" in r.text
     store.close()
 
 
@@ -556,67 +537,9 @@ async def test_event_detail_back_url_carries_prefs(tmp_path, monkeypatch):
     store.close()
 
 
-async def test_services_cap_default_is_six(tmp_path, monkeypatch):
-    # 不设 SENTINEL_PANEL_SERVICES_CAP 时默认仅展示 Top-6，第 7 个走「展开剩余」（issue #11）。
-    from datetime import datetime, timedelta, timezone
-
-    from sentinel.models import ProbeSample
-
-    settings = _settings(monkeypatch)  # 用默认 cap，不覆盖
-    store = Store(str(tmp_path / "s.db"))
-    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
-    recent = int(datetime.now(tz).timestamp()) - 30
-    store.add_probe_samples(
-        [
-            ProbeSample(ts=recent, service=f"svc{i}", ok=True, status_code=200, latency_ms=1.0)
-            for i in range(7)  # 7 > 默认 cap 6
-        ]
-    )
-    app = _build_app(store, settings)
-    r = await _get(app, "/")
-    assert "svc_all=1" in r.text  # 折叠态有展开链接
-    assert "展开剩余 1" in r.text  # n = 7 - 6，证明 cap 恰为 6
-    assert "svc6" not in r.text  # 第 7 个(字母序末位)被折叠
-    r_all = await _get(app, "/?svc_all=1")
-    assert "svc6" in r_all.text  # 展开后全列
-    store.close()
-
-
-async def test_problem_service_survives_cap(tmp_path, monkeypatch):
-    # D2 端到端守护：worst-first 排序 + cap 截断后,问题服务必须出现在首屏,
-    # 而非被字母序挤出。防"先截断后排序/模板内排序"这类回归(issue #11 A6)。
-    from datetime import datetime, timedelta, timezone
-
-    from sentinel.models import ProbeSample
-
-    settings = _settings(monkeypatch)  # 默认 cap=6
-    store = Store(str(tmp_path / "s.db"))
-    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
-    recent = int(datetime.now(tz).timestamp()) - 30
-    samples = [
-        ProbeSample(ts=recent, service=f"ok{i}", ok=True, status_code=200, latency_ms=1.0)
-        for i in range(7)  # 7 个全绿服务
-    ]
-    # 一个 down 服务,服务名字母序排在最后(zdown):若按字母序它会被 cap 挤出,
-    # 但按现态最坏优先必须排到首位、留在首屏。
-    samples += [
-        ProbeSample(ts=recent, service="zdown", ok=True, status_code=200, latency_ms=1.0),
-        ProbeSample(ts=recent - 1, service="zdown", ok=False, status_code=500, latency_ms=None),
-        ProbeSample(ts=recent - 2, service="zdown", ok=False, status_code=500, latency_ms=None),
-    ]  # 1 ok / 3 = 33% < 50% → down
-    store.add_probe_samples(samples)
-    app = _build_app(store, settings)
-    r = await _get(app, "/")
-    assert "zdown" in r.text  # 问题服务穿过 cap 留在首屏
-    assert "ok6" not in r.text  # 字母序末位的健康服务被折叠掉
-    r_all = await _get(app, "/?svc_all=1")
-    assert "ok6" in r_all.text  # 展开后才出现
-    store.close()
-
-
 async def test_diag_lang_hint_shown_when_ui_lang_differs(tmp_path, monkeypatch):
-    # UI 语言 ≠ 诊断生成语言(默认 zh) 时,总览内联与详情页都提示"原始诊断不回溯翻译";
-    # 语言一致则不提示(issue #11 claim 5)。
+    # UI 语言 ≠ 诊断生成语言(默认 zh) 时,事件流与详情页都提示"原始诊断不回溯翻译";
+    # 语言一致则不提示(issue #11 claim 5)。诊断内联已移到 /events。
     from datetime import datetime, timedelta, timezone
 
     settings = _settings(monkeypatch, LLM_BASE_URL="http://llm/v1", LLM_MODEL="m")
@@ -641,10 +564,10 @@ async def test_diag_lang_hint_shown_when_ui_lang_differs(tmp_path, monkeypatch):
         tools_json=None,
     )
     app = _build_app(store, settings)
-    # 总览:en UI vs zh 诊断 → 显示英文提示;zh UI 一致 → 不显示
-    r_en = await _get(app, "/?lang=en")
+    # 事件流:en UI vs zh 诊断 → 显示英文提示;zh UI 一致 → 不显示
+    r_en = await _get(app, "/events?lang=en")
     assert "back-translated" in r_en.text
-    r_zh = await _get(app, "/?lang=zh")
+    r_zh = await _get(app, "/events?lang=zh")
     assert "不回溯翻译" not in r_zh.text
     # 详情页同理
     d_en = await _get(app, f"/event/{eid}?lang=en")
@@ -655,19 +578,19 @@ async def test_diag_lang_hint_shown_when_ui_lang_differs(tmp_path, monkeypatch):
 
 
 async def test_default_window_is_30(tmp_path, monkeypatch):
-    # 首屏无 query/cookie 时默认窗口降噪为 30d，而非历史上限 90d（issue #11 claim 1）。
+    # 无 query/cookie 时默认窗口降噪为 30d，而非历史上限 90d（issue #11 claim 1）。
+    # 窗口数现由 /services 的趋势列标题 svc.col_trend(days=) 承载。
     from datetime import datetime, timedelta, timezone
 
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
     tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
     yest = (datetime.now(tz).date() - timedelta(days=1)).isoformat()
-    # 出一个服务才会渲染逐日柱条的窗口轴
     store.upsert_probe_daily("api", yest, total=10, ok_count=10, p50=1.0, p95=2.0)
     app = _build_app(store, settings)
-    r = await _get(app, "/")
-    assert "30 天前" in r.text  # 逐日柱条窗口轴 axis.window(days=30)
-    assert "90 天前" not in r.text  # 未回落到历史上限 90
+    r = await _get(app, "/services")
+    assert "30 天 p95 趋势" in r.text  # 默认窗口 = 30
+    assert "90 天 p95 趋势" not in r.text  # 未回落到历史上限 90
     store.close()
 
 
@@ -698,24 +621,25 @@ async def test_hero_label_is_today_not_window(tmp_path, monkeypatch):
     app = _build_app(store, settings)
     r = await _get(app, "/?win=30")
     assert r.status_code == 200
-    assert "今日可用率" in r.text  # 标签=今日口径
+    assert "今日可用率" in r.text  # hero 标签=今日口径
     assert "30 天可用率" not in r.text  # 不再冒充窗口可用率
-    assert "30 天前" in r.text  # 窗口故事仍在(逐日柱条窗口轴)
     store.close()
 
 
-async def test_overview_today_nodata_tooltip(tmp_path, monkeypatch):
+async def test_services_today_nodata_state(tmp_path, monkeypatch):
+    # 有历史日数据使服务出现,但今天无样本 → /services 现态 nodata、今日可用率显示「—」。
     from datetime import datetime, timedelta, timezone
 
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
     tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
     yesterday = (datetime.now(tz).date() - timedelta(days=1)).isoformat()
-    # 有历史日数据使服务出现,但今天无样本 → 今日格 nodata
     store.upsert_probe_daily("api", yesterday, total=10, ok_count=10, p50=1.0, p95=2.0)
     app = _build_app(store, settings)
-    r = await _get(app, "/")
-    assert "暂无样本" in r.text  # tip.today_nodata zh,今日无数据专属提示
+    r = await _get(app, "/services")
+    assert "api" in r.text  # 服务仍出现
+    assert "无数据" in r.text  # st.nodata:今日态 nodata(sdot title)
+    assert "—" in r.text  # 今日可用率无值显示破折号
     store.close()
 
 
@@ -826,10 +750,9 @@ async def test_overview_renders_hero_and_service_sparkline(tmp_path, monkeypatch
     assert 'class="hero"' in resp.text  # 英雄区卡
     assert "ring-center" in resp.text  # 状态环中心数字
     assert "hero-trend" in resp.text  # 整体趋势线
-    assert 'class="spark"' in resp.text  # 服务行迷你趋势线
-    assert "服务一览" in resp.text  # sec.services
-    # HERO 下方既有区块未丢(Phase 1 保留)
-    assert "事件" in resp.text  # sec.events
+    # 每服务迷你趋势线现由 /services 行承载
+    r_svc = await _get(app, "/services")
+    assert 'class="sspark"' in r_svc.text  # 服务行迷你趋势线
     store.close()
 
 
