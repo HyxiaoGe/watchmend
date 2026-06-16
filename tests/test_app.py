@@ -59,8 +59,9 @@ async def test_build_jobs_assembles_five_jobs(tmp_path, monkeypatch):
         "daily_report",
         "metrics_scan",
         "log_scan",
+        "update_check",
     ]
-    assert [interval for _, interval, _ in jobs] == [60, 300, 60, 900, 900]
+    assert [interval for _, interval, _ in jobs] == [60, 300, 60, 900, 900, 21600]
     await client.aclose()
     store.close()
 
@@ -82,7 +83,7 @@ async def test_build_jobs_minimal_mode_vendor_only(tmp_path, monkeypatch):
     client = httpx.AsyncClient()
     store = Store(settings.sentinel_db_path)
     jobs = build_jobs(settings, client, store)
-    assert [name for name, _, _ in jobs] == ["statuspage", "daily_report"]
+    assert [name for name, _, _ in jobs] == ["statuspage", "daily_report", "update_check"]
     await client.aclose()
     store.close()
 
@@ -113,6 +114,7 @@ async def test_build_jobs_partial_datasources(tmp_path, monkeypatch):
         "internal_probe",
         "daily_report",
         "metrics_scan",
+        "update_check",
     ]
     await client.aclose()
     store.close()
@@ -359,7 +361,12 @@ async def test_build_jobs_diagnosis_job_when_llm_configured(tmp_path, monkeypatc
     client = httpx.AsyncClient()
     store = Store(str(tmp_path / "s.db"))
     jobs = build_jobs(Settings(_env_file=None), client, store)
-    assert [name for name, _, _ in jobs] == ["statuspage", "daily_report", "diagnosis"]
+    assert [name for name, _, _ in jobs] == [
+        "statuspage",
+        "daily_report",
+        "diagnosis",
+        "update_check",
+    ]
     await client.aclose()
     store.close()
 
@@ -665,6 +672,7 @@ async def test_build_jobs_no_docker_scan_when_docker_none(tmp_path, monkeypatch)
     assert [n for n, _, _ in build_jobs(settings, client, store, docker=None)] == [
         "statuspage",
         "daily_report",
+        "update_check",
     ]
     # 旧三参调用(无 docker)同样不装 docker_scan(docker 默认 None)
     assert "docker_scan" not in [n for n, _, _ in build_jobs(settings, client, store)]
@@ -978,7 +986,7 @@ async def test_build_jobs_telegram_only_starts(tmp_path, monkeypatch):
     client = httpx.AsyncClient()
     store = Store(str(tmp_path / "s.db"))
     jobs = build_jobs(Settings(_env_file=None), client, store)
-    assert [n for n, _, _ in jobs] == ["statuspage", "daily_report"]
+    assert [n for n, _, _ in jobs] == ["statuspage", "daily_report", "update_check"]
     await client.aclose()
     store.close()
 
@@ -1477,5 +1485,97 @@ async def test_docker_tick_crashloop_fires_event_over_two_ticks(tmp_path, monkey
         if e.rule == "container_crashloop"
     ]
     assert events == [("container_crashloop", "resolved", "pending")]
+    await client.aclose()
+    store.close()
+
+
+async def test_build_jobs_update_check_registered_by_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    from sentinel.app import build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    names = [n for n, _, _ in build_jobs(Settings(_env_file=None), client, store)]
+    assert names == ["statuspage", "daily_report", "update_check"]
+    await client.aclose()
+    store.close()
+
+
+async def test_build_jobs_update_check_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("SENTINEL_UPDATE_CHECK_ENABLED", "false")
+    from sentinel.app import build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    names = [n for n, _, _ in build_jobs(Settings(_env_file=None), client, store)]
+    assert names == ["statuspage", "daily_report"]
+    await client.aclose()
+    store.close()
+
+
+@respx.mock
+async def test_update_tick_writes_meta_on_newer(tmp_path, monkeypatch):
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("SENTINEL_UPDATE_CHECK_URL", "https://api.test/repos/x/y/releases/latest")
+    respx.get("https://api.test/repos/x/y/releases/latest").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "tag_name": "v999.0.0",
+                "html_url": "https://github.com/x/y/releases/v999.0.0",
+            },
+        )
+    )
+    from sentinel.app import build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    jobs = {n: t for n, _, t in build_jobs(Settings(_env_file=None), client, store)}
+    await jobs["update_check"]()
+    assert store.get_meta("latest_known_version") == "v999.0.0"
+    assert store.get_meta("latest_release_url") == "https://github.com/x/y/releases/v999.0.0"
+    await client.aclose()
+    store.close()
+
+
+@respx.mock
+async def test_update_tick_no_write_when_not_newer(tmp_path, monkeypatch):
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("SENTINEL_UPDATE_CHECK_URL", "https://api.test/repos/x/y/releases/latest")
+    respx.get("https://api.test/repos/x/y/releases/latest").mock(
+        return_value=httpx.Response(200, json={"tag_name": "v0.0.1", "html_url": "https://x"})
+    )
+    from sentinel.app import build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    jobs = {n: t for n, _, t in build_jobs(Settings(_env_file=None), client, store)}
+    await jobs["update_check"]()
+    assert store.get_meta("latest_known_version") is None
     await client.aclose()
     store.close()

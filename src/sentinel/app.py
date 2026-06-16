@@ -13,7 +13,7 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI
 
-from sentinel import discover
+from sentinel import __version__, discover
 from sentinel.api import register_routes
 from sentinel.config import Settings
 from sentinel.docker_client import DockerClient
@@ -50,6 +50,7 @@ from sentinel.scan_hygiene import run_hygiene
 from sentinel.scan_logs import run_log_scan
 from sentinel.scan_metrics import run_metrics_scan
 from sentinel.store import Store
+from sentinel.update_check import fetch_latest, is_newer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("sentinel")
@@ -487,6 +488,18 @@ def build_jobs(
             except Exception:
                 logger.exception("daily AI summary failed")
 
+    async def update_tick() -> None:
+        # 后台拉 GitHub releases/latest,有新版才写 meta(零新表);render 路径只读 meta 不外呼。
+        result = await fetch_latest(
+            client, settings.sentinel_update_check_url, user_agent=f"watchmend/{__version__}"
+        )
+        if result is None:
+            return
+        tag, html_url = result
+        if is_newer(tag, __version__):
+            store.set_meta("latest_known_version", tag)
+            store.set_meta("latest_release_url", html_url)
+
     # 分层装配:services 文件缺失→无内部探针;prometheus/loki URL 留空→对应扫描关闭。
     # 最小模式(只填飞书 webhook)也能干净起来,不产生数据源故障噪音。
     jobs: list[tuple[str, float, Tick]] = [
@@ -503,6 +516,9 @@ def build_jobs(
         jobs.append(("docker_scan", settings.sentinel_docker_scan_interval, docker_tick))
     if config.enabled:
         jobs.append(("diagnosis", settings.sentinel_diag_interval, diag_tick))
+    # 更新检查默认开;显式关或 URL 置空则不注册(照 diagnosis 条件注册范式)
+    if settings.sentinel_update_check_enabled and settings.sentinel_update_check_url:
+        jobs.append(("update_check", settings.sentinel_update_check_interval, update_tick))
     return jobs
 
 

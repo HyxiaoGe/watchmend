@@ -102,6 +102,14 @@ class Settings(BaseSettings):
     sentinel_llm_lang: str = "zh"  # 此后新生成的诊断语言（zh|en）；历史不回溯翻译
     sentinel_event_feed_days: int = 30  # 事件流纳入"近 N 天"的窗口（open 不受限）
 
+    # 更新检查（默认开，Dozzle 式便捷）：后台周期查 GitHub releases，有新版面板提示；
+    # 隐私/airgap 设 SENTINEL_UPDATE_CHECK_ENABLED=false 或 URL 置空即关。仅公开 GET、无遥测。
+    sentinel_update_check_enabled: bool = True
+    sentinel_update_check_url: str = (
+        "https://api.github.com/repos/HyxiaoGe/watchmend/releases/latest"
+    )
+    sentinel_update_check_interval: int = Field(default=21600, ge=60)  # 6h
+
     @property
     def providers_list(self) -> list[str]:
         return [p.strip() for p in self.sentinel_providers.split(",") if p.strip()]
