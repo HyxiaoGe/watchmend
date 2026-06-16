@@ -574,8 +574,13 @@ async def build_overview(
     window_days: int = 90,
     service_labels: dict[str, str] | None = None,
 ) -> dict:
-    """总览 view-model(仪表盘):HERO 概览 + 待关注(当前未结告警事件,压缩一行)+ 汇总链接。
-    明细(每服务柱条/完整事件流/宿主姿态)交给 /services、/events、/hygiene 子页,本页零重复。
+    """总览 view-model(SLO 看板)。
+    HERO:去重状态环(环=今日 4 态分布、中心=今日可用率带阈值色)+ 环旁 KPI
+    (7/30/90d 均值+Δ、开放按严重度、24h 净流、MTTR)。
+    再下:服务表(最差优先、今日/7d/30d 可用率,截断 cap、其余 → /services)、
+    待关注(未结告警,非空才渲)、汇总(体检计数/日报新鲜度)。
+    明细(事件流/三态体检卡/宿主姿态)交给子页,本页零重复。
+    指标全为 view 层纯函数聚合现有 store 读(additive,无新表/列;新增读仅 resolved/events 窗口查询)。
     llm_config/diag_registered 仅供 header 的 LLM pill 姿态;完整姿态见 /hygiene。
     service_labels 为 name→显示名映射(services.yaml 的 label),缺省 None → 面板回退 name。"""
     tz = (
@@ -603,23 +608,36 @@ async def build_overview(
         today_samples=today_samples,
         service_labels=service_labels,
     )
-    latest_events = store.get_events_since(0, limit=1)  # 全表最新一条,事件稀疏 → 廉价
-    latest_event_ts = latest_events[0].ts if latest_events else None
+    # 窗口均值标量(7/30/90d)+ Δ vs 紧邻上一窗口,源自与逐日柱条同口径的整体趋势序列。
+    series = _overall_trend_series(health)
+
+    def _win(days: int) -> dict:
+        delta = _window_delta(series, days)
+        return {"mean": _window_mean(series, days), "delta": delta, "dir": _delta_dir(delta)}
+
+    uptime_pct = overall_uptime_pct(health)
+    # 事件态势:MTTR 取近 30d 已恢复(resolved_ts>ts 过滤排除 point 事件);
+    # 24h 净流 = 近 24h 新开 vs 近 24h 已恢复的「真实事件」(对称口径)。事件稀疏,读廉价。
+    resolved_30d = store.get_resolved_since(now_ts - 30 * _DAY_SECONDS, limit=1000)
+    opened_24h = store.get_events_since(now_ts - _DAY_SECONDS)
+    resolved_24h = [
+        e for e in resolved_30d if e.resolved_ts and e.resolved_ts >= now_ts - _DAY_SECONDS
+    ]
     hero = {
-        "uptime_pct": overall_uptime_pct(health),
+        "uptime_pct": uptime_pct,
+        "uptime_grade": uptime_grade(
+            uptime_pct,
+            green=settings.sentinel_panel_green_uptime_pct,
+            partial=settings.sentinel_panel_partial_uptime_pct,
+        ),
         "ring": overall_ring(health),
-        "days_clean": _days_clean(latest_event_ts, now_ts),
-        "trend": _svg_line(_overall_trend_series(health), w=300.0, h=64.0),
+        "services": _service_state_counts(health),
+        "windows": {"d7": _win(7), "d30": _win(30), "d90": _win(90)},
+        "open": _open_by_severity(open_events),
+        "flow_24h": _net_flow(opened_24h, resolved_24h),
+        "mttr": _mttr(resolved_30d),
     }
-
-    # 服务汇总计数:当前状态 = 最后一日状态(与 overall_ring 同口径)。
-    def _row_state(r: dict) -> str:
-        return r["days"][-1]["state"] if r["days"] else "nodata"
-
-    ok_n = sum(1 for r in health if _row_state(r) == "ok")
-    problem_n = sum(1 for r in health if _row_state(r) in ("down", "partial", "degraded"))
-    nodata_n = sum(1 for r in health if _row_state(r) == "nodata")
-    # 待关注:当前未结的「告警」事件(非 hygiene),压缩成一行 → /event/{id}。
+    # 待关注:当前未结的「告警」事件(非 hygiene),压缩成一行 → /event/{id}。模板仅在非空时渲染。
     # hygiene 类未结事件由汇总栏的「体检」计数承载,跳 /hygiene 看明细。
     labels = service_labels or {}
     needs_attention = []
@@ -636,16 +654,11 @@ async def build_overview(
         # header 的 LLM pill 仅读 posture.llm;完整姿态(渠道/层/docker/容器)见 /hygiene。
         "posture": {"llm": llm},
         "hero": hero,
+        "roster": _top_roster(health, settings.sentinel_panel_overview_roster_cap),
         "needs_attention": needs_attention,
         "rollup": {
-            "services": {
-                "total": len(health),
-                "ok": ok_n,
-                "problem": problem_n,
-                "nodata": nodata_n,
-            },
-            "hygiene_alert_count": sum(1 for e in open_events if e.rule in HYGIENE_RULES),
-            "last_report_date": store.get_meta("daily_report_last_date"),
+            "hygiene": _hygiene_by_type(open_events),
+            "report": _report_freshness(store.get_meta("daily_report_last_date"), today_local),
         },
     }
 

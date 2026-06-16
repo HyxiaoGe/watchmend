@@ -138,7 +138,7 @@ async def test_build_overview_anomalies_and_posture(tmp_path, monkeypatch):
         "model": "deepseek-chat",
     }
     # 两起都是告警(非 hygiene)→ 汇总栏 hygiene 计数为 0
-    assert ov["rollup"]["hygiene_alert_count"] == 0
+    assert ov["rollup"]["hygiene"]["total"] == 0
     store.close()
 
 
@@ -188,7 +188,8 @@ async def test_build_overview_routes_hygiene_and_recoveries_off_page(tmp_path, m
     assert [a["rule"] for a in ov["needs_attention"]] == ["service_down"]
     # 压缩行必须带展示名(label),否则首页只见规则不见服务;无映射回退 subject
     assert ov["needs_attention"][0]["label"] == "API 网关"
-    assert ov["rollup"]["hygiene_alert_count"] == 1
+    assert ov["rollup"]["hygiene"]["total"] == 1
+    assert ov["rollup"]["hygiene"]["backup"] == 1  # backup_stale 落 backup 桶
     # 已恢复的 24h 计数仍由 /hygiene 承载
     hyg = await view.build_hygiene(store, settings, now=NOW)
     assert hyg["posture"]["resolved_24h"] == 1
@@ -258,9 +259,18 @@ async def test_build_overview_empty_store_degrades(tmp_path, monkeypatch):
     ov = await view.build_overview(store, settings, now=NOW)
     # 空库 → 待关注为空、汇总全零、header LLM pill 关闭
     assert ov["needs_attention"] == []
-    assert ov["rollup"]["hygiene_alert_count"] == 0
-    assert ov["rollup"]["services"] == {"total": 0, "ok": 0, "problem": 0, "nodata": 0}
-    assert ov["rollup"]["last_report_date"] is None
+    assert ov["rollup"]["hygiene"] == {"backup": 0, "disk": 0, "cert": 0, "total": 0}
+    assert ov["hero"]["services"] == {
+        "total": 0,
+        "ok": 0,
+        "degraded": 0,
+        "partial": 0,
+        "down": 0,
+        "nodata": 0,
+    }
+    assert ov["roster"] == {"rows": [], "overflow": 0}
+    assert ov["rollup"]["report"] == {"date": None, "freshness": "never", "days": None}
+    assert ov["hero"]["uptime_grade"] == "nodata"  # 无数据 → 阈值色 nodata
     assert ov["posture"]["llm"] == {"enabled": False, "pending_restart": False, "model": None}
     assert ov["now_str"] == "2026-06-14 14:32"
     assert ov["refresh_seconds"] == 30
@@ -441,25 +451,43 @@ def test_event_detail_pending_restart_marks_open(tmp_path, monkeypatch):
     store.close()
 
 
-async def test_build_overview_has_slim_dashboard_shape(tmp_path, monkeypatch):
+async def test_build_overview_has_slo_board_shape(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
     ov = await view.build_overview(store, settings, now=NOW)
-    # 仪表盘只保留概览键:HERO + 待关注 + 汇总;明细键(health/events/host_self)已移交子页。
+    # SLO 看板键集:HERO + 服务表 + 待关注 + 汇总;明细键(health/events/host_self)已移交子页。
     assert set(ov) == {
         "now_str",
         "refresh_seconds",
         "window_days",
         "posture",
         "hero",
+        "roster",
         "needs_attention",
         "rollup",
     }
     assert ov["window_days"] == 90  # 默认窗口
     assert set(ov["posture"]) == {"llm"}  # header pill 只读 llm
-    assert set(ov["hero"]) == {"uptime_pct", "ring", "days_clean", "trend"}
-    assert set(ov["rollup"]) == {"services", "hygiene_alert_count", "last_report_date"}
-    assert set(ov["rollup"]["services"]) == {"total", "ok", "problem", "nodata"}
+    # HERO 去重:今日可用率只一处(ring 中心),无 days_clean/trend
+    assert set(ov["hero"]) == {
+        "uptime_pct",
+        "uptime_grade",
+        "ring",
+        "services",
+        "windows",
+        "open",
+        "flow_24h",
+        "mttr",
+    }
+    assert "days_clean" not in ov["hero"] and "trend" not in ov["hero"]
+    assert set(ov["hero"]["windows"]) == {"d7", "d30", "d90"}
+    assert set(ov["hero"]["windows"]["d7"]) == {"mean", "delta", "dir"}
+    assert set(ov["hero"]["open"]) == {"total", "critical", "warning"}
+    assert set(ov["hero"]["flow_24h"]) == {"opened", "resolved"}
+    assert set(ov["hero"]["mttr"]) == {"mean_s", "worst_s", "n"}
+    assert set(ov["roster"]) == {"rows", "overflow"}
+    assert set(ov["rollup"]) == {"hygiene", "report"}
+    assert set(ov["rollup"]["hygiene"]) == {"backup", "disk", "cert", "total"}
     store.close()
 
 
@@ -920,7 +948,8 @@ async def test_build_overview_exposes_hero_and_mini(tmp_path, monkeypatch):
             ProbeSample(ts=NOW_TS - 40, service="db", ok=False, status_code=500, latency_ms=None),
         ]
     )
-    # 全表最新事件 = 2 天前(已恢复,open_count==0)→ days_clean=2
+    # service_down 于 2 天前发生、10 分钟后恢复 → 落入 30d MTTR(resolved_ts>ts,real incident);
+    # 但在 24h 净流窗口外(opened/resolved 均为 0)。
     rid = store.insert_event(
         ts=NOW_TS - 2 * 86400,
         rule="service_down",
@@ -936,12 +965,15 @@ async def test_build_overview_exposes_hero_and_mini(tmp_path, monkeypatch):
     overview = await view.build_overview(store, settings, now=NOW)
 
     hero = overview["hero"]
-    # HERO 可用率与 /services 同源健康柱条同口径
+    # HERO 可用率与 /services 同源健康柱条同口径;db 半数失败 → 整体 (100+50)/2=75 → 阈值色 bad
     svcs = view.build_services_list(store, settings, now=NOW)["services"]
     assert hero["uptime_pct"] == view.overall_uptime_pct(svcs)
+    assert hero["uptime_grade"] == "bad"
     assert set(hero["ring"]) == {"ok", "degraded", "partial", "down"}
-    assert hero["days_clean"] == 2
-    assert set(hero["trend"]) == {"line_d", "area_d"}
+    # MTTR:30d 内 1 起真实恢复,时长 600s;point 事件无 → mean/worst=600
+    assert hero["mttr"] == {"mean_s": 600, "worst_s": 600, "n": 1}
+    # 24h 净流:事件在 2 天前 → 窗口外,新开/恢复皆 0
+    assert hero["flow_24h"] == {"opened": 0, "resolved": 0}
     # 每服务 sparkline 现由 /services 行承载
     assert all(isinstance(r["p95_pts"], str) for r in svcs)
     store.close()
