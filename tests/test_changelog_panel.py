@@ -187,3 +187,35 @@ async def test_changelog_respects_lang(tmp_path, monkeypatch):
     assert resp.status_code == 200
     assert "Changelog" in resp.text  # changelog.title(en)
     store.close()
+
+
+async def test_version_pill_links_to_changelog(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/")  # 任一含导航壳的页
+    assert resp.status_code == 200
+    assert 'href="/changelog' in resp.text  # 版本胶囊入口(带 querystring)
+    store.close()
+
+
+async def test_title_marker_when_update_available(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.set_meta("latest_known_version", "v999.0.0")
+    store.set_meta(
+        "latest_release_url", "https://github.com/HyxiaoGe/watchmend/releases/tag/v999.0.0"
+    )
+    app = _build_app(store, settings)
+    resp = await _get(app, "/")
+    assert "<title>● " in resp.text  # 后台 tab 标签标记
+    store.close()
+
+
+async def test_no_title_marker_when_current(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))  # 无 latest_known_version → update_available False
+    app = _build_app(store, settings)
+    resp = await _get(app, "/")
+    assert "<title>● " not in resp.text
+    store.close()
