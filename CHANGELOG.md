@@ -10,6 +10,8 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-06-16
+
 ### Added
 - Versioning policy, bilingual changelog, and release-process docs:
   `CHANGELOG.md` / `CHANGELOG.zh-CN.md` (backfilled 0.1.0–0.10.0) and `RELEASING.md`.
@@ -192,7 +194,8 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 ### Security
 - Secret-leak redaction across docker metadata and environment values.
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.8.0...v0.9.0

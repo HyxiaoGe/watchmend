@@ -10,6 +10,8 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-06-16
+
 ### 新增
 - 版本策略、双语变更日志与发版流程文档:
   `CHANGELOG.md` / `CHANGELOG.zh-CN.md`(回填 0.1.0–0.10.0)与 `RELEASING.md`。
@@ -159,7 +161,8 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 ### 安全
 - docker 元数据与环境值的密钥泄漏遮蔽。
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.8.0...v0.9.0
