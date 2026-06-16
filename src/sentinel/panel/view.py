@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sentinel.config import Settings
 from sentinel.findings import HYGIENE_RULES, EventRecord
@@ -213,6 +213,47 @@ def _row_state(r: dict) -> str:
     """健康行现态 = 最后一日(今日)格状态;空 days → nodata。与 overall_ring 同口径。"""
     days = r.get("days") or []
     return days[-1]["state"] if days else "nodata"
+
+
+_HYGIENE_BUCKET = {"backup_stale": "backup", "disk_forecast": "disk", "cert_expiry": "cert"}
+
+
+def _hygiene_by_type(open_events: list) -> dict:
+    """未结 hygiene 事件按类型(备份/磁盘/证书)计数 + 总数。三态卡明细仍留 /hygiene,本处仅计数。"""
+    counts = {"backup": 0, "disk": 0, "cert": 0}
+    for e in open_events:
+        bucket = _HYGIENE_BUCKET.get(e.rule)
+        if bucket:
+            counts[bucket] += 1
+    return {**counts, "total": sum(counts.values())}
+
+
+def _report_freshness(date_str: str | None, today: date) -> dict:
+    """日报新鲜度:把裸日期变判断。空/None → never;==今日 → today(0);否则 stale(N 天前)。"""
+    if not date_str:
+        return {"date": None, "freshness": "never", "days": None}
+    try:
+        d = date.fromisoformat(date_str)
+    except ValueError:
+        return {"date": date_str, "freshness": "never", "days": None}
+    delta = (today - d).days
+    return {"date": date_str, "freshness": "today" if delta == 0 else "stale", "days": delta}
+
+
+def _top_roster(health: list[dict], cap: int) -> dict:
+    """服务表:health 已 worst-first;取前 cap 行(每行展示名/三窗口可用率/p95/现态),
+    overflow=剩余条数(模板渲「其余 N 项 → /services」)。"""
+    rows = [
+        {
+            "name": r["service"],
+            "label": r["label"],
+            "state": _row_state(r),
+            "p95_ms": r.get("p95_ms"),
+            **_service_windows(r),
+        }
+        for r in health[:cap]
+    ]
+    return {"rows": rows, "overflow": max(0, len(health) - cap)}
 
 
 def _open_by_severity(open_events: list) -> dict:

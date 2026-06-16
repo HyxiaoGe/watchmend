@@ -846,6 +846,66 @@ def test_fmt_duration():
     assert _fmt_duration(180000) == "2d"
 
 
+def test_hygiene_by_type():
+    from types import SimpleNamespace
+
+    from sentinel.panel.view import _hygiene_by_type
+
+    events = [
+        SimpleNamespace(rule="backup_stale"),
+        SimpleNamespace(rule="disk_forecast"),
+        SimpleNamespace(rule="cert_expiry"),
+        SimpleNamespace(rule="cert_expiry"),
+        SimpleNamespace(rule="service_down"),  # 非 hygiene → 不计
+    ]
+    assert _hygiene_by_type(events) == {"backup": 1, "disk": 1, "cert": 2, "total": 4}
+    assert _hygiene_by_type([]) == {"backup": 0, "disk": 0, "cert": 0, "total": 0}
+
+
+def test_report_freshness():
+    from datetime import date
+
+    from sentinel.panel.view import _report_freshness
+
+    today = date(2026, 6, 16)
+    assert _report_freshness(None, today) == {"date": None, "freshness": "never", "days": None}
+    assert _report_freshness("", today) == {"date": None, "freshness": "never", "days": None}
+    assert _report_freshness("2026-06-16", today) == {
+        "date": "2026-06-16",
+        "freshness": "today",
+        "days": 0,
+    }
+    assert _report_freshness("2026-06-13", today) == {
+        "date": "2026-06-13",
+        "freshness": "stale",
+        "days": 3,
+    }
+
+
+def test_top_roster_truncation():
+    from sentinel.panel.view import _top_roster
+
+    def row(name, state, up):
+        return {
+            "service": name,
+            "label": name.upper(),
+            "p95_ms": 100.0,
+            "days": [{"state": state, "uptime_pct": up}],
+        }
+
+    health = [row(f"svc{i}", "ok", 100.0) for i in range(10)]  # 已假定 worst-first
+    r = _top_roster(health, 6)
+    assert len(r["rows"]) == 6
+    assert r["overflow"] == 4
+    first = r["rows"][0]
+    assert first["name"] == "svc0" and first["label"] == "SVC0"
+    assert first["state"] == "ok" and first["p95_ms"] == 100.0
+    assert set(first) == {"name", "label", "state", "p95_ms", "d1", "d7", "d30"}
+    assert first["d1"] == 100.0
+    # cap 大于行数 → 不溢出
+    assert _top_roster(health[:3], 6)["overflow"] == 0
+
+
 async def test_build_overview_exposes_hero_and_mini(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
