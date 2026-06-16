@@ -1,0 +1,25 @@
+{% extends "_base.html" %}
+{% block title %}{{ t('changelog.title') }} · WatchMend{% endblock %}
+{% block body %}
+<div class="wrap">
+  <h1>{{ t('changelog.heading') }}</h1>
+  {% if not releases %}
+  <p class="muted">{{ t('changelog.empty') }}</p>
+  {% else %}
+  {% for rel in releases %}
+  <section class="card">
+    <div class="comp-hd">
+      <b>v{{ rel.version }}{% if rel.date %} <span class="muted" style="font-weight:400">· {{ rel.date }}</span>{% endif %}</b>
+      {% if rel.version == current_version %}<span class="chip ok">{{ t('changelog.current') }}</span>{% endif %}
+    </div>
+    {% for sec in rel.sections %}
+    <div class="sec" style="margin-top:10px">{{ sec.category }}</div>
+    <ul>
+      {% for entry in sec.entries %}<li>{{ entry }}</li>{% endfor %}
+    </ul>
+    {% endfor %}
+  </section>
+  {% endfor %}
+  {% endif %}
+</div>
+{% endblock %}

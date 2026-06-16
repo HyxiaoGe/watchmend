@@ -2,7 +2,13 @@
 import tomllib
 from pathlib import Path
 
+import httpx
+from fastapi import FastAPI
+
+from sentinel.config import Settings
 from sentinel.panel.changelog import Release, Section, parse_changelog
+from sentinel.panel.routes import register_panel_routes
+from sentinel.store import Store
 
 _ROOT = Path(__file__).resolve().parents[1]
 _CHANGELOGS = ("CHANGELOG.md", "CHANGELOG.zh-CN.md")
@@ -123,3 +129,61 @@ def test_dockerfile_copies_changelogs_before_install():
     assert copy_idx is not None, "Dockerfile 未 COPY 两个 changelog"
     assert install_idx is not None, "未找到 wheel 安装行"
     assert copy_idx < install_idx, "CHANGELOG COPY 必须在 wheel 安装之前"
+
+
+def _settings(monkeypatch, **env):
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    return Settings(_env_file=None)
+
+
+def _build_app(store, settings):
+    app = FastAPI()
+    app.state.store = store
+    app.state.settings = settings
+    app.state.docker = None
+    register_panel_routes(app)
+    return app
+
+
+async def _get(app, path):
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        return await c.get(path)
+
+
+async def test_changelog_page_renders_zero_js(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/changelog")
+    assert resp.status_code == 200
+    assert "<script" not in resp.text  # 零-JS 铁律
+    assert "v0.1.0" in resp.text  # 含历史版本块
+    assert "</html>" in resp.text  # 渲染了 _base 外壳
+    store.close()
+
+
+async def test_changelog_marks_current_version(tmp_path, monkeypatch):
+    from sentinel import __version__
+    from sentinel.panel.changelog import load_releases
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/changelog?lang=zh")
+    assert resp.status_code == 200
+    if __version__ in {r.version for r in load_releases("zh")}:
+        assert "当前版本" in resp.text  # changelog.current 标记(运行版本在 changelog 中)
+    store.close()
+
+
+async def test_changelog_respects_lang(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/changelog?lang=en")
+    assert resp.status_code == 200
+    assert "Changelog" in resp.text  # changelog.title(en)
+    store.close()
