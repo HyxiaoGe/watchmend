@@ -20,9 +20,19 @@ exit 99
 """
 
 
-def _run(tmp_path, args, extra_env=None):
+# docker ps 本身失败(守护进程不可达):stdout 空、stderr 报错、退非零
+FAKE_DOCKER_PS_FAILS = """#!/usr/bin/env bash
+if [ "$1" = "ps" ]; then
+  echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock" >&2
+  exit 1
+fi
+exit 99
+"""
+
+
+def _run(tmp_path, args, extra_env=None, fake_src=FAKE_DOCKER):
     fake = tmp_path / "docker"
-    fake.write_text(FAKE_DOCKER)
+    fake.write_text(fake_src)
     fake.chmod(0o755)
     log = tmp_path / "calls.log"
     env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "FAKE_DOCKER_LOG": str(log)}
@@ -93,6 +103,28 @@ def test_invalid_format_target_rejected(tmp_path):
         proc, calls = _run(tmp_path, [bad])
         assert proc.returncode == 1, f"{bad!r} 应被拒"
         assert calls == [], f"{bad!r} 不应触达 docker restart"
+
+
+def test_docker_ps_failure_distinguished_from_not_running(tmp_path):
+    # docker ps 本身失败(守护进程不可达)= 基础设施故障,应以 exit 2 报错,不能被
+    # `docker ps | grep -q` 的 pipefail 混成"grep 无匹配"而误报「不在运行中」(exit 1)。
+    # 根因同 SIGPIPE 竞态(grep -q 命中首名即关管→producer SIGPIPE→pipefail 整管失败,
+    # 多容器、目标靠前时偶发误拒合法运行容器);修法=先把 docker ps 输出 materialize
+    # 落地再 grep,docker ps 失败单独走 exit 2。
+    proc, calls = _run(tmp_path, ["litellm-proxy"], fake_src=FAKE_DOCKER_PS_FAILS)
+    assert proc.returncode == 2, proc.stderr
+    assert calls == []
+    assert "不在运行中" not in proc.stderr
+
+
+def test_empty_running_list_is_not_found_not_infra_error(tmp_path):
+    # docker ps 成功但无运行容器(空列表)= 目标未找到(exit 1),不能被当成基础设施故障
+    # (exit 2)。锁住 fix 引入的 exit-1/exit-2 边界:空 running → 走"不在运行中"分支。
+    empty_ps = '#!/usr/bin/env bash\nif [ "$1" = "ps" ]; then exit 0; fi\nexit 99\n'
+    proc, calls = _run(tmp_path, ["litellm-proxy"], fake_src=empty_ps)
+    assert proc.returncode == 1, proc.stderr
+    assert "不在运行中" in proc.stderr
+    assert calls == []
 
 
 def test_script_has_no_dangerous_tokens():
