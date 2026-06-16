@@ -74,6 +74,17 @@ def test_new_template_keys_present():
         "ev.notfound",
         "ev.notfound_hint",
         "ev.commands",
+        # SLO 看板(总览重设计)
+        "ov.svc_ok",
+        "ov.win_mean",
+        "ov.open",
+        "ov.flow",
+        "ov.mttr",
+        "roster.title",
+        "roster.col_today",
+        "roster.more",
+        "report.today",
+        "report.stale",
     }
     for k in needed:
         assert k in i18n.MESSAGES["zh"], f"zh missing {k}"
@@ -105,9 +116,6 @@ def test_phase1_panel_keys_present_both_langs():
         "tab.events",
         "tab.hygiene",
         "hero.uptime_label",
-        "hero.days_clean",
-        "hero.open",
-        "hero.no_events",
         "sec.services",
     ]
     for lang in ("zh", "en"):
@@ -120,5 +128,3 @@ def test_phase1_format_keys_accept_params():
 
     t = make_translator("zh")
     assert t("hero.uptime_label") == "今日可用率"  # 今日口径,无窗口占位
-    assert "5" in t("hero.days_clean", n=5)
-    assert "2" in t("hero.open", open=2)

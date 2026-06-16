@@ -25,6 +25,8 @@ _env = Environment(
     # 服务名/事件 subject 接进徽标也不会破坏 SVG 结构)
     autoescape=select_autoescape(["html", "svg"]),
 )
+# SLO 看板 MTTR/时长 KPI 渲染:秒 → 紧凑人类可读(纯展示格式化,无新读)。
+_env.globals["fmt_duration"] = view._fmt_duration
 
 
 def _tz(settings: Settings) -> timezone:
@@ -124,11 +126,15 @@ def register_panel_routes(app: FastAPI) -> None:
             window_days=window_days,
         )
 
+        prefs_qs = urlencode({"lang": lang, "theme": theme, "win": window_days})
+
         def eurl(event_id: int) -> str:
             # 事件详情链接携带当前 lang/theme/win,跳转后不丢上下文(issue #11 claim 4)
-            return f"/event/{event_id}?" + urlencode(
-                {"lang": lang, "theme": theme, "win": window_days}
-            )
+            return f"/event/{event_id}?" + prefs_qs
+
+        def surl(name: str) -> str:
+            # 服务表整行点进 /service/{name};名称 quote 防特殊字符破坏路径,携带偏好
+            return "/service/" + quote(name, safe="") + "?" + prefs_qs
 
         html = _env.get_template("panel.html").render(
             **overview,
@@ -139,6 +145,7 @@ def register_panel_routes(app: FastAPI) -> None:
             qurl=qurl,
             tab_url=tab_url,
             eurl=eurl,
+            surl=surl,
             history_days=settings.sentinel_panel_history_days,
             active_tab="overview",
         )

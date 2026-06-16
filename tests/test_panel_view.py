@@ -138,7 +138,7 @@ async def test_build_overview_anomalies_and_posture(tmp_path, monkeypatch):
         "model": "deepseek-chat",
     }
     # 两起都是告警(非 hygiene)→ 汇总栏 hygiene 计数为 0
-    assert ov["rollup"]["hygiene_alert_count"] == 0
+    assert ov["rollup"]["hygiene"]["total"] == 0
     store.close()
 
 
@@ -188,7 +188,8 @@ async def test_build_overview_routes_hygiene_and_recoveries_off_page(tmp_path, m
     assert [a["rule"] for a in ov["needs_attention"]] == ["service_down"]
     # 压缩行必须带展示名(label),否则首页只见规则不见服务;无映射回退 subject
     assert ov["needs_attention"][0]["label"] == "API 网关"
-    assert ov["rollup"]["hygiene_alert_count"] == 1
+    assert ov["rollup"]["hygiene"]["total"] == 1
+    assert ov["rollup"]["hygiene"]["backup"] == 1  # backup_stale 落 backup 桶
     # 已恢复的 24h 计数仍由 /hygiene 承载
     hyg = await view.build_hygiene(store, settings, now=NOW)
     assert hyg["posture"]["resolved_24h"] == 1
@@ -258,9 +259,18 @@ async def test_build_overview_empty_store_degrades(tmp_path, monkeypatch):
     ov = await view.build_overview(store, settings, now=NOW)
     # 空库 → 待关注为空、汇总全零、header LLM pill 关闭
     assert ov["needs_attention"] == []
-    assert ov["rollup"]["hygiene_alert_count"] == 0
-    assert ov["rollup"]["services"] == {"total": 0, "ok": 0, "problem": 0, "nodata": 0}
-    assert ov["rollup"]["last_report_date"] is None
+    assert ov["rollup"]["hygiene"] == {"backup": 0, "disk": 0, "cert": 0, "total": 0}
+    assert ov["hero"]["services"] == {
+        "total": 0,
+        "ok": 0,
+        "degraded": 0,
+        "partial": 0,
+        "down": 0,
+        "nodata": 0,
+    }
+    assert ov["roster"] == {"rows": [], "overflow": 0}
+    assert ov["rollup"]["report"] == {"date": None, "freshness": "never", "days": None}
+    assert ov["hero"]["uptime_grade"] == "nodata"  # 无数据 → 阈值色 nodata
     assert ov["posture"]["llm"] == {"enabled": False, "pending_restart": False, "model": None}
     assert ov["now_str"] == "2026-06-14 14:32"
     assert ov["refresh_seconds"] == 30
@@ -441,25 +451,43 @@ def test_event_detail_pending_restart_marks_open(tmp_path, monkeypatch):
     store.close()
 
 
-async def test_build_overview_has_slim_dashboard_shape(tmp_path, monkeypatch):
+async def test_build_overview_has_slo_board_shape(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
     ov = await view.build_overview(store, settings, now=NOW)
-    # 仪表盘只保留概览键:HERO + 待关注 + 汇总;明细键(health/events/host_self)已移交子页。
+    # SLO 看板键集:HERO + 服务表 + 待关注 + 汇总;明细键(health/events/host_self)已移交子页。
     assert set(ov) == {
         "now_str",
         "refresh_seconds",
         "window_days",
         "posture",
         "hero",
+        "roster",
         "needs_attention",
         "rollup",
     }
     assert ov["window_days"] == 90  # 默认窗口
     assert set(ov["posture"]) == {"llm"}  # header pill 只读 llm
-    assert set(ov["hero"]) == {"uptime_pct", "ring", "days_clean", "trend"}
-    assert set(ov["rollup"]) == {"services", "hygiene_alert_count", "last_report_date"}
-    assert set(ov["rollup"]["services"]) == {"total", "ok", "problem", "nodata"}
+    # HERO 去重:今日可用率只一处(ring 中心),无 days_clean/trend
+    assert set(ov["hero"]) == {
+        "uptime_pct",
+        "uptime_grade",
+        "ring",
+        "services",
+        "windows",
+        "open",
+        "flow_24h",
+        "mttr",
+    }
+    assert "days_clean" not in ov["hero"] and "trend" not in ov["hero"]
+    assert set(ov["hero"]["windows"]) == {"d7", "d30", "d90"}
+    assert set(ov["hero"]["windows"]["d7"]) == {"mean", "delta", "dir"}
+    assert set(ov["hero"]["open"]) == {"total", "critical", "warning"}
+    assert set(ov["hero"]["flow_24h"]) == {"opened", "resolved"}
+    assert set(ov["hero"]["mttr"]) == {"mean_s", "worst_s", "n"}
+    assert set(ov["roster"]) == {"rows", "overflow"}
+    assert set(ov["rollup"]) == {"hygiene", "report"}
+    assert set(ov["rollup"]["hygiene"]) == {"backup", "disk", "cert", "total"}
     store.close()
 
 
@@ -642,14 +670,57 @@ def test_overall_ring_empty_health_is_all_zero():
     assert overall_ring([]) == {"ok": 0.0, "degraded": 0.0, "partial": 0.0, "down": 0.0}
 
 
-def test_days_clean_floor_division():
-    from sentinel.panel.view import _days_clean
+async def test_overview_d90_window_spans_full_history_not_probe_window(tmp_path, monkeypatch):
+    # P2 回归:HERO 的 7/30/90d 均值是与探针条 window 无关的滚动 SLO,固定按保留史跨度计算。
+    # 即便用户看 window=30,d90 也须真覆盖 90 天(含 31-90 天前旧数据),而非被切片钳成 d30 克隆。
+    settings = _settings(monkeypatch)  # 保留史默认 90
+    store = Store(str(tmp_path / "s.db"))
+    today = NOW.date()
+    for d in range(1, 31):  # 近 30 天 100% 可用
+        store.upsert_probe_daily(
+            "api",
+            (today - timedelta(days=d)).isoformat(),
+            total=100,
+            ok_count=100,
+            p50=10.0,
+            p95=20.0,
+        )
+    for d in range(31, 90):  # 更旧的 31-89 天前 90% 可用 → 两窗口必然不同
+        store.upsert_probe_daily(
+            "api",
+            (today - timedelta(days=d)).isoformat(),
+            total=100,
+            ok_count=90,
+            p50=10.0,
+            p95=20.0,
+        )
+    ov = await view.build_overview(store, settings, now=NOW, window_days=30)
+    win = ov["hero"]["windows"]
+    assert win["d30"]["mean"] is not None and win["d90"]["mean"] is not None
+    # d30 只见近 30 天(全 100),d90 含旧的 90% 段 → 严格更低,证明 d90 跨越了 window=30 不再克隆 d30。
+    assert win["d30"]["mean"] == 100.0
+    assert win["d90"]["mean"] < win["d30"]["mean"]
+    store.close()
 
-    now_ts = 1_000_000
-    assert _days_clean(now_ts - 3 * 86400 - 10, now_ts) == 3  # 3 天多 → 3
-    assert _days_clean(now_ts - 100, now_ts) == 0  # 不足 1 天 → 0
-    assert _days_clean(now_ts + 500, now_ts) == 0  # 未来 ts(时钟漂移)→ 钳 0
-    assert _days_clean(None, now_ts) is None  # 从无事件
+
+async def test_overview_short_history_suppresses_truncated_d90(tmp_path, monkeypatch):
+    # 保留史 < 90d 且看 window=30 时:序列不足 90 桶,d90 须报 None("–")而非把 30d 截断窗冒充 90d。
+    settings = _settings(monkeypatch, SENTINEL_PANEL_HISTORY_DAYS="30")
+    store = Store(str(tmp_path / "s.db"))
+    today = NOW.date()
+    for d in range(1, 30):
+        store.upsert_probe_daily(
+            "api",
+            (today - timedelta(days=d)).isoformat(),
+            total=100,
+            ok_count=100,
+            p50=10.0,
+            p95=20.0,
+        )
+    ov = await view.build_overview(store, settings, now=NOW, window_days=30)
+    win = ov["hero"]["windows"]
+    assert win["d30"]["mean"] == 100.0  # 满窗:真实
+    assert win["d90"]["mean"] is None and win["d90"]["delta"] is None  # 不足整窗 → None
 
 
 def test_overall_trend_series_per_day_equal_weight():
@@ -669,6 +740,243 @@ def test_overall_trend_series_empty_health():
     assert _overall_trend_series([]) == []
 
 
+def test_uptime_grade_thresholds():
+    from sentinel.panel.view import uptime_grade
+
+    assert uptime_grade(None, green=99.9, partial=99.5) == "nodata"
+    assert uptime_grade(100.0, green=99.9, partial=99.5) == "ok"
+    assert uptime_grade(99.9, green=99.9, partial=99.5) == "ok"  # 绿界含等于
+    assert uptime_grade(99.7, green=99.9, partial=99.5) == "warn"
+    assert uptime_grade(99.5, green=99.9, partial=99.5) == "warn"  # 琥珀界含等于
+    assert uptime_grade(99.4, green=99.9, partial=99.5) == "bad"
+    assert uptime_grade(0.0, green=99.9, partial=99.5) == "bad"
+
+
+def test_window_mean():
+    from sentinel.panel.view import _window_mean
+
+    series = [98.0, 99.0, 100.0, 100.0, 99.0, 100.0, 100.0]  # 左早右今
+    assert _window_mean(series, 3) == 99.7  # 末 3 = (99+100+100)/3=99.666→99.7
+    assert _window_mean(series, 100) == round(sum(series) / 7, 1)  # 窗口超长 → 取全部
+    assert _window_mean([None, None], 2) is None  # 全 None → None
+    assert _window_mean([99.0, None, 100.0], 3) == 99.5  # 跳过 None
+    assert _window_mean([], 7) is None
+
+
+def test_window_delta_and_dir():
+    from sentinel.panel.view import _delta_dir, _window_delta
+
+    # 末 2 天 = (100+100)/2=100;前 2 天 = (98+98)/2=98 → delta +2.0
+    series = [97.0, 97.0, 98.0, 98.0, 100.0, 100.0]
+    assert _window_delta(series, 2) == 2.0
+    # 前一个窗口无数据 → None(无可比基线)
+    assert _window_delta([100.0, 100.0], 2) is None
+    assert _window_delta([None, None, 100.0, 100.0], 2) is None  # 前窗全 None
+    assert _delta_dir(2.0) == "up"
+    assert _delta_dir(-2.0) == "down"
+    assert _delta_dir(0.0) == "flat"
+    assert _delta_dir(0.02) == "flat"  # 在 eps 内
+    assert _delta_dir(None) == "flat"
+
+
+def _row_days(uptimes):
+    return {"days": [{"uptime_pct": u} for u in uptimes]}
+
+
+def test_service_windows():
+    from sentinel.panel.view import _service_windows
+
+    # 35 天:前 5 天=90,后 30 天=100;今日(末)=100
+    row = _row_days([90.0] * 5 + [100.0] * 30)
+    w = _service_windows(row)
+    assert w["d1"] == 100.0  # 今日(末 1 天)
+    assert w["d7"] == 100.0  # 末 7 天全 100
+    assert w["d30"] == 100.0  # 末 30 天全 100
+    # 末 30 天里掺 5 天 90:row=[90]*10 + [100]*25 → d30=(90*5+100*25)/30
+    row2 = _row_days([90.0] * 10 + [100.0] * 25)
+    assert _service_windows(row2)["d30"] == round((90 * 5 + 100 * 25) / 30, 1)
+
+
+def test_service_windows_nodata_and_gaps():
+    from sentinel.panel.view import _service_windows
+
+    # 全 None(无数据服务)→ 三窗口皆 None,绝不染绿
+    assert _service_windows(_row_days([None] * 10)) == {"d1": None, "d7": None, "d30": None}
+    # 空 days
+    assert _service_windows({"days": []}) == {"d1": None, "d7": None, "d30": None}
+    # 部分 None 跳过:末 7 天 = [100,None,100,100,None,100,100] → 5 个 100 均值 100
+    row = _row_days([100.0, None, 100.0, 100.0, None, 100.0, 100.0])
+    w = _service_windows(row)
+    assert w["d7"] == 100.0
+    assert w["d1"] == 100.0  # 末 1 天有数据
+
+
+def test_open_by_severity():
+    from types import SimpleNamespace
+
+    from sentinel.panel.view import _open_by_severity
+
+    events = [
+        SimpleNamespace(severity="critical"),
+        SimpleNamespace(severity="warning"),
+        SimpleNamespace(severity="warning"),
+    ]
+    assert _open_by_severity(events) == {"total": 3, "critical": 1, "warning": 2}
+    assert _open_by_severity([]) == {"total": 0, "critical": 0, "warning": 0}
+
+
+def test_service_state_counts():
+    from sentinel.panel.view import _service_state_counts
+
+    def row(state):
+        return {"days": [{"state": state}]}
+
+    health = [row("down"), row("partial"), row("degraded"), row("ok"), row("ok"), row("nodata")]
+    assert _service_state_counts(health) == {
+        "total": 6,
+        "ok": 2,
+        "degraded": 1,
+        "partial": 1,
+        "down": 1,
+        "nodata": 1,
+    }
+    # 空 days → nodata
+    assert _service_state_counts([{"days": []}])["nodata"] == 1
+    assert _service_state_counts([]) == {
+        "total": 0,
+        "ok": 0,
+        "degraded": 0,
+        "partial": 0,
+        "down": 0,
+        "nodata": 0,
+    }
+
+
+def test_is_real_incident():
+    from sentinel.panel.view import _is_real_incident
+
+    assert _is_real_incident("service_down") is True
+    assert _is_real_incident("container_down") is True  # 状态型可恢复事件
+    assert _is_real_incident("disk_usage") is True
+    assert _is_real_incident("backup_stale") is False  # hygiene
+    assert _is_real_incident("cert_expiry") is False
+    assert _is_real_incident("scan_failed_loki") is False  # 巡检失败
+    assert _is_real_incident("container_oom") is False  # point 事件
+    assert _is_real_incident("container_crashloop") is False
+    assert _is_real_incident("container_restart") is False
+
+
+def _ev(ts, resolved_ts=None, rule="service_down"):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(ts=ts, resolved_ts=resolved_ts, rule=rule)
+
+
+def test_mttr_excludes_point_events():
+    from sentinel.panel.view import _mttr
+
+    resolved = [
+        _ev(1000, 1000 + 600),  # 10 分钟
+        _ev(2000, 2000 + 1800),  # 30 分钟
+        _ev(3000, 3000),  # point 事件 resolved_ts==ts → 排除(否则把均值拉低)
+        _ev(4000, None),  # 未真正恢复 → 排除
+    ]
+    m = _mttr(resolved)
+    assert m["n"] == 2
+    assert m["mean_s"] == 1200  # (600+1800)/2
+    assert m["worst_s"] == 1800
+    # 空 → None
+    assert _mttr([]) == {"mean_s": None, "worst_s": None, "n": 0}
+    assert _mttr([_ev(5000, 5000)]) == {"mean_s": None, "worst_s": None, "n": 0}
+
+
+def test_net_flow():
+    from sentinel.panel.view import _net_flow
+
+    opened = [
+        _ev(10, rule="service_down"),
+        _ev(20, rule="container_oom"),
+        _ev(30, rule="backup_stale"),
+    ]
+    resolved = [
+        _ev(5, 15, rule="service_down"),  # 真实恢复
+        _ev(6, 6, rule="container_oom"),  # point 排除
+        _ev(7, 17, rule="scan_failed_loki"),  # 巡检排除
+    ]
+    # opened 仅 service_down 计入(oom/backup 排除);resolved 仅 service_down
+    assert _net_flow(opened, resolved) == {"opened": 1, "resolved": 1}
+
+
+def test_fmt_duration():
+    from sentinel.panel.view import _fmt_duration
+
+    assert _fmt_duration(None) == "–"
+    assert _fmt_duration(45) == "45s"
+    assert _fmt_duration(1320) == "22m"
+    assert _fmt_duration(10800) == "3h"
+    assert _fmt_duration(180000) == "2d"
+
+
+def test_hygiene_by_type():
+    from types import SimpleNamespace
+
+    from sentinel.panel.view import _hygiene_by_type
+
+    events = [
+        SimpleNamespace(rule="backup_stale"),
+        SimpleNamespace(rule="disk_forecast"),
+        SimpleNamespace(rule="cert_expiry"),
+        SimpleNamespace(rule="cert_expiry"),
+        SimpleNamespace(rule="service_down"),  # 非 hygiene → 不计
+    ]
+    assert _hygiene_by_type(events) == {"backup": 1, "disk": 1, "cert": 2, "total": 4}
+    assert _hygiene_by_type([]) == {"backup": 0, "disk": 0, "cert": 0, "total": 0}
+
+
+def test_report_freshness():
+    from datetime import date
+
+    from sentinel.panel.view import _report_freshness
+
+    today = date(2026, 6, 16)
+    assert _report_freshness(None, today) == {"date": None, "freshness": "never", "days": None}
+    assert _report_freshness("", today) == {"date": None, "freshness": "never", "days": None}
+    assert _report_freshness("2026-06-16", today) == {
+        "date": "2026-06-16",
+        "freshness": "today",
+        "days": 0,
+    }
+    assert _report_freshness("2026-06-13", today) == {
+        "date": "2026-06-13",
+        "freshness": "stale",
+        "days": 3,
+    }
+
+
+def test_top_roster_truncation():
+    from sentinel.panel.view import _top_roster
+
+    def row(name, state, up):
+        return {
+            "service": name,
+            "label": name.upper(),
+            "p95_ms": 100.0,
+            "days": [{"state": state, "uptime_pct": up}],
+        }
+
+    health = [row(f"svc{i}", "ok", 100.0) for i in range(10)]  # 已假定 worst-first
+    r = _top_roster(health, 6)
+    assert len(r["rows"]) == 6
+    assert r["overflow"] == 4
+    first = r["rows"][0]
+    assert first["name"] == "svc0" and first["label"] == "SVC0"
+    assert first["state"] == "ok" and first["p95_ms"] == 100.0
+    assert set(first) == {"name", "label", "state", "p95_ms", "d1", "d7", "d30"}
+    assert first["d1"] == 100.0
+    # cap 大于行数 → 不溢出
+    assert _top_roster(health[:3], 6)["overflow"] == 0
+
+
 async def test_build_overview_exposes_hero_and_mini(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
@@ -683,7 +991,8 @@ async def test_build_overview_exposes_hero_and_mini(tmp_path, monkeypatch):
             ProbeSample(ts=NOW_TS - 40, service="db", ok=False, status_code=500, latency_ms=None),
         ]
     )
-    # 全表最新事件 = 2 天前(已恢复,open_count==0)→ days_clean=2
+    # service_down 于 2 天前发生、10 分钟后恢复 → 落入 30d MTTR(resolved_ts>ts,real incident);
+    # 但在 24h 净流窗口外(opened/resolved 均为 0)。
     rid = store.insert_event(
         ts=NOW_TS - 2 * 86400,
         rule="service_down",
@@ -699,12 +1008,15 @@ async def test_build_overview_exposes_hero_and_mini(tmp_path, monkeypatch):
     overview = await view.build_overview(store, settings, now=NOW)
 
     hero = overview["hero"]
-    # HERO 可用率与 /services 同源健康柱条同口径
+    # HERO 可用率与 /services 同源健康柱条同口径;db 半数失败 → 整体 (100+50)/2=75 → 阈值色 bad
     svcs = view.build_services_list(store, settings, now=NOW)["services"]
     assert hero["uptime_pct"] == view.overall_uptime_pct(svcs)
+    assert hero["uptime_grade"] == "bad"
     assert set(hero["ring"]) == {"ok", "degraded", "partial", "down"}
-    assert hero["days_clean"] == 2
-    assert set(hero["trend"]) == {"line_d", "area_d"}
+    # MTTR:30d 内 1 起真实恢复,时长 600s;point 事件无 → mean/worst=600
+    assert hero["mttr"] == {"mean_s": 600, "worst_s": 600, "n": 1}
+    # 24h 净流:事件在 2 天前 → 窗口外,新开/恢复皆 0
+    assert hero["flow_24h"] == {"opened": 0, "resolved": 0}
     # 每服务 sparkline 现由 /services 行承载
     assert all(isinstance(r["p95_pts"], str) for r in svcs)
     store.close()

@@ -749,10 +749,147 @@ async def test_overview_renders_hero_and_service_sparkline(tmp_path, monkeypatch
     assert resp.status_code == 200
     assert 'class="hero"' in resp.text  # 英雄区卡
     assert "ring-center" in resp.text  # 状态环中心数字
-    assert "hero-trend" in resp.text  # 整体趋势线
+    assert 'class="kpi"' in resp.text  # SLO 看板环旁 KPI 事实(取代旧整体趋势线)
     # 每服务迷你趋势线现由 /services 行承载
     r_svc = await _get(app, "/services")
     assert 'class="sspark"' in r_svc.text  # 服务行迷你趋势线
+    store.close()
+
+
+async def test_overview_slo_board_shape(tmp_path, monkeypatch):
+    # SLO 看板:环旁 KPI 事实(N/M ok + 7/30/90d 均值 + 开放 + 净流 + MTTR)、
+    # 最差优先服务表(今日/7天/30天 + 整行点进 /service)、体检按类型 + 日报新鲜度;
+    # 去重(无旧 .hstat 左侧重复大号)、弃用 days_clean(无「连续」文案)。
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    today = datetime.now(tz).date()
+    now_ts = int(datetime.now(tz).timestamp())
+    # 一个服务,9 天历史 100%(让 7d/30d 窗口均值有值),今日有样本
+    for i in range(1, 10):
+        store.upsert_probe_daily(
+            "api",
+            (today - timedelta(days=i)).isoformat(),
+            total=100,
+            ok_count=100,
+            p50=10.0,
+            p95=20.0,
+        )
+    store.add_probe_samples(
+        [ProbeSample(ts=now_ts - 30, service="api", ok=True, status_code=200, latency_ms=11.0)]
+    )
+    # 开放 hygiene 事件(证书)→ 进汇总体检计数,不进待关注
+    store.insert_event(
+        ts=now_ts - 3600,
+        rule="cert_expiry",
+        subject="a.com",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    # 已恢复真实事件(MTTR 有值:10 分钟)
+    eid = store.insert_event(
+        ts=now_ts - 7200,
+        rule="service_down",
+        subject="db",
+        severity="critical",
+        status="resolved",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    store.resolve_event(eid, resolved_ts=now_ts - 7200 + 600)
+
+    app = _build_app(store, settings)
+    r = await _get(app, "/?win=30")
+    assert r.status_code == 200
+    # HERO 去重 + days_clean 弃用
+    assert 'class="hstat"' not in r.text  # 旧左侧重复大号容器已删
+    assert "连续" not in r.text  # 不再有 days_clean「连续 N 天」文案
+    # 环旁 KPI 事实
+    assert 'class="kpi"' in r.text
+    assert "7 天均值" in r.text and "30 天均值" in r.text  # ov.win_mean
+    assert "MTTR" in r.text  # ov.mttr 标签
+    assert "开放" in r.text  # ov.open
+    # 服务表:表头 + 服务行整行点进详情
+    assert "服务可用率" in r.text  # roster.title
+    assert "7天" in r.text and "30天" in r.text  # roster.col_7d/30d
+    assert "/service/api?" in r.text  # 整行点进服务详情(携带偏好)
+    # 汇总行:体检按类型 + 日报
+    assert "证书" in r.text  # ov.hyg_cert(cert_expiry 计入)
+    assert "日报" in r.text  # roll.report
+    store.close()
+
+
+async def test_overview_ring_threshold_color_class(tmp_path, monkeypatch):
+    # 今日可用率 50%（< partial 99.5）→ 环中心阈值色 class = bad（红）。
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    now_ts = int(datetime.now(tz).timestamp())
+    store.add_probe_samples(
+        [
+            ProbeSample(ts=now_ts - 10, service="api", ok=True, status_code=200, latency_ms=10.0),
+            ProbeSample(ts=now_ts - 11, service="api", ok=False, status_code=500, latency_ms=None),
+        ]
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/")
+    assert r.status_code == 200
+    assert 'class="ring-center bad"' in r.text  # 阈值色按 uptime_grade,非硬编码
+    store.close()
+
+
+async def test_overview_roster_state_tint_and_nodata_never_green(tmp_path, monkeypatch):
+    # 服务表整行底色按现态着色;无数据窗口渲染灰 "–"，整行不染绿。
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.models import ProbeSample
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    today = datetime.now(tz).date()
+    now_ts = int(datetime.now(tz).timestamp())
+    # down 服务：今日 1 ok / 4 → 25% < 50% → down
+    store.add_probe_samples(
+        [
+            ProbeSample(
+                ts=now_ts - 10, service="downsvc", ok=True, status_code=200, latency_ms=9.0
+            ),
+            ProbeSample(
+                ts=now_ts - 11, service="downsvc", ok=False, status_code=500, latency_ms=None
+            ),
+            ProbeSample(
+                ts=now_ts - 12, service="downsvc", ok=False, status_code=500, latency_ms=None
+            ),
+            ProbeSample(
+                ts=now_ts - 13, service="downsvc", ok=False, status_code=500, latency_ms=None
+            ),
+        ]
+    )
+    # nodata 服务：仅历史日数据，今日无样本 → 今日态 nodata、今日窗口无值
+    store.upsert_probe_daily(
+        "ndsvc", (today - timedelta(days=1)).isoformat(), total=10, ok_count=10, p50=1.0, p95=2.0
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/")
+    assert r.status_code == 200
+    assert 'class="rrow down"' in r.text  # 整行 down 态着色 class
+    assert 'class="rrow nodata"' in r.text  # 无数据行（永不染绿）
+    assert "rw nodata" in r.text  # 无数据窗口单元格灰 "–"，不显示为绿/100%
     store.close()
 
 
