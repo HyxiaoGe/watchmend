@@ -17,7 +17,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from sentinel import __version__
 from sentinel.config import Settings
-from sentinel.panel import changelog, i18n, prefs, view
+from sentinel.panel import changelog, i18n, prefs, settings_view, view
 from sentinel.update_check import is_newer
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -484,6 +484,78 @@ def register_panel_routes(app: FastAPI) -> None:
         )
         resp = HTMLResponse(html)
         _write_pref_cookies(resp, request, lang, theme, window_days)
+        return resp
+
+    def _apply_settings_cookies(resp, request, lang, theme, win) -> None:
+        """/settings 表单提交:按原始 querystring 值决定每项 SET 或 CLEAR(中性选项删 cookie)。
+        无对应 querystring 项 → 不动该 cookie(普通页面行为)。"""
+        q = request.query_params
+        clear: list[str] = []
+        set_lang = set_theme = set_refresh = set_win = None
+        raw_lang = q.get("lang")
+        if raw_lang is not None:
+            if raw_lang.strip().lower() in ("zh", "en"):
+                set_lang = raw_lang.strip().lower()
+            else:  # "auto" / 非法 → 删 wm_lang 回落 Accept-Language
+                clear.append("wm_lang")
+        if q.get("theme") is not None:
+            set_theme = theme  # theme 已被 _read_prefs 解析为具体值(system/dark/light)
+        if q.get("win") is not None:
+            set_win = win
+        raw_refresh = q.get("refresh")
+        if raw_refresh is not None:
+            if raw_refresh.strip() in ("0", "15", "30", "60"):
+                set_refresh = int(raw_refresh.strip())
+            else:  # "default" / 非法 → 删 wm_refresh 回落服务端默认
+                clear.append("wm_refresh")
+        prefs.apply_pref_cookies(
+            resp,
+            lang=set_lang,
+            theme=set_theme,
+            window=set_win,
+            refresh=set_refresh,
+            clear=tuple(clear),
+        )
+
+    @app.get("/settings", response_class=HTMLResponse)
+    async def panel_settings(request: Request) -> HTMLResponse:
+        state = request.app.state
+        settings: Settings = state.settings
+        c = request.cookies
+        q = request.query_params
+        lang, theme, window_days = _read_prefs(request, settings)
+        refresh_eff = prefs.resolve_refresh(
+            q.get("refresh"), c.get("wm_refresh"), settings.sentinel_panel_refresh_seconds
+        )
+        display = settings_view.build_display_prefs(
+            lang_eff=lang,
+            lang_cookie=c.get("wm_lang"),
+            theme_eff=theme,
+            window_eff=window_days,
+            history_days=settings.sentinel_panel_history_days,
+            refresh_eff=refresh_eff,
+            refresh_cookie=c.get("wm_refresh"),
+            server_refresh=settings.sentinel_panel_refresh_seconds,
+        )
+        inventory = settings_view.build_config_inventory(
+            settings, llm_config=getattr(state, "llm_config", None)
+        )
+        qurl, tab_url = _nav_helpers("/settings", lang=lang, theme=theme, window_days=window_days)
+        html = _env.get_template("settings.html").render(
+            nav=_nav_context(state.store, lang),
+            t=i18n.make_translator(lang),
+            lang=lang,
+            theme=theme,
+            window_days=window_days,
+            history_days=settings.sentinel_panel_history_days,
+            qurl=qurl,
+            tab_url=tab_url,
+            active_tab="settings",
+            display=display,
+            inventory=inventory,
+        )  # 不传 refresh_seconds → 设置页本身不自动刷新(spec §3)
+        resp = HTMLResponse(html)
+        _apply_settings_cookies(resp, request, lang, theme, window_days)
         return resp
 
     @app.get("/badge.svg")

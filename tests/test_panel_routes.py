@@ -1839,3 +1839,49 @@ async def test_detail_page_has_live_region_but_no_autorefresh(tmp_path, monkeypa
     assert 'data-refresh="' not in html  # 但无刷新属性(getAttribute("data-refresh") 不含 ="）
     assert "http-equiv" not in html  # 详情页无任何 meta-refresh
     store.close()
+
+
+async def test_settings_page_renders(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/settings")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "设置" in html  # set.title (zh default)
+    assert "SENTINEL_DISK_USAGE_PCT" in html  # inventory lists env var names
+    assert "<script src" not in html  # progressive enhancement: no external JS
+    assert "<form" in html and 'method="get"' in html
+    store.close()
+
+
+async def test_settings_submit_sets_pref_cookies(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/settings?lang=en&theme=dark&win=90&refresh=15")
+    setcookies = "\n".join(resp.headers.get_list("set-cookie"))
+    assert "wm_lang=en" in setcookies
+    assert "wm_theme=dark" in setcookies
+    assert "wm_win=90" in setcookies
+    assert "wm_refresh=15" in setcookies
+    store.close()
+
+
+async def test_settings_neutral_choices_clear_cookies(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/settings?lang=auto&refresh=default")
+    setcookies = "\n".join(resp.headers.get_list("set-cookie"))
+    assert "wm_lang=" in setcookies and "Max-Age=0" in setcookies  # deleted
+    store.close()
+
+
+async def test_settings_no_token_required(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch, SENTINEL_DIAG_TOKEN="tok-abc123def456ghi")
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/settings")
+    assert resp.status_code == 200
+    store.close()
