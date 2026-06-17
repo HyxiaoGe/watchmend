@@ -10,6 +10,13 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-06-17
+
+### 变更
+- 头部版本 chip 改为点击展开的更新日志弹层(原先是看不出可点的链接)。版本徽标
+  变成零-JS 折叠层,内联展示当前运行版本的「本次更新」(带 ▾ 提示与 hover 态),
+  并保留「完整更新日志」链接;`/changelog` 整页加面包屑回总览。
+
 ## [0.12.1] - 2026-06-17
 
 ### 安全
@@ -209,7 +216,8 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 ### 安全
 - docker 元数据与环境值的密钥泄漏遮蔽。
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.1...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.0...v0.11.1
