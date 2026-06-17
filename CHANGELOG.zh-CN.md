@@ -10,6 +10,13 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-06-17
+
+### 变更
+- 头部版本 chip 改为点击弹出居中的零-JS 更新日志模态(`:target` 浮层 + 暗背景遮罩,
+  点遮罩 / × 关闭),取代原先那个跳转独立页面的小下拉。全量历史内联可滚动,当前运行
+  版本高亮,有新版时顶部置更新横幅;`/changelog` 整页保留作可分享的永久链接。
+
 ## [0.13.0] - 2026-06-17
 
 ### 变更
@@ -216,7 +223,8 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 ### 安全
 - docker 元数据与环境值的密钥泄漏遮蔽。
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.1...v0.12.0

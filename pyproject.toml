@@ -1,6 +1,6 @@
 [project]
 name = "watchmend"
-version = "0.13.0"
+version = "0.13.1"
 description = "Dev-ops Feishu monitor: external dependency status-page sentinel"
 requires-python = ">=3.12"
 dependencies = [
