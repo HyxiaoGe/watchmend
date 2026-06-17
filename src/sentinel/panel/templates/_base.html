@@ -6,7 +6,9 @@
 {# 品牌 favicon:内联 data-URI SVG(WM pulse mark),不新增静态路由/文件,随浏览器缩放清晰 #}
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='60%2060%20392%20392'%3E%3Crect%20x='76'%20y='76'%20width='360'%20height='360'%20rx='78'%20fill='%230F766E'/%3E%3Cpath%20d='M140%20170l47%20172%2058-134%2052%20134%2064-172'%20fill='none'%20stroke='%23ECFEFF'%20stroke-width='34'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3Cpath%20d='M134%20263h66l24-39%2036%2090%2031-66h88'%20fill='none'%20stroke='%230F172A'%20stroke-width='22'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3Ccircle%20cx='374'%20cy='138'%20r='30'%20fill='%2322C55E'%20stroke='%23F8FAFC'%20stroke-width='12'/%3E%3C/svg%3E">
 {% if refresh_seconds %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endif %}
-<title>{% if nav and nav.update_available %}● {% endif %}{% block title %}{{ t('hdr.title') if t else 'WatchMend' }}{% endblock %}</title>
+{# tab 标题 = [事故红灯] 页面名 · WatchMend。状态灯复用 nav.incident_count(badge 同源),
+   平时安静、出事才亮红;页面名由各页 {% block title %} 提供(默认=总览),后台/固定 tab 可区分。 #}
+<title>{% if nav and nav.incident_count %}🔴 {{ nav.incident_count }} · {% endif %}{% block title %}{{ t('tab.overview') if t else 'WatchMend' }}{% endblock %} · WatchMend</title>
 <style>
   :root {
     --bg:#0d1117; --panel:#161b22; --line:#2a313c; --txt:#c9d1d9; --mut:#8b949e;

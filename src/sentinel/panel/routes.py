@@ -62,6 +62,8 @@ def _nav_context(store, lang: str) -> dict:
     return {
         "version": __version__,
         "update_available": available,
+        # 未结事件数 = tab 标题的"状态灯"(平时安静,出事亮红);与 /badge.svg 同源(open_count)
+        "incident_count": len(store.get_open_events()),
         "latest_version": latest if available else None,
         # 镜像标签去 v 前缀(更新命令用);仅有新版时才给
         "latest_tag": (latest[1:] if latest.startswith("v") else latest)

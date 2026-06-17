@@ -48,7 +48,7 @@ async def test_overview_renders(tmp_path, monkeypatch):
     app = _build_app(store, settings)
     resp = await _get(app, "/")
     assert resp.status_code == 200
-    assert "证据台" in resp.text  # hdr.title
+    assert "WatchMend" in resp.text  # 品牌标题(hdr.title)
     # 总览只保留概览级:待关注(当前未结告警)+ 汇总链接;明细去子页
     assert "待关注" in resp.text  # sec.attention
     assert "Loki 巡检失败" in resp.text  # 未结告警进待关注:rule_label(scan_failed_loki, zh)
@@ -68,12 +68,65 @@ async def test_header_shows_inline_brand_logo_and_favicon(tmp_path, monkeypatch)
     assert 'class="brand"' in html
     assert '<svg class="brand-mark"' in html
     assert "<img" not in html  # 必须内联,绝不引外部位图
-    assert "证据台" in html  # 文字标题仍保留在品牌链接内
+    assert "WatchMend" in html  # 文字品牌仍在品牌链接内
     # favicon:data-URI SVG,不新增静态路由/文件(additive 不变量)
     assert 'rel="icon"' in html
     assert "data:image/svg+xml" in html
     # 仍是零-JS
     assert "<script" not in html
+    store.close()
+
+
+def _title(html: str) -> str:
+    return html.split("<title>", 1)[1].split("</title>", 1)[0]
+
+
+async def test_header_title_is_brand_only_no_descriptor(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/")
+    html = resp.text
+    # 只查头部品牌链接区 + tab 标题(changelog 模态正文里历史性提过"证据台",display:none 不算)
+    brand = html.split('class="brand"', 1)[1].split("</a>", 1)[0]
+    assert "WatchMend" in brand  # 品牌词保留
+    assert "证据台" not in brand  # 描述词从头部彻底去掉(品牌前置)
+    assert "证据台" not in _title(html)  # tab 标题也不含描述词
+    store.close()
+
+
+async def test_tab_title_has_page_name_and_brand(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    # 总览:页面名 + 品牌,无未结事件 → tab 安静(无红灯)
+    overview = _title((await _get(app, "/")).text)
+    assert overview == "总览 · WatchMend"
+    assert "🔴" not in overview
+    # 服务页:页面名换成"服务",仍带品牌后缀(多 tab 可区分)
+    services = _title((await _get(app, "/services")).text)
+    assert services == "服务 · WatchMend"
+    store.close()
+
+
+async def test_tab_title_shows_incident_count_when_open(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.insert_event(
+        ts=1700000000,
+        rule="scan_failed_loki",
+        subject="log_scan",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    title = _title((await _get(app, "/")).text)
+    # 出事才亮红:计数前缀在最前,页面名 + 品牌在后(复用 badge 的 open_count 同源信号)
+    assert title == "🔴 1 · 总览 · WatchMend"
     store.close()
 
 
