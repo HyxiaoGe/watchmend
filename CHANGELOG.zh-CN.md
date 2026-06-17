@@ -10,6 +10,20 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-06-17
+
+### 变更
+- 面板自动刷新现在无闪烁。开启 JavaScript 时,一小段内联脚本就地刷新页面内容——只替换正文
+  区并同步标题与状态行——不再整页重载,滚动位置和已打开的更新日志模态都得以保留,页面也不
+  再每隔一段就闪一下。关闭 JavaScript 时经 `<noscript>` 退回原先的整页 `<meta refresh>`,
+  功能无损。
+- 面板长期奉行的「零 JavaScript」规则,正式降级为有边界的渐进增强原则(见 `CONTRIBUTING.md`):
+  面板关 JS 必须完整可用,不引入框架/bundler/构建步骤/外部 JS,只允许极小段内联原生脚本。
+
+### 新增
+- 新增可选配置 `SENTINEL_PANEL_REFRESH_SECONDS`(默认 30,最小 5),统一控制面板刷新间隔
+  ——实时轮询与 `<noscript>` 兜底都用它。旧镜像忽略此项,可干净回滚。
+
 ## [0.13.3] - 2026-06-17
 
 ### 变更
