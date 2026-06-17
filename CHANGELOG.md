@@ -10,6 +10,15 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-06-17
+
+### Changed
+- The header version chip is now a click-to-open changelog popover instead of a
+  static-looking link. The badge became a zero-JS disclosure that shows the
+  running version's "What's new" inline (with a caret affordance and hover
+  state) plus a "Full changelog" link, and the full `/changelog` page gained a
+  breadcrumb back to the overview.
+
 ## [0.12.1] - 2026-06-17
 
 ### Security
@@ -255,7 +264,8 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 ### Security
 - Secret-leak redaction across docker metadata and environment values.
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.1...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.0...v0.11.1
