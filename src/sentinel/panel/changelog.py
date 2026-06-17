@@ -1,6 +1,7 @@
 # src/sentinel/panel/changelog.py
-"""面板「本次更新」内容源:解析 Keep-a-Changelog 文本 + 定位打包/源码两态的 changelog。
-纯只读静态文件,绝不外呼;条目以纯文本渲染(autoescape),不解释 Markdown 内联。"""
+"""面板更新日志内容源:解析 Keep-a-Changelog 文本 + 定位打包/源码两态的 changelog。
+纯只读静态文件,绝不外呼;条目以纯文本渲染(autoescape),不解释 Markdown 内联。
+版本 chip 点击弹出的 :target 模态与 /changelog 整页都消费 load_releases() 的全量版本块。"""
 
 from __future__ import annotations
 
@@ -99,36 +100,3 @@ def load_releases(lang: str) -> list[Release]:
     if path is None:
         return []
     return parse_changelog(path.read_text(encoding="utf-8"))
-
-
-_WHATSNEW_MAX = 6  # 导航弹层「本次更新」最多列几条;超出由「完整更新日志 →」兜底
-
-
-def _cap(rel: Release, limit: int) -> tuple[Release, bool]:
-    """把版本块条目总数截到 limit;超出返回 truncated=True(弹层提示去完整日志看全)。
-    逐段取、保留段头,累计到上限即止(空段不留)。"""
-    total = sum(len(s.entries) for s in rel.sections)
-    if total <= limit:
-        return rel, False
-    capped: list[Section] = []
-    budget = limit
-    for s in rel.sections:
-        if budget <= 0:
-            break
-        take = s.entries[:budget]
-        if take:
-            capped.append(Section(s.category, take))
-            budget -= len(take)
-    return Release(rel.version, rel.date, capped), True
-
-
-def whatsnew(
-    lang: str, version: str, *, limit: int = _WHATSNEW_MAX, source: str | None = None
-) -> tuple[Release | None, bool]:
-    """当前运行版本的 changelog 块,供导航弹层「本次更新」。返回 (块或 None, 是否被截断)。
-    source 仅供测试注入原文;正常从打包/源码 changelog 加载。找不到该版本即 (None, False)。"""
-    releases = parse_changelog(source) if source is not None else load_releases(lang)
-    for rel in releases:
-        if rel.version == version:
-            return _cap(rel, limit)
-    return None, False

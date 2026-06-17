@@ -88,25 +88,39 @@
   .tools { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .navrow { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:8px 0 10px; }
   .navrow .sub { color:var(--mut); font-size:11px; }
-  /* 版本 chip = 零-JS <details> 点击弹层(范式同页内其他 details);summary 即 chip */
-  .verbox { position:relative; margin:0; }
-  .ver { display:inline-flex; align-items:center; gap:5px; font-size:11px; padding:3px 9px; border:1px solid var(--line); border-radius:7px; color:var(--mut); background:var(--panel); cursor:pointer; user-select:none; list-style:none; }
-  .ver::-webkit-details-marker { display:none; } .ver::marker { content:""; }  /* 去 details 默认三角 */
-  .ver:hover, .verbox[open] > .ver { border-color:var(--vio); color:var(--txt); }  /* 明显可点 */
-  .ver.up { color:var(--txt); }
+  /* 版本 chip = <a href="#wm-changelog"> 触发零-JS :target 居中模态(窗口/卡片) */
+  .ver { display:inline-flex; align-items:center; gap:5px; font-size:11px; padding:3px 9px; border:1px solid var(--line); border-radius:7px; color:var(--mut); background:var(--panel); cursor:pointer; user-select:none; }
+  .ver:hover { border-color:var(--vio); color:var(--txt); background:var(--viobg); }  /* 明显可点 */
+  .ver.up { color:var(--txt); border-color:var(--st-degraded); }
   .ver .updot { width:6px; height:6px; border-radius:50%; background:var(--st-degraded); display:inline-block; box-shadow:0 0 0 2px rgba(210,153,34,.2); }
-  .ver .vchev { font-size:8px; color:var(--mut); transition:transform .15s; }
-  .verbox[open] > .ver .vchev { transform:rotate(180deg); }
-  .verpop { position:absolute; top:calc(100% + 6px); right:0; z-index:20; min-width:240px; max-width:min(340px,86vw); display:none; flex-direction:column; gap:8px; padding:12px 14px; border:1px solid var(--line); border-radius:var(--rad); background:var(--panel); box-shadow:0 6px 20px rgba(0,0,0,.35); text-align:left; text-transform:none; letter-spacing:normal; }
-  .verbox[open] > .verpop { display:flex; }
-  .vp-up { display:flex; flex-direction:column; gap:6px; padding-bottom:9px; border-bottom:1px solid var(--line); }
-  .vp-up b { font-size:12px; color:var(--st-degraded); }
-  .verpop code { font-size:11px; color:var(--link); white-space:pre-wrap; word-break:break-all; }
-  .vp-h { font-size:11px; color:var(--mut); text-transform:uppercase; letter-spacing:.5px; }
-  .vp-cat { font-size:11px; color:var(--vio); margin-top:7px; }
-  .vp-list { margin:3px 0 0; padding-left:18px; font-size:12px; line-height:1.5; color:var(--txt); }
-  .vp-list li { margin:1px 0; }
-  .vp-full { font-size:11px; margin-top:2px; }
+  .ver .vchev { font-size:9px; color:var(--vio); }  /* 紫色 caret:暗示可展开 */
+  /* :target 居中模态:背景遮罩(全屏 <a> 点外关闭)+ 卡片(可滚历史)。close 锚指向不存在
+     的 #wm-close → :target 不命中即关闭,且浏览器找不到该 id 不滚动。z-index 高于 tip/导航。 */
+  .vmodal { position:fixed; inset:0; z-index:100; display:none; }
+  .vmodal:target { display:flex; align-items:flex-start; justify-content:center; }
+  .vmodal-bg { position:absolute; inset:0; background:rgba(0,0,0,.55); }
+  .vmodal-card { position:relative; z-index:1; margin:6vh 14px; width:min(560px,92vw); max-height:84vh;
+    display:flex; flex-direction:column; overflow:hidden; border:1px solid var(--line);
+    border-radius:var(--rad-lg); background:var(--panel); box-shadow:0 18px 50px rgba(0,0,0,.5);
+    text-align:left; text-transform:none; letter-spacing:normal; }
+  .vmodal-hd { flex:none; display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:14px 18px; border-bottom:1px solid var(--line); }
+  .vmodal-hd b { font-size:14px; }
+  .vmodal-x { font-size:21px; line-height:1; color:var(--mut); padding:0 5px; }
+  .vmodal-x:hover { color:var(--txt); }
+  .vmodal-body { overflow:auto; padding:4px 18px 8px; }
+  .vm-up { display:flex; flex-direction:column; gap:6px; margin:12px 0 4px; padding:11px 13px;
+    border:1px solid var(--st-degraded); border-radius:var(--rad); background:rgba(210,153,34,.08); }
+  .vm-up b { font-size:12px; color:var(--st-degraded); }
+  .vm-up code { font-size:11px; color:var(--link); white-space:pre-wrap; word-break:break-all; }
+  .vm-rel { padding:13px 0; border-bottom:1px solid var(--line); }
+  .vm-rel:last-child { border-bottom:0; }
+  .vm-rh { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+  .vm-rh b { font-size:13px; } .vm-rh .muted { font-weight:400; }
+  .vm-cat { font-size:11px; color:var(--vio); text-transform:uppercase; letter-spacing:.5px; margin-top:9px; }
+  .vm-list { margin:4px 0 0; padding-left:18px; font-size:12px; line-height:1.55; color:var(--txt); }
+  .vm-list li { margin:2px 0; }
+  .vm-full { flex:none; padding:11px 18px; border-top:1px solid var(--line); font-size:11px; }
   /* 字段解释气泡(零-JS hover/focus);只挂在无 overflow:hidden 祖先处,见 _macros.html */
   .tip { position:relative; cursor:help; border-bottom:1px dotted var(--mut); }
   .tippop { position:absolute; top:calc(100% + 7px); left:50%; transform:translateX(-50%);
@@ -325,29 +339,8 @@
 <div class="hdr">
   <b>{{ t('hdr.title') }}</b>
   <div class="tools">
-    <details class="verbox">
-      <summary class="ver mono{% if nav and nav.update_available %} up{% endif %}"
-        aria-label="{{ t('ver.current', ver=nav.version if nav else '') }}{% if nav and nav.update_available %} · {{ t('update.available', ver=nav.latest_version) }}{% endif %}">v{{ nav.version if nav else '' }}{% if nav and nav.update_available %}<i class="updot"></i>{% endif %}<i class="vchev" aria-hidden="true">▾</i></summary>
-      <div class="verpop" role="note">
-        {% if nav and nav.update_available and nav.release_url %}
-        <div class="vp-up">
-          <b>{{ t('update.available', ver=nav.latest_version) }}</b>
-          <code>{{ t('update.command', ver=nav.latest_tag) }}</code>
-          <a href="{{ nav.release_url }}" target="_blank" rel="noopener">{{ t('update.notes') }} →</a>
-        </div>
-        {% endif %}
-        {% if nav and nav.current_release %}
-        <div class="verpop-now">
-          <div class="vp-h">{{ t('ver.whatsnew') }} · v{{ nav.current_release.version }}</div>
-          {% for sec in nav.current_release.sections %}
-          <div class="vp-cat">{{ sec.category }}</div>
-          <ul class="vp-list">{% for e in sec.entries %}<li>{{ e }}</li>{% endfor %}</ul>
-          {% endfor %}
-        </div>
-        {% endif %}
-        <a class="vp-full" href="{{ tab_url('/changelog') }}">{{ t('ver.fulllog') }} →</a>
-      </div>
-    </details>
+    <a class="ver mono{% if nav and nav.update_available %} up{% endif %}" href="#wm-changelog"
+      aria-label="{{ t('ver.current', ver=nav.version if nav else '') }}{% if nav and nav.update_available %} · {{ t('update.available', ver=nav.latest_version) }}{% endif %}">v{{ nav.version if nav else '' }}{% if nav and nav.update_available %}<i class="updot"></i>{% endif %}<i class="vchev" aria-hidden="true">▾</i></a>
     <span class="seg">
       <a href="{{ qurl(win=30) }}" class="{{ 'on' if window_days == 30 else '' }}">{{ t('win.label', days=30) }}</a>
       <a href="{{ qurl(win=history_days) }}" class="{{ 'on' if window_days == history_days else '' }}">{{ t('win.label', days=history_days) }}</a>
@@ -372,6 +365,46 @@
   </nav>
   <span class="sub mono">{% set sep = joiner(' · ') %}{% if refresh_seconds %}{{ sep() }}<span title="{{ t('hdr.refreshed', ts=now_str) }} · {{ refresh_seconds }}s">↻ {{ now_str[11:16] }}</span>{% endif %}{% if posture and posture.llm.enabled %}{{ sep() }}{{ t('llm.ai') }}{% if posture.llm.pending_restart %} · {{ t('llm.pending_restart') }}{% else %} ✓{% endif %}{% endif %}{% if active_tab == 'events' %}{{ sep() }}<a href="{{ qurl(ev_page=1) }}">{{ t('nav.latest') }}</a>{% endif %}</span>
 </div>
+{% if nav %}
+{# 版本 chip 点击弹出的更新日志模态:零-JS,纯 :target + CSS。position:fixed 故脱离布局流,
+   置于 body 直系(无 transform 祖先,定位锚视口)。背景遮罩与 × 均链向 #wm-close(无此 id
+   → 关闭且不滚动)。条目纯文本渲染(autoescape),全量历史可滚,当前运行版本高亮。 #}
+<div id="wm-changelog" class="vmodal" role="dialog" aria-modal="true" aria-label="{{ t('changelog.title') }}">
+  <a class="vmodal-bg" href="#wm-close" tabindex="-1" aria-hidden="true"></a>
+  <div class="vmodal-card">
+    <div class="vmodal-hd">
+      <b>{{ t('changelog.title') }} · v{{ nav.version }}</b>
+      <a class="vmodal-x" href="#wm-close" aria-label="{{ t('ver.close') }}">×</a>
+    </div>
+    <div class="vmodal-body">
+      {% if nav.update_available and nav.release_url %}
+      <div class="vm-up">
+        <b>{{ t('update.available', ver=nav.latest_version) }}</b>
+        <code>{{ t('update.command', ver=nav.latest_tag) }}</code>
+        <a href="{{ nav.release_url }}" target="_blank" rel="noopener">{{ t('update.notes') }} →</a>
+      </div>
+      {% endif %}
+      {% if nav.releases %}
+      {% for rel in nav.releases %}
+      <section class="vm-rel">
+        <div class="vm-rh">
+          <b>v{{ rel.version }}{% if rel.date %} <span class="muted">· {{ rel.date }}</span>{% endif %}</b>
+          {% if rel.version == nav.version %}<span class="chip ok">{{ t('changelog.current') }}</span>{% endif %}
+        </div>
+        {% for sec in rel.sections %}
+        <div class="vm-cat">{{ sec.category }}</div>
+        <ul class="vm-list">{% for e in sec.entries %}<li>{{ e }}</li>{% endfor %}</ul>
+        {% endfor %}
+      </section>
+      {% endfor %}
+      {% else %}
+      <p class="muted">{{ t('changelog.empty') }}</p>
+      {% endif %}
+    </div>
+    <a class="vm-full" href="{{ tab_url('/changelog') }}">{{ t('ver.fulllog') }} →</a>
+  </div>
+</div>
+{% endif %}
 {% endif %}
 {% block body %}{% endblock %}
 </body>

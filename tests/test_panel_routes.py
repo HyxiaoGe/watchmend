@@ -1269,7 +1269,10 @@ async def test_hygiene_upstream_escaped_and_status_link(tmp_path, monkeypatch):
     assert r.status_code == 200
     assert "<x>Corp" not in r.text and "&lt;x&gt;Corp" in r.text  # 显示名转义
     assert "https://status.example.com" in r.text  # 状态页链接
-    assert "javascript:" not in r.text  # 投毒 shortlink 不落进 href(scheme 白名单)
+    # 投毒 shortlink 不落进 href(scheme 白名单);精确查 href 而非裸 "javascript:"
+    # ——后者会与版本模态里 changelog 正文「防 `javascript:` / `data:`」误撞。
+    assert 'href="javascript:' not in r.text
+    assert "alert(1)" not in r.text  # 投毒 payload 整体未泄漏
     assert "poisoned link" in r.text  # 标题仍展示(降级为纯文本,无链接)
     store.close()
 
@@ -1368,7 +1371,9 @@ async def test_nav_no_ai_indicator_when_llm_off(tmp_path, monkeypatch):
     app = _build_app(store, settings)
     html = (await _get(app, "/")).text
     assert re.search(r"↻ \d{2}:\d{2}", html)
-    assert "AI 诊断" not in html  # 关态不显示 AI 行
+    # 仅查顶栏状态区(.sub mono),不查整页——版本模态里的 changelog 正文会含「AI 诊断」字样。
+    nav_sub = html.split('class="sub mono">', 1)[1].split("</span>", 1)[0]
+    assert "AI 诊断" not in nav_sub  # 关态顶栏不显示 AI 行
     store.close()
 
 
@@ -1493,17 +1498,17 @@ async def test_event_detail_glossary_confidence_tip(tmp_path, monkeypatch):
 
 
 async def test_footer_removed(tmp_path, monkeypatch):
-    # 底部静态信任声明页脚已删(意义不大,且 localhost-only 在 LAN 暴露部署上不准)
+    # 底部静态信任声明页脚已删(意义不大,且 localhost-only 在 LAN 暴露部署上不准)。
+    # 仅查页脚元素本身不存在:旧页脚文案(localhost-only / never auto-run / 建议命令
+    # 永不自动执行)现作为 changelog 历史条目正文出现在(display:none 的)版本模态里,
+    # 故不再用整页 substring 反查文案(会误撞)。
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
     app = _build_app(store, settings)
     html = (await _get(app, "/")).text
     assert 'class="footer' not in html
-    assert "建议命令永不自动执行" not in html  # footer.readonly zh
-    assert "localhost-only" not in html
     html_en = (await _get(app, "/?lang=en")).text
-    assert "localhost-only" not in html_en
-    assert "never auto-run" not in html_en  # footer.readonly en
+    assert 'class="footer' not in html_en
     store.close()
 
 
