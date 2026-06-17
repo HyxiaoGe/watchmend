@@ -12,7 +12,6 @@ from sentinel.findings import HYGIENE_RULES, EventRecord
 from sentinel.report import aggregate_window, percentile
 from sentinel.store import Store
 
-_REFRESH_SECONDS = 30
 _DAY_SECONDS = 24 * 3600
 # 健康行排序权重：现态(今日格)最坏者优先，使 /services 列表顶端先露出需关注的服务。
 # nodata 排最后(刚开始采样的服务不抢占注意力)。同权重内按服务名稳定排序。
@@ -652,7 +651,7 @@ async def build_overview(
         needs_attention.append(v)
     return {
         "now_str": now.strftime("%Y-%m-%d %H:%M"),
-        "refresh_seconds": _REFRESH_SECONDS,
+        "refresh_seconds": settings.sentinel_panel_refresh_seconds,
         "window_days": window_days,
         # header 的 LLM pill 仅读 posture.llm;完整姿态(渠道/层/docker/容器)见 /hygiene。
         "posture": {"llm": llm},
@@ -701,7 +700,7 @@ def build_services_list(
         row["p95_pts"] = _mini_sparkline_points([d["p95_ms"] for d in row["days"]])
     return {
         "now_str": now.strftime("%Y-%m-%d %H:%M"),
-        "refresh_seconds": _REFRESH_SECONDS,
+        "refresh_seconds": settings.sentinel_panel_refresh_seconds,
         "window_days": window_days,
         "services": health,
     }
@@ -1033,7 +1032,7 @@ def build_events_list(
         items.append(v)
     return {
         "now_str": now.strftime("%Y-%m-%d %H:%M"),
-        "refresh_seconds": _REFRESH_SECONDS,
+        "refresh_seconds": settings.sentinel_panel_refresh_seconds,
         "subjects": [{"name": s, "label": labels.get(s, s)} for s in subjects],
         "severities": list(_EVENT_SEVERITIES),
         "statuses": list(_EVENT_STATUSES),
@@ -1359,7 +1358,7 @@ async def build_hygiene(
     }
     return {
         "now_str": now.strftime("%Y-%m-%d %H:%M"),
-        "refresh_seconds": _REFRESH_SECONDS,
+        "refresh_seconds": settings.sentinel_panel_refresh_seconds,
         "banner": banner,
         "local": local,
         "upstream": upstream,
