@@ -1801,6 +1801,8 @@ async def test_overview_smooth_refresh_contract(tmp_path, monkeypatch):
     assert html.count('http-equiv="refresh"') == 1  # 唯一 meta = noscript 那个
     assert "new DOMParser()" in html  # 内联轮询脚本存在
     assert "<script src" not in html  # 绝不引外部 JS
+    # 单一定时器防多链叠加:重排前必 clearTimeout(回退到无句柄多 setTimeout 版会失守)。
+    assert "clearTimeout" in html
     store.close()
 
 

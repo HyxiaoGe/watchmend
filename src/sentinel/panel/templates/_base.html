@@ -438,9 +438,14 @@
   if (!live) return;
   var sec = parseInt(live.getAttribute("data-refresh") || "0", 10);
   if (!sec || sec < 1) return;                 // 详情页 / 未配置 → 不轮询
-  var ms = sec * 1000, inflight = null;
+  var ms = sec * 1000, inflight = null, timer = null;
+  function schedule(delay) {                    // 单一定时器:重排前先清旧句柄,杜绝多链叠加
+    if (timer) { window.clearTimeout(timer); }
+    timer = window.setTimeout(tick, delay);
+  }
   function tick() {
-    if (document.hidden) { schedule(); return; }   // 后台标签不空跑(省服务端)
+    timer = null;
+    if (document.hidden) { schedule(ms); return; }  // 后台标签不空跑(省服务端)
     if (inflight) { inflight.abort(); }             // 防慢请求叠加
     var ctrl = window.AbortController ? new AbortController() : null;
     inflight = ctrl;
@@ -456,13 +461,12 @@
         if (so && sn) { so.innerHTML = sn.innerHTML; }     // ↻ HH:MM 确认活着
       })
       .catch(function () {})                               // 失败静默,下周期再来,绝不弄坏页面
-      .then(schedule);
+      .then(function () { if (inflight === ctrl) { inflight = null; } schedule(ms); });
   }
-  function schedule() { inflight = null; window.setTimeout(tick, ms); }
   document.addEventListener("visibilitychange", function () {
-    if (!document.hidden && !inflight) { window.setTimeout(tick, 200); }  // 回前台尽快补刷
+    if (!document.hidden) { schedule(200); }  // 回前台尽快补刷:清旧定时器再排,绝不叠加
   });
-  window.setTimeout(tick, ms);
+  schedule(ms);
 })();
 </script>
 </body>
