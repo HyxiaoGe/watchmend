@@ -276,8 +276,12 @@ def _service_windows(row: dict) -> dict:
     }
 
 
-def _hhmm(ts: int, tz: timezone) -> str:
-    return datetime.fromtimestamp(ts, tz).strftime("%H:%M")
+def _when(ts: int, tz: timezone) -> str:
+    """事件时间戳:始终带「月-日 时:分」(跨年再带年)。
+    裸 HH:MM 在跨多日的事件流里无法分辨是哪天(过去几天的事件会被误读成今天),故统一带日期。"""
+    dt = datetime.fromtimestamp(ts, tz)
+    fmt = "%m-%d %H:%M" if dt.year == datetime.now(tz).year else "%Y-%m-%d %H:%M"
+    return dt.strftime(fmt)
 
 
 def _lifecycle(e: EventRecord, *, diag_active: bool = True) -> str:
@@ -348,7 +352,7 @@ def _confidence_pct(level: str | None) -> int | None:
 def _event_view(e: EventRecord, tz: timezone, *, diag_active: bool = True) -> dict:
     return {
         "id": e.id,
-        "ts_str": _hhmm(e.ts, tz),
+        "ts_str": _when(e.ts, tz),
         "rule": e.rule,
         "subject": e.subject,
         "severity": e.severity,
@@ -359,7 +363,7 @@ def _event_view(e: EventRecord, tz: timezone, *, diag_active: bool = True) -> di
         "summary": _summary_of(e),
         "confidence": _confidence_of(e),  # §8.3 事件流卡第二行置信度色(总览不引用)
         "tool_count": _tool_count_of(e),  # §8.3 第三行取证步数
-        "resolved_str": _hhmm(e.resolved_ts, tz) if e.resolved_ts else None,
+        "resolved_str": _when(e.resolved_ts, tz) if e.resolved_ts else None,
     }
 
 
@@ -788,7 +792,7 @@ def _event_x_marks(
                 "x": round(min(max(x, 0.0), w), 1),
                 "severity": e.severity,
                 "rule": e.rule,
-                "ts_str": _hhmm(e.ts, tz),
+                "ts_str": _when(e.ts, tz),
             }
         )
     return out
@@ -1166,7 +1170,7 @@ def _local_hygiene(store: Store, settings: Settings, *, tz: timezone) -> list[di
             "key": "backup",
             "state": "alert",
             "event_id": be.id,
-            "ts_str": _hhmm(be.ts, tz),
+            "ts_str": _when(be.ts, tz),
             "values": {
                 "age_hours": round(age, 1) if age is not None else None,
                 "threshold_hours": settings.sentinel_backup_max_age_hours,
@@ -1199,7 +1203,7 @@ def _local_hygiene(store: Store, settings: Settings, *, tz: timezone) -> list[di
         "key": "disk",
         "state": disk_state,
         "event_id": primary.id if primary else None,
-        "ts_str": _hhmm(primary.ts, tz) if primary else None,
+        "ts_str": _when(primary.ts, tz) if primary else None,
         "values": {
             "predicted_avail_gb": round(avail / 1e9, 1) if avail is not None else None,
             "forecast_days": settings.sentinel_disk_forecast_days,
@@ -1216,7 +1220,7 @@ def _local_hygiene(store: Store, settings: Settings, *, tz: timezone) -> list[di
             "key": "cert",
             "state": "alert",
             "event_id": ce.id,
-            "ts_str": _hhmm(ce.ts, tz),
+            "ts_str": _when(ce.ts, tz),
             "values": {
                 "days_left": round(days) if days is not None else None,
                 "min_days": settings.sentinel_cert_min_days,

@@ -1662,3 +1662,46 @@ async def test_event_detail_link_never_dead_for_stale_service(tmp_path, monkeypa
     assert "/service/api?" in r90.text
     assert (await _get(app, "/service/api?win=90")).status_code == 200
     store.close()
+
+
+async def test_events_show_date_not_bare_time(tmp_path, monkeypatch):
+    # bug:多日事件流里事件只显示 HH:MM,分不清是哪天(如 Dozzle 06-11 16:35 / 06-12 12:26
+    # 被当成今天)。修后事件时间戳必须带「月-日」。
+    from datetime import datetime, timedelta, timezone
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    tz = timezone(timedelta(hours=settings.sentinel_heartbeat_utc_offset))
+    dt = datetime.now(tz) - timedelta(days=5)  # 5 天前(同年)
+    ts = int(dt.timestamp())
+    store.insert_event(
+        ts=ts,
+        rule="container_restart",
+        subject="dozzle",
+        severity="warning",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    r = await _get(app, "/events?lang=zh")
+    assert r.status_code == 200
+    expected = datetime.fromtimestamp(ts, tz).strftime("%m-%d %H:%M")  # 月-日 时:分
+    assert expected in r.text  # 带日期,不再是裸 HH:MM
+    store.close()
+
+
+def test_when_formatter_includes_date_and_year_when_crossyear(monkeypatch):
+    # 单元:同年带「月-日 时:分」,跨年带「年-月-日 时:分」。
+    from datetime import datetime, timedelta, timezone
+
+    from sentinel.panel import view
+
+    tz = timezone(timedelta(hours=8))
+    now = datetime.now(tz)
+    same_year = now.replace(month=1, day=2, hour=3, minute=4)
+    assert view._when(int(same_year.timestamp()), tz) == same_year.strftime("%m-%d %H:%M")
+    old = now - timedelta(days=400)  # 必跨年
+    assert view._when(int(old.timestamp()), tz) == old.strftime("%Y-%m-%d %H:%M")
