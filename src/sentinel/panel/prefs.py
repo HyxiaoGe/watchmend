@@ -73,14 +73,22 @@ def apply_pref_cookies(
     lang: str | None = None,
     theme: str | None = None,
     window: int | None = None,
+    refresh: int | None = None,
+    clear: tuple[str, ...] = (),
 ) -> None:
-    """仅对显式传入（非 None）的偏好写 Set-Cookie。调用方：某偏好出现在 querystring 时才传。
-    cookie 非 HttpOnly（前端无需读，但保留 JS 可读以便将来 PE 增强），SameSite=Lax、Path=/。"""
-    if lang is not None:
-        response.set_cookie("wm_lang", lang, max_age=_COOKIE_MAX_AGE, samesite="Lax", path="/")
-    if theme is not None:
-        response.set_cookie("wm_theme", theme, max_age=_COOKIE_MAX_AGE, samesite="Lax", path="/")
-    if window is not None:
-        response.set_cookie(
-            "wm_win", str(window), max_age=_COOKIE_MAX_AGE, samesite="Lax", path="/"
-        )
+    """显式非 None 的偏好 → SET（1 年期，SameSite=Lax，Path=/）；
+    出现在 clear 里的 cookie 名 → DELETE（Max-Age=0），且 clear 优先于同名 SET。
+    调用方：普通页面某偏好出现在 querystring 时才传该项；/settings 表单按用户选择决定 SET/CLEAR。
+    cookie 非 HttpOnly（前端无需读，但保留 JS 可读以便将来 PE 增强）。"""
+    clear_set = set(clear)
+
+    def _put(name: str, value: str | None) -> None:
+        if name in clear_set:
+            response.delete_cookie(name, path="/")
+        elif value is not None:
+            response.set_cookie(name, value, max_age=_COOKIE_MAX_AGE, samesite="Lax", path="/")
+
+    _put("wm_lang", lang)
+    _put("wm_theme", theme)
+    _put("wm_win", None if window is None else str(window))
+    _put("wm_refresh", None if refresh is None else str(refresh))
