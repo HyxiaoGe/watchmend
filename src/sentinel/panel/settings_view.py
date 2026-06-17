@@ -4,8 +4,13 @@ build_config_inventory：按组列出 Settings 全字段（env 变量名为项�
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from sentinel.config import Settings
 from sentinel.redact import redact_text
+
+if TYPE_CHECKING:
+    from sentinel.llm_config import LLMConfig, LLMProfile
 
 # 密钥字段:只显状态,永不出值。(必须覆盖全部敏感字段)
 # 注:feishu_*_webhook 把签名 token 嵌在 URL path 里,故计入密钥;
@@ -164,11 +169,11 @@ def _field_row(settings: Settings, name: str, secret_vals: list[str]) -> dict:
     }
 
 
-def _llm_synthetic_rows(llm_config) -> list[dict]:
+def _llm_synthetic_rows(llm_config: LLMConfig | None) -> list[dict]:
     """LLM 组顶部 active/fallback 合成行(取自注册表,非 Settings 字段)。
     只显 provider+model,绝不显 api_key/base_url;未启用显占位 '—'。"""
 
-    def _fmt(profile) -> str:
+    def _fmt(profile: LLMProfile | None) -> str:
         if profile is None:
             return "—"
         return f"{profile.name} · {profile.model}"
@@ -195,7 +200,7 @@ def _llm_synthetic_rows(llm_config) -> list[dict]:
     ]
 
 
-def build_config_inventory(settings: Settings, *, llm_config=None) -> dict:
+def build_config_inventory(settings: Settings, *, llm_config: LLMConfig | None = None) -> dict:
     """按组只读一览。返回 {"groups": [{"key", "rows": [...]}, ...]}。"""
     secret_vals = _secret_values(settings)
     groups: list[dict] = []

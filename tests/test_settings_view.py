@@ -1,5 +1,12 @@
+import re
+
 from sentinel.config import Settings
 from sentinel.panel import settings_view
+from sentinel.panel.settings_view import _SECRETS
+
+# 裸端点 URL:凭证在配对的 *_token 字段里,URL 本身过 redact 兜底,故有意不列为 secret
+_URL_ALLOWLIST = {"sentinel_webhook_url", "sentinel_ntfy_url"}
+_CRED_RE = re.compile(r"(secret|token|key|password|passwd|pwd|sign|credential|webhook)", re.I)
 
 
 def _settings(monkeypatch, **env):
@@ -77,3 +84,40 @@ def test_inventory_llm_synthetic_rows_show_active_fallback(monkeypatch):
     assert "deepseek" in syn["active"]["value"] and "deepseek-chat" in syn["active"]["value"]
     assert "kimi" in syn["fallback"]["value"]
     assert "SECRETKEY" not in syn["active"]["value"]  # api_key never shown
+
+
+def test_all_credential_shaped_fields_are_secret():
+    """fail-safe:任何凭证形态字段名必须在 _SECRETS(除两个有意豁免的裸 URL)。
+    新增密钥字段若忘记登记,这条测试会变红,而不是静默泄露明文。"""
+    from sentinel.config import Settings
+
+    suspects = {
+        name
+        for name in Settings.model_fields
+        if _CRED_RE.search(name) and name not in _URL_ALLOWLIST
+    }
+    missing = suspects - set(_SECRETS)
+    assert not missing, f"这些凭证形态字段未登记进 _SECRETS,会泄露明文: {missing}"
+
+
+def test_bare_url_fields_redact_embedded_credentials(monkeypatch):
+    s = _settings(
+        monkeypatch,
+        SENTINEL_WEBHOOK_URL="https://user:supersecretpw99@hook.example.com/path",
+        SENTINEL_NTFY_URL="https://ntfy.example.com/topic?token=Zxy987Wvu654Tsr",
+    )
+    inv = settings_view.build_config_inventory(s, llm_config=None)
+    rows = {r["env"]: r for g in inv["groups"] for r in g["rows"] if r.get("env")}
+    assert "supersecretpw99" not in rows["SENTINEL_WEBHOOK_URL"]["value"]
+    assert "Zxy987Wvu654Tsr" not in rows["SENTINEL_NTFY_URL"]["value"]
+
+
+def test_secret_row_value_is_none_whether_configured_or_not(monkeypatch):
+    # configured=True 和 configured=False 两种情况下,secret 行的 value 都必须是 None
+    s = _settings(monkeypatch, SENTINEL_DIAG_TOKEN="sometoken-abc123def456")
+    inv = settings_view.build_config_inventory(s, llm_config=None)
+    rows = {r["env"]: r for g in inv["groups"] for r in g["rows"] if r.get("env")}
+    assert rows["SENTINEL_DIAG_TOKEN"]["value"] is None  # 已配置
+    assert rows["SENTINEL_DIAG_TOKEN"]["configured"] is True
+    assert rows["SENTINEL_WEBHOOK_TOKEN"]["value"] is None  # 未配置
+    assert rows["SENTINEL_WEBHOOK_TOKEN"]["configured"] is False
