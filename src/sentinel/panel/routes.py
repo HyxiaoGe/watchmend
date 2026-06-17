@@ -53,11 +53,13 @@ def _nav_helpers(path: str, *, lang: str, theme: str, window_days: int, **transi
     return qurl, tab_url
 
 
-def _nav_context(store) -> dict:
-    """全局版本/更新态(每页注入 _base 头部)。只读 meta,绝不外呼;
-    比对运行版本判断是否有新版;release_url 经 _safe_http_url 净化防 scheme 注入。"""
+def _nav_context(store, lang: str) -> dict:
+    """全局版本/更新态(每页注入 _base 头部)。只读 meta + 本地 changelog,绝不外呼;
+    比对运行版本判断是否有新版;release_url 经 _safe_http_url 净化防 scheme 注入;
+    current_release = 运行版本的「本次更新」块(供版本 chip 点击弹层,无则 None)。"""
     latest = store.get_meta("latest_known_version")
     available = bool(latest and is_newer(latest, __version__))
+    current, truncated = changelog.whatsnew(lang, __version__)
     return {
         "version": __version__,
         "update_available": available,
@@ -67,6 +69,8 @@ def _nav_context(store) -> dict:
         if (available and latest)
         else None,
         "release_url": view._safe_http_url(store.get_meta("latest_release_url")),
+        "current_release": current,
+        "current_truncated": truncated,
     }
 
 
@@ -156,7 +160,7 @@ def register_panel_routes(app: FastAPI) -> None:
             return "/service/" + quote(name, safe="") + "?" + prefs_qs
 
         html = _env.get_template("panel.html").render(
-            nav=_nav_context(state.store),
+            nav=_nav_context(state.store, lang),
             **overview,
             t=t,
             lang=lang,
@@ -224,7 +228,7 @@ def register_panel_routes(app: FastAPI) -> None:
             )
 
         html = _env.get_template("event.html").render(
-            nav=_nav_context(state.store),
+            nav=_nav_context(state.store, lang),
             detail=detail,
             t=i18n.make_translator(lang),
             lang=lang,
@@ -271,7 +275,7 @@ def register_panel_routes(app: FastAPI) -> None:
             )
 
         html = _env.get_template("services.html").render(
-            nav=_nav_context(state.store),
+            nav=_nav_context(state.store, lang),
             **data,
             t=i18n.make_translator(lang),
             lang=lang,
@@ -329,7 +333,7 @@ def register_panel_routes(app: FastAPI) -> None:
             )
 
         html = _env.get_template("service.html").render(
-            nav=_nav_context(state.store),
+            nav=_nav_context(state.store, lang),
             detail=detail,
             t=i18n.make_translator(lang),
             lang=lang,
@@ -401,7 +405,7 @@ def register_panel_routes(app: FastAPI) -> None:
             )
 
         html = _env.get_template("events.html").render(
-            nav=_nav_context(state.store),
+            nav=_nav_context(state.store, lang),
             **data,
             t=i18n.make_translator(lang),
             lang=lang,
@@ -441,7 +445,7 @@ def register_panel_routes(app: FastAPI) -> None:
             )
 
         html = _env.get_template("hygiene.html").render(
-            nav=_nav_context(state.store),
+            nav=_nav_context(state.store, lang),
             **data,
             t=i18n.make_translator(lang),
             lang=lang,
@@ -466,7 +470,7 @@ def register_panel_routes(app: FastAPI) -> None:
         qurl, tab_url = _nav_helpers("/changelog", lang=lang, theme=theme, window_days=window_days)
         t = i18n.make_translator(lang)
         html = _env.get_template("changelog.html").render(
-            nav=_nav_context(state.store),
+            nav=_nav_context(state.store, lang),
             lang=lang,
             theme=theme,
             t=t,

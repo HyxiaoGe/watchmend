@@ -250,3 +250,90 @@ async def test_no_title_marker_when_current(tmp_path, monkeypatch):
     resp = await _get(app, "/")
     assert "<title>● " not in resp.text
     store.close()
+
+
+# ---- 版本 chip:点击弹层「本次更新」+ 完整日志链接 + changelog 面包屑 ----
+
+
+def test_whatsnew_returns_running_version_block():
+    # whatsnew(lang, version) 取该版本的 changelog 块 + 截断标记。
+    from sentinel.panel.changelog import whatsnew
+
+    rel, truncated = whatsnew("en", "0.2.0", source=_SAMPLE)
+    assert rel is not None
+    assert rel.version == "0.2.0"
+    assert [s.category for s in rel.sections] == ["Added", "Changed"]
+    assert truncated is False  # 3 条 < 上限
+
+
+def test_whatsnew_caps_entries_and_flags_truncation():
+    from sentinel.panel.changelog import whatsnew
+
+    rel, truncated = whatsnew("en", "0.2.0", source=_SAMPLE, limit=2)
+    assert rel is not None
+    total = sum(len(s.entries) for s in rel.sections)
+    assert total == 2  # 截到上限
+    assert truncated is True  # 标记还有更多,弹层提示去完整日志
+
+
+def test_whatsnew_unknown_version_returns_none():
+    from sentinel.panel.changelog import whatsnew
+
+    rel, truncated = whatsnew("en", "99.0.0", source=_SAMPLE)
+    assert rel is None
+    assert truncated is False
+
+
+async def test_version_chip_is_clickable_details(tmp_path, monkeypatch):
+    # chip = 零-JS <details> 点击弹层;summary 带可见 caret(明显可点)。
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/")
+    assert resp.status_code == 200
+    assert '<details class="verbox"' in resp.text
+    assert '<summary class="ver' in resp.text
+    assert "vchev" in resp.text  # caret 可点提示
+    assert "<script" not in resp.text  # 零-JS 铁律
+    store.close()
+
+
+async def test_version_popover_shows_whatsnew_without_update(tmp_path, monkeypatch):
+    # 无新版时弹层仍展示当前版本「本次更新」(行为变化:弹层恒在,非只在有更新时)。
+    from sentinel import __version__
+    from sentinel.panel.changelog import load_releases
+
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))  # 无 latest_known_version → update_available False
+    app = _build_app(store, settings)
+    resp = await _get(app, "/?lang=zh")
+    assert resp.status_code == 200
+    assert "<title>● " not in resp.text  # 确无更新
+    if __version__ in {r.version for r in load_releases("zh")}:
+        assert "本次更新" in resp.text  # ver.whatsnew 标题
+        assert 'class="verpop-now"' in resp.text
+    store.close()
+
+
+async def test_version_popover_has_full_changelog_link(tmp_path, monkeypatch):
+    # 弹层底部留「完整更新日志 →」进 /changelog 看历史。
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/?lang=zh")
+    assert resp.status_code == 200
+    assert 'href="/changelog' in resp.text
+    assert "完整更新日志" in resp.text  # ver.fulllog
+    store.close()
+
+
+async def test_changelog_page_has_breadcrumb(tmp_path, monkeypatch):
+    # 整页不再是孤页:加面包屑回总览(与 event/service 详情页一致)。
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/changelog?lang=zh")
+    assert resp.status_code == 200
+    assert 'class="crumb"' in resp.text
+    assert 'href="/?' in resp.text or 'href="/"' in resp.text  # 面包屑回总览
+    store.close()
