@@ -68,3 +68,17 @@ def test_apply_pref_cookies_noop_when_all_none():
     resp = Response()
     prefs.apply_pref_cookies(resp)
     assert _set_cookies(resp) == []
+
+
+def test_resolve_refresh_query_over_cookie_over_default():
+    assert prefs.resolve_refresh("15", "60", 30) == 15  # query 优先
+    assert prefs.resolve_refresh(None, "60", 30) == 60  # 退 cookie
+    assert prefs.resolve_refresh(None, None, 30) == 30  # 退服务端默认
+    assert prefs.resolve_refresh("0", None, 30) == 0  # 0 = 关闭,合法
+
+
+def test_resolve_refresh_rejects_out_of_allowlist():
+    assert prefs.resolve_refresh("999", None, 30) == 30
+    assert prefs.resolve_refresh("default", None, 30) == 30
+    assert prefs.resolve_refresh("abc", "777", 45) == 45  # 都非法 → 服务端默认(原样)
+    assert prefs.resolve_refresh(None, None, 45) == 45  # 服务端默认可为允许集外任意值

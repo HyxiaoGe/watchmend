@@ -12,6 +12,7 @@ from sentinel.panel.i18n import resolve_lang as _i18n_resolve_lang
 
 _THEMES = ("dark", "light", "system")
 _COOKIE_MAX_AGE = 365 * 24 * 3600  # 1 年
+_REFRESH_ALLOWED = {0, 15, 30, 60}  # 浏览器可选的自动刷新值;0=关闭
 
 
 def resolve_lang(
@@ -51,6 +52,19 @@ def resolve_page(query: str | None) -> int:
         return max(1, int(query))
     except (TypeError, ValueError):
         return 1
+
+
+def resolve_refresh(query: str | None, cookie: str | None, server_default: int) -> int:
+    """自动刷新间隔(秒):query > cookie > server_default。
+    query/cookie 仅当为允许集 {0,15,30,60} 之一才采用('default' 哨兵/越界一律忽略);
+    server_default 原样返回(操作员配置 ge>=5 的任意值,不受允许集约束)。"""
+    for cand in (query, cookie):
+        if cand is None:
+            continue
+        s = cand.strip()
+        if s.isdigit() and int(s) in _REFRESH_ALLOWED:
+            return int(s)
+    return server_default
 
 
 def apply_pref_cookies(
