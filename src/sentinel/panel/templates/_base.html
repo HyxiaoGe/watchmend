@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+{# 品牌 favicon:内联 data-URI SVG(WM pulse mark),不新增静态路由/文件,随浏览器缩放清晰 #}
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='60%2060%20392%20392'%3E%3Crect%20x='76'%20y='76'%20width='360'%20height='360'%20rx='78'%20fill='%230F766E'/%3E%3Cpath%20d='M140%20170l47%20172%2058-134%2052%20134%2064-172'%20fill='none'%20stroke='%23ECFEFF'%20stroke-width='34'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3Cpath%20d='M134%20263h66l24-39%2036%2090%2031-66h88'%20fill='none'%20stroke='%230F172A'%20stroke-width='22'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3Ccircle%20cx='374'%20cy='138'%20r='30'%20fill='%2322C55E'%20stroke='%23F8FAFC'%20stroke-width='12'/%3E%3C/svg%3E">
 {% if refresh_seconds %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endif %}
 <title>{% if nav and nav.update_available %}● {% endif %}{% block title %}{{ t('hdr.title') if t else 'WatchMend' }}{% endblock %}</title>
 <style>
@@ -33,8 +35,12 @@
   body { background:var(--bg); color:var(--txt); font-family:ui-sans-serif,system-ui,'Segoe UI',sans-serif; font-size:13px; margin:0; padding:1.1rem; }
   .mono { font-family:ui-monospace,Menlo,monospace; }
   a { color:var(--link); text-decoration:none; }
-  .hdr { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; }
+  .hdr { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
   .hdr b { font-size:15px; } .hdr .sub { color:var(--mut); font-size:11px; }
+  /* 品牌标识:内联 WM pulse mark + 文字标题,整体链回首页(保留主题色,不染链接蓝) */
+  .brand { display:inline-flex; align-items:center; gap:9px; color:var(--txt); }
+  .brand:hover { color:var(--txt); }
+  .brand-mark { width:23px; height:23px; flex:none; display:block; border-radius:5px; }
   .seg { display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
   .seg a { color:var(--mut); font-size:11px; padding:3px 10px; }
   .seg a.on { background:var(--vio); color:#fff; }
@@ -337,7 +343,15 @@
   'hygiene': '<svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.8 13.2 4v4.2c0 3.4-2.4 5.4-5.2 6.2C5.2 13.6 2.8 11.6 2.8 8.2V4z"/><path d="M5.7 8.1 7.3 9.7 10.4 6.3" stroke-linecap="round"/></svg>'
 } %}
 <div class="hdr">
-  <b>{{ t('hdr.title') }}</b>
+  <a class="brand" href="{{ tab_url('/') }}" aria-label="{{ t('hdr.title') }}">
+    <svg class="brand-mark" viewBox="60 60 392 392" aria-hidden="true">
+      <rect x="76" y="76" width="360" height="360" rx="78" fill="#0F766E"/>
+      <path d="M140 170l47 172 58-134 52 134 64-172" fill="none" stroke="#ECFEFF" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M134 263h66l24-39 36 90 31-66h88" fill="none" stroke="#0F172A" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="374" cy="138" r="30" fill="#22C55E" stroke="#F8FAFC" stroke-width="12"/>
+    </svg>
+    <b>{{ t('hdr.title') }}</b>
+  </a>
   <div class="tools">
     <a class="ver mono{% if nav and nav.update_available %} up{% endif %}" href="#wm-changelog"
       aria-label="{{ t('ver.current', ver=nav.version if nav else '') }}{% if nav and nav.update_available %} · {{ t('update.available', ver=nav.latest_version) }}{% endif %}">v{{ nav.version if nav else '' }}{% if nav and nav.update_available %}<i class="updot"></i>{% endif %}<i class="vchev" aria-hidden="true">▾</i></a>
