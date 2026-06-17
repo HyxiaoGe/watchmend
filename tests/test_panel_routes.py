@@ -57,6 +57,26 @@ async def test_overview_renders(tmp_path, monkeypatch):
     store.close()
 
 
+async def test_header_shows_inline_brand_logo_and_favicon(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/")
+    assert resp.status_code == 200
+    html = resp.text
+    # 头部品牌标识:内联 SVG mark(零外部请求、随主题自洽),包在指向首页的品牌链接里
+    assert 'class="brand"' in html
+    assert '<svg class="brand-mark"' in html
+    assert "<img" not in html  # 必须内联,绝不引外部位图
+    assert "证据台" in html  # 文字标题仍保留在品牌链接内
+    # favicon:data-URI SVG,不新增静态路由/文件(additive 不变量)
+    assert 'rel="icon"' in html
+    assert "data:image/svg+xml" in html
+    # 仍是零-JS
+    assert "<script" not in html
+    store.close()
+
+
 async def test_services_down_from_daily_aggregate(tmp_path, monkeypatch):
     # 健康柱条/服务列表的 down 态可由历史 probe_daily 聚合派生(非仅实时样本)。明细在 /services。
     from datetime import datetime, timedelta, timezone
