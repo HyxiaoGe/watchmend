@@ -121,3 +121,54 @@ def test_secret_row_value_is_none_whether_configured_or_not(monkeypatch):
     assert rows["SENTINEL_DIAG_TOKEN"]["configured"] is True
     assert rows["SENTINEL_WEBHOOK_TOKEN"]["value"] is None  # 未配置
     assert rows["SENTINEL_WEBHOOK_TOKEN"]["configured"] is False
+
+
+def test_display_prefs_lang_auto_when_no_cookie():
+    d = settings_view.build_display_prefs(
+        lang_eff="zh",
+        lang_cookie=None,
+        theme_eff="dark",
+        window_eff=30,
+        history_days=90,
+        refresh_eff=30,
+        refresh_cookie=None,
+        server_refresh=30,
+    )
+    assert d["lang"]["selected"] == "auto"  # 无 cookie → 自动
+    assert d["theme"]["selected"] == "dark"
+    assert d["window"]["selected"] == 30
+    assert d["window"]["options"] == [30, 90]
+    assert d["refresh"]["selected"] == "default"  # 无 cookie → 默认
+    assert d["refresh"]["server"] == 30
+
+
+def test_display_prefs_explicit_cookie_selected():
+    d = settings_view.build_display_prefs(
+        lang_eff="en",
+        lang_cookie="en",
+        theme_eff="light",
+        window_eff=90,
+        history_days=90,
+        refresh_eff=15,
+        refresh_cookie="15",
+        server_refresh=30,
+    )
+    assert d["lang"]["selected"] == "en"
+    assert d["refresh"]["selected"] == "15"
+    assert d["window"]["selected"] == 90
+
+
+def test_display_prefs_invalid_cookie_falls_to_neutral():
+    # 非法 cookie 值(不在受支持集合)回落到中性选项
+    d = settings_view.build_display_prefs(
+        lang_eff="zh",
+        lang_cookie="fr",
+        theme_eff="system",
+        window_eff=30,
+        history_days=90,
+        refresh_eff=30,
+        refresh_cookie="999",
+        server_refresh=30,
+    )
+    assert d["lang"]["selected"] == "auto"
+    assert d["refresh"]["selected"] == "default"

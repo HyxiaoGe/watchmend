@@ -211,3 +211,37 @@ def build_config_inventory(settings: Settings, *, llm_config: LLMConfig | None =
         rows.extend(_field_row(settings, n, secret_vals) for n in names)
         groups.append({"key": key, "rows": rows})
     return {"groups": groups}
+
+
+def build_display_prefs(
+    *,
+    lang_eff: str,
+    lang_cookie: str | None,
+    theme_eff: str,
+    window_eff: int,
+    history_days: int,
+    refresh_eff: int,
+    refresh_cookie: str | None,
+    server_refresh: int,
+) -> dict:
+    """显示偏好表单的当前选中态。lang/refresh 的"中性选项"(自动/默认)在无显式 cookie 时选中。"""
+    lang_sel = (
+        lang_cookie.strip().lower()
+        if (lang_cookie or "").strip().lower() in ("zh", "en")
+        else "auto"
+    )
+    refresh_sel = (
+        refresh_cookie.strip()
+        if (refresh_cookie or "").strip() in ("0", "15", "30", "60")
+        else "default"
+    )
+    return {
+        "lang": {"selected": lang_sel, "options": ["auto", "zh", "en"]},
+        "theme": {"selected": theme_eff, "options": ["system", "dark", "light"]},
+        "window": {"selected": window_eff, "options": [30, history_days]},
+        "refresh": {
+            "selected": refresh_sel,
+            "options": ["default", "0", "15", "30", "60"],
+            "server": server_refresh,
+        },
+    }
