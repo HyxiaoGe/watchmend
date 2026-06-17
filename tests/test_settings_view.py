@@ -49,10 +49,13 @@ def test_inventory_unset_secret_shows_not_configured(monkeypatch):
 
 
 def test_inventory_redacts_embedded_secret_in_nonsecret_value(monkeypatch):
-    s = _settings(monkeypatch, SENTINEL_PROMETHEUS_URL="https://x/?k=sk-ABCDEFGHIJKLMNOPQRSTUVWX")
+    # 非密钥字段意外内嵌 API-key 形态 → redact use_patterns 兜底脱敏。
+    # 用 AWS 形态(AKIA…)而非 OpenAI 形态:redact 两者都能脱,但后者会触发发布期 leak_check 门禁。
+    embedded = "AKIAIOSFODNN7EXAMPLE"
+    s = _settings(monkeypatch, SENTINEL_PROMETHEUS_URL=f"https://x/?k={embedded}")
     inv = settings_view.build_config_inventory(s, llm_config=None)
     rows = {r["env"]: r for g in inv["groups"] for r in g["rows"] if r.get("env")}
-    assert "sk-ABCDEFGHIJKLMNOPQRSTUVWX" not in rows["SENTINEL_PROMETHEUS_URL"]["value"]
+    assert embedded not in rows["SENTINEL_PROMETHEUS_URL"]["value"]
 
 
 def test_inventory_llm_synthetic_rows_disabled_when_no_config(monkeypatch):
