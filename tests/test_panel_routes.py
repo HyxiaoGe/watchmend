@@ -72,8 +72,8 @@ async def test_header_shows_inline_brand_logo_and_favicon(tmp_path, monkeypatch)
     # favicon:data-URI SVG,不新增静态路由/文件(additive 不变量)
     assert 'rel="icon"' in html
     assert "data:image/svg+xml" in html
-    # 仍是零-JS
-    assert "<script" not in html
+    # 无外部 JS(渐进增强:允许内联脚本)
+    assert "<script src" not in html
     store.close()
 
 
