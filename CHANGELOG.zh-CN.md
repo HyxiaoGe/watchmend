@@ -10,6 +10,24 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-06-17
+
+### 新增
+- 事件 ↔ 服务导航:事件流每个事件链向其服务详情页,服务详情亦反向链回其筛选后的
+  事件列表——双向下钻,且不丢失当前窗口 / 筛选上下文。
+
+### 修复
+- 事件时间戳带上日期,不再只显示裸 `HH:MM`,旧事件读起来不再有歧义。
+- docker 重启动作:容器匹配现在先把 `docker ps` 输出落地再匹配,根除可能误拒合法
+  重启的 `pipefail` / `SIGPIPE` 竞态。
+
+### 安全
+- 诊断日志脱敏:喂给 LLM 诊断工具(`docker_logs` / `loki_logs`)的容器 / Loki 日志
+  输出,现在在出内网前、以及落证据链 / 面板展示前先 scrub 密钥。两层:精确匹配
+  WatchMend 自有与目标容器自有的密钥值(其本身绝不外泄),加保守形态正则(API key、
+  JWT、Bearer / Basic 凭据、`key=value` / JSON 赋值、连接串密码、PEM 私钥块)。模型
+  与证据链拿到的是同一份脱敏后文本。
+
 ## [0.11.1] - 2026-06-17
 
 ### 新增
@@ -183,7 +201,8 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 ### 安全
 - docker 元数据与环境值的密钥泄漏遮蔽。
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.0...v0.10.1

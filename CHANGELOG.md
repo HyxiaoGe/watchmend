@@ -10,6 +10,30 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-06-17
+
+### Added
+- Event ↔ service navigation: the event stream links each event to its service
+  detail page, and service detail links back to its filtered event list —
+  two-way drill-down without losing the active window / filter context.
+
+### Fixed
+- Event timestamps now carry the date instead of a bare `HH:MM`, so older events
+  read unambiguously.
+- Docker restart action: container matching now lands the `docker ps` output
+  before matching, eliminating a `pipefail` / `SIGPIPE` race that could
+  spuriously reject a valid restart.
+
+### Security
+- Diagnosis log redaction: the container / Loki log output fed to the LLM
+  diagnosis tools (`docker_logs` / `loki_logs`) is now scrubbed for secrets
+  before it leaves the network and before it is stored in the evidence chain or
+  shown in the panel. Two tiers: exact-match of WatchMend's own and the target
+  container's own secret values (which are themselves never emitted), plus
+  conservative shape patterns (API keys, JWTs, Bearer / Basic credentials,
+  `key=value` / JSON assignments, connection-string passwords, PEM private-key
+  blocks). The model and the evidence chain receive the same redacted text.
+
 ## [0.11.1] - 2026-06-17
 
 ### Added
@@ -221,7 +245,8 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 ### Security
 - Secret-leak redaction across docker metadata and environment values.
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.0...v0.10.1
