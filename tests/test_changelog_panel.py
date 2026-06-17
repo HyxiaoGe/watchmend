@@ -220,13 +220,15 @@ async def test_changelog_respects_lang(tmp_path, monkeypatch):
     store.close()
 
 
-async def test_version_pill_links_to_changelog(tmp_path, monkeypatch):
+async def test_version_chip_opens_modal_not_page(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
     app = _build_app(store, settings)
     resp = await _get(app, "/")  # 任一含导航壳的页
     assert resp.status_code == 200
-    assert 'href="/changelog' in resp.text  # 版本胶囊入口(带 querystring)
+    # chip 是触发 :target 模态的锚,不再跳页(href 指向 #wm-changelog 而非 /changelog)
+    assert 'class="ver mono' in resp.text
+    assert 'href="#wm-changelog"' in resp.text
     store.close()
 
 
@@ -252,54 +254,27 @@ async def test_no_title_marker_when_current(tmp_path, monkeypatch):
     store.close()
 
 
-# ---- 版本 chip:点击弹层「本次更新」+ 完整日志链接 + changelog 面包屑 ----
+# ---- 版本 chip → 零-JS :target 居中模态(全量更新日志)+ changelog 面包屑 ----
 
 
-def test_whatsnew_returns_running_version_block():
-    # whatsnew(lang, version) 取该版本的 changelog 块 + 截断标记。
-    from sentinel.panel.changelog import whatsnew
-
-    rel, truncated = whatsnew("en", "0.2.0", source=_SAMPLE)
-    assert rel is not None
-    assert rel.version == "0.2.0"
-    assert [s.category for s in rel.sections] == ["Added", "Changed"]
-    assert truncated is False  # 3 条 < 上限
-
-
-def test_whatsnew_caps_entries_and_flags_truncation():
-    from sentinel.panel.changelog import whatsnew
-
-    rel, truncated = whatsnew("en", "0.2.0", source=_SAMPLE, limit=2)
-    assert rel is not None
-    total = sum(len(s.entries) for s in rel.sections)
-    assert total == 2  # 截到上限
-    assert truncated is True  # 标记还有更多,弹层提示去完整日志
-
-
-def test_whatsnew_unknown_version_returns_none():
-    from sentinel.panel.changelog import whatsnew
-
-    rel, truncated = whatsnew("en", "99.0.0", source=_SAMPLE)
-    assert rel is None
-    assert truncated is False
-
-
-async def test_version_chip_is_clickable_details(tmp_path, monkeypatch):
-    # chip = 零-JS <details> 点击弹层;summary 带可见 caret(明显可点)。
+async def test_version_chip_is_zero_js_target_modal(tmp_path, monkeypatch):
+    # chip 锚触发 :target 模态;模态容器/遮罩/关闭锚就位;无 JS。
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
     app = _build_app(store, settings)
     resp = await _get(app, "/")
     assert resp.status_code == 200
-    assert '<details class="verbox"' in resp.text
-    assert '<summary class="ver' in resp.text
-    assert "vchev" in resp.text  # caret 可点提示
+    assert 'href="#wm-changelog"' in resp.text  # chip 触发锚
+    assert 'id="wm-changelog" class="vmodal"' in resp.text  # :target 模态容器
+    assert 'class="vmodal-bg" href="#wm-close"' in resp.text  # 点外关闭(全屏遮罩 <a>)
+    assert 'class="vmodal-x" href="#wm-close"' in resp.text  # × 关闭(与遮罩同锚)
+    assert "vchev" in resp.text  # chip caret(暗示可展开)
     assert "<script" not in resp.text  # 零-JS 铁律
     store.close()
 
 
-async def test_version_popover_shows_whatsnew_without_update(tmp_path, monkeypatch):
-    # 无新版时弹层仍展示当前版本「本次更新」(行为变化:弹层恒在,非只在有更新时)。
+async def test_version_modal_embeds_full_changelog(tmp_path, monkeypatch):
+    # 模态内联全量历史版本块(不再跳页);当前运行版本高亮。
     from sentinel import __version__
     from sentinel.panel.changelog import load_releases
 
@@ -308,22 +283,58 @@ async def test_version_popover_shows_whatsnew_without_update(tmp_path, monkeypat
     app = _build_app(store, settings)
     resp = await _get(app, "/?lang=zh")
     assert resp.status_code == 200
-    assert "<title>● " not in resp.text  # 确无更新
-    if __version__ in {r.version for r in load_releases("zh")}:
-        assert "本次更新" in resp.text  # ver.whatsnew 标题
-        assert 'class="verpop-now"' in resp.text
+    assert "<title>● " not in resp.text  # 确无更新提示态
+    versions = {r.version for r in load_releases("zh")}
+    if len(versions) >= 2:
+        # 模态嵌入了不止当前版本的历史块(全量 changelog 进了 / 页)
+        present = sum(1 for v in versions if f"v{v}" in resp.text)
+        assert present >= 2, f"模态只嵌了 {present} 个版本块,应为全量历史"
+    if __version__ in versions:
+        assert "当前版本" in resp.text  # changelog.current:当前运行版本高亮
     store.close()
 
 
-async def test_version_popover_has_full_changelog_link(tmp_path, monkeypatch):
-    # 弹层底部留「完整更新日志 →」进 /changelog 看历史。
+async def test_version_modal_empty_changelog_degrades(tmp_path, monkeypatch):
+    # changelog 定位失败(releases=[])→ 模态降级空态:不崩、200、显示 changelog.empty、仍零-JS。
+    from sentinel.panel import changelog
+
+    monkeypatch.setattr(changelog, "_resolve", lambda lang: None)
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
     app = _build_app(store, settings)
     resp = await _get(app, "/?lang=zh")
     assert resp.status_code == 200
-    assert 'href="/changelog' in resp.text
-    assert "完整更新日志" in resp.text  # ver.fulllog
+    assert 'id="wm-changelog" class="vmodal"' in resp.text  # 模态外壳仍在
+    assert "暂无更新日志" in resp.text  # changelog.empty zh
+    assert "<script" not in resp.text  # 零-JS 铁律
+    store.close()
+
+
+async def test_version_modal_has_standalone_page_link(tmp_path, monkeypatch):
+    # 模态底部留「在独立页面打开 →」指向 /changelog(可分享/降级兜底,opt-in 非强制跳页)。
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/?lang=zh")
+    assert resp.status_code == 200
+    assert 'class="vm-full" href="/changelog' in resp.text
+    assert "在独立页面打开" in resp.text  # ver.fulllog
+    store.close()
+
+
+async def test_version_modal_update_banner_when_available(tmp_path, monkeypatch):
+    # 有新版时模态顶部置更新横幅(版本 + 更新命令 + 发布说明链接)。
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    store.set_meta("latest_known_version", "v999.0.0")
+    store.set_meta(
+        "latest_release_url", "https://github.com/HyxiaoGe/watchmend/releases/tag/v999.0.0"
+    )
+    app = _build_app(store, settings)
+    resp = await _get(app, "/?lang=zh")
+    assert resp.status_code == 200
+    assert 'class="vm-up"' in resp.text  # 更新横幅
+    assert "999.0.0" in resp.text
     store.close()
 
 

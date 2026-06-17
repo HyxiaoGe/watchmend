@@ -56,10 +56,9 @@ def _nav_helpers(path: str, *, lang: str, theme: str, window_days: int, **transi
 def _nav_context(store, lang: str) -> dict:
     """全局版本/更新态(每页注入 _base 头部)。只读 meta + 本地 changelog,绝不外呼;
     比对运行版本判断是否有新版;release_url 经 _safe_http_url 净化防 scheme 注入;
-    current_release = 运行版本的「本次更新」块(供版本 chip 点击弹层,无则 None)。"""
+    releases = 全量版本块(供版本 chip 点击弹出的 :target 模态内联展示,当前版本高亮)。"""
     latest = store.get_meta("latest_known_version")
     available = bool(latest and is_newer(latest, __version__))
-    current, truncated = changelog.whatsnew(lang, __version__)
     return {
         "version": __version__,
         "update_available": available,
@@ -69,8 +68,7 @@ def _nav_context(store, lang: str) -> dict:
         if (available and latest)
         else None,
         "release_url": view._safe_http_url(store.get_meta("latest_release_url")),
-        "current_release": current,
-        "current_truncated": truncated,
+        "releases": changelog.load_releases(lang),
     }
 
 

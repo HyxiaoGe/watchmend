@@ -10,6 +10,16 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-06-17
+
+### Changed
+- The header version chip now opens the changelog as a centered, zero-JS modal
+  (a `:target` overlay with a dimmed backdrop and click-outside / × to close)
+  instead of the small dropdown that linked out to a separate page. The full
+  release history is embedded inline and scrollable, the running version is
+  highlighted, and an update banner sits on top when a newer release exists; the
+  standalone `/changelog` page is kept as a shareable permalink.
+
 ## [0.13.0] - 2026-06-17
 
 ### Changed
@@ -264,7 +274,8 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 ### Security
 - Secret-leak redaction across docker metadata and environment values.
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.1...v0.12.0
