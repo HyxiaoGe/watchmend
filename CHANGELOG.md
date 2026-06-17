@@ -10,6 +10,14 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-06-17
+
+### Added
+- The panel header now shows the WatchMend brand mark — an inline "WM pulse" SVG
+  that links home — next to the title, plus a matching SVG favicon. Both are
+  inline (zero JavaScript, no external request, no `<img>`) and add no new route
+  or static mount, so they ship with the image and roll back cleanly.
+
 ## [0.13.1] - 2026-06-17
 
 ### Changed
@@ -274,7 +282,8 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 ### Security
 - Secret-leak redaction across docker metadata and environment values.
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.2...HEAD
+[0.13.2]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.0...v0.12.1

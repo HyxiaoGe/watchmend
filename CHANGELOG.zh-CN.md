@@ -10,6 +10,13 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-06-17
+
+### 新增
+- 面板头部在标题旁新增 WatchMend 品牌标识——一枚内联的 "WM pulse" SVG mark(点击回
+  首页),并配套同款 SVG favicon。二者均为内联(零 JavaScript、无外部请求、无 `<img>`),
+  不新增任何路由或静态挂载,随镜像发布、可干净回滚。
+
 ## [0.13.1] - 2026-06-17
 
 ### 变更
@@ -223,7 +230,8 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 ### 安全
 - docker 元数据与环境值的密钥泄漏遮蔽。
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.2...HEAD
+[0.13.2]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.0...v0.12.1
