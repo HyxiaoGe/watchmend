@@ -1908,3 +1908,16 @@ async def test_refresh_default_when_no_pref(tmp_path, monkeypatch):
     resp = await _get(app, "/")
     assert 'data-refresh="45"' in resp.text  # no browser pref → server default verbatim
     store.close()
+
+
+async def test_gear_settings_link_in_header(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/")
+    html = resp.text
+    assert "/settings?" in html  # gear links to /settings with pref querystring
+    assert 'class="gearlink"' in html  # not-selected on overview
+    resp2 = await _get(app, "/settings")
+    assert 'class="gearlink on"' in resp2.text  # selected on the settings page itself
+    store.close()
