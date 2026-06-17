@@ -10,6 +10,15 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-06-17
+
+### 变更
+- 面板头部现在只显示 WatchMend 字标——品牌识别交给 logo,去掉「证据台」描述词。
+- 浏览器 tab 标题改为页面感知:`{页面名} · WatchMend`(总览 / 服务 / 事件 / 体检 /
+  更新日志),固定/后台 tab 可区分。并新增状态灯前缀 `🔴 {n} · `,仅在有未结事件时出现
+  ——平时安静、出事才亮红——复用与状态徽标相同的未结事件信号。移除原先「●」更新标记;
+  有新版仍在版本 chip 显示(圆点 + 模态横幅)。
+
 ## [0.13.2] - 2026-06-17
 
 ### 新增
@@ -230,7 +239,8 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 ### 安全
 - docker 元数据与环境值的密钥泄漏遮蔽。
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.2...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.3...HEAD
+[0.13.3]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.1...v0.13.0
