@@ -429,3 +429,125 @@ async def test_diagnose_uses_english_system_prompt_when_configured(monkeypatch):
     sent = json.loads(llm.calls[0].request.content)
     assert sent["messages"][0]["role"] == "system"
     assert sent["messages"][0]["content"] == _DIAG_SYSTEM_EN
+
+
+# ---- 日志工具脱敏(R1:docker_logs/loki_logs 原文喂 LLM + 落库的泄漏面)----
+
+
+class _FakeDocker:
+    """脱敏测试用:logs 返回含密钥的原文,container_env_values 给容器自有 env 值(①层 b)。"""
+
+    def __init__(self, logs_text: str, env_values: list[str]):
+        self._logs_text = logs_text
+        self._env_values = env_values
+        self.aclosed = False
+
+    async def logs(self, name: str, *, tail: int = 100) -> str:
+        return self._logs_text
+
+    async def container_env_values(self, name: str) -> list[str]:
+        return self._env_values
+
+
+async def test_docker_logs_redacts_own_secret_and_container_env(monkeypatch):
+    # ①层:WatchMend 自有 LLM key;①层 b:目标容器自有 env 值;②层:sk- 形态。三者都脱。
+    settings = _settings(monkeypatch, LLM_API_KEY="sk-own-ABCDEF1234567890zzzz")
+    logs = (
+        "boot ok\n"
+        "using own key sk-own-ABCDEF1234567890zzzz\n"
+        "MASTER_KEY=cnt-secret-value-xyz loaded\n"
+        "client sent sk-client-UNKNOWN-0987654321-ab\n"
+    )
+    docker = _FakeDocker(logs, env_values=["cnt-secret-value-xyz"])
+    driver = LLMDriver(httpx.AsyncClient(), settings, docker)
+    out, ok = await driver._run_tool(
+        "docker_logs", {"name": "litellm"}, secrets=driver._own_secrets(PROFILE)
+    )
+    assert ok
+    assert "sk-own-ABCDEF1234567890zzzz" not in out  # 自有密钥(精确)
+    assert "cnt-secret-value-xyz" not in out  # 容器自有 env(①层 b)
+    assert "sk-client-UNKNOWN-0987654321-ab" not in out  # 未知客户端 key(②层形态)
+    assert "boot ok" in out  # 正常日志保留
+    assert "«redacted»" in out
+
+
+async def test_loki_logs_redacts_via_run_tool(monkeypatch):
+    # loki_logs 同样是自由文本日志,与 docker_logs 同口径脱敏(无①层 b)。
+    settings = _settings(monkeypatch, SENTINEL_LOKI_URL="http://loki:3100")
+    driver = LLMDriver(httpx.AsyncClient(), settings)
+
+    async def fake_loki(query, minutes=30):
+        return "level=error api_key=sk-leaked-FROM-loki-012345-zz request failed"
+
+    driver._loki_logs = fake_loki  # type: ignore[assignment]
+    out, ok = await driver._run_tool("loki_logs", {"query": "{}"}, secrets=[])
+    assert ok
+    assert "sk-leaked-FROM-loki-012345-zz" not in out
+    assert "«redacted»" in out
+
+
+async def test_non_log_tool_exact_match_only_no_pattern_scrub(monkeypatch):
+    # 非日志工具(prom_query)只过①层精确匹配:自有密钥脱,但不跑②层正则(零误伤)。
+    settings = _settings(monkeypatch, SENTINEL_PROMETHEUS_URL="http://prom:9090")
+    driver = LLMDriver(httpx.AsyncClient(), settings)
+
+    async def fake_prom(query):
+        # 含一个"形似 key"的 metric label 值;非日志工具不跑形态正则,故不被误脱
+        return '{"data":{"result":[{"metric":{"build":"sk-looks-Like-Key-Metric-00-zz"}}]}}'
+
+    driver._prom_query = fake_prom  # type: ignore[assignment]
+    out, ok = await driver._run_tool("prom_query", {"query": "up"}, secrets=[])
+    assert ok
+    assert "sk-looks-Like-Key-Metric-00-zz" in out  # 非日志工具不跑②层 → 不误脱
+
+
+async def test_tool_loop_redacts_secret_in_both_model_message_and_evidence(monkeypatch):
+    # 关键不变量:密钥在喂模型的 tool 消息 + 落库的证据链里"双双"被脱(区别于截断)。
+    settings = _settings(monkeypatch, LLM_API_KEY="sk-own-DEADBEEF1234567890aa")
+    logs = "startup\nLLM_API_KEY=sk-own-DEADBEEF1234567890aa\nready\n"
+    docker = _FakeDocker(logs, env_values=[])
+    captured = {}
+
+    async with httpx.AsyncClient() as client:
+        driver = LLMDriver(client, settings, docker)
+        tool_calls = [
+            {"id": "c1", "function": {"name": "docker_logs", "arguments": '{"name":"x"}'}}
+        ]
+
+        async def fake_chat(messages, tools, profile):
+            captured["messages"] = messages
+            # 第一轮发起工具调用,第二轮(无 tool_calls)收尾
+            if not any(m.get("role") == "tool" for m in messages):
+                return {"role": "assistant", "content": None, "tool_calls": tool_calls}
+            return {"role": "assistant", "content": FINAL_TEXT}
+
+        driver._chat = fake_chat  # type: ignore[assignment]
+        content, tool_log = await driver._tool_loop([{"role": "user", "content": "go"}], PROFILE)
+
+    # 喂模型的 tool 消息里没有密钥
+    tool_msgs = [m for m in captured["messages"] if m.get("role") == "tool"]
+    assert tool_msgs and all("sk-own-DEADBEEF1234567890aa" not in m["content"] for m in tool_msgs)
+    # 落库证据链里也没有密钥
+    assert tool_log and all("sk-own-DEADBEEF1234567890aa" not in t["output"] for t in tool_log)
+    assert any("«redacted»" in t["output"] for t in tool_log)
+
+
+async def test_run_tool_error_path_redacts_own_secret(monkeypatch):
+    # 异常路径(工具抛错)的错误文本也回模型+落库,①层精确匹配兜底。
+    settings = _settings(
+        monkeypatch,
+        LLM_API_KEY="sk-own-ERRPATH1234567890aa",
+        SENTINEL_PROMETHEUS_URL="http://prom:9090",
+    )
+    driver = LLMDriver(httpx.AsyncClient(), settings)
+
+    async def boom(query):
+        raise RuntimeError("connect failed token=sk-own-ERRPATH1234567890aa")
+
+    driver._prom_query = boom  # type: ignore[assignment]
+    out, ok = await driver._run_tool(
+        "prom_query", {"query": "up"}, secrets=driver._own_secrets(PROFILE)
+    )
+    assert ok is False
+    assert "sk-own-ERRPATH1234567890aa" not in out
+    assert "«redacted»" in out

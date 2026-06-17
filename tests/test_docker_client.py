@@ -113,6 +113,23 @@ async def test_inspect_safe_whitelist_drops_secrets_and_host_paths():
         assert leak not in blob
 
 
+async def test_container_env_values_returns_values_only_for_redaction():
+    # ①层 b 脱敏用:读 Env 的值部分(不含变量名),用于把容器自有密钥从其日志里 scrub。
+    payload = {
+        "Name": "/litellm",
+        "Config": {"Env": ["MASTER_KEY=sk-cnt-secret-xyz", "MODE=prod", "EMPTY=", "NOEQ"]},
+    }
+    dc = DockerClient("unix:///var/run/docker.sock")
+    with respx.mock:
+        respx.get("http://docker/containers/litellm/json").mock(
+            return_value=httpx.Response(200, json=payload)
+        )
+        out = await dc.container_env_values("litellm")
+    await dc.aclose()
+    # 只取有值的 value 部分;变量名、空值、无 = 的项都不进
+    assert out == ["sk-cnt-secret-xyz", "prod"]
+
+
 async def test_inspect_safe_missing_fields_default_safely():
     # 容器无 HEALTHCHECK / 无 Env / 无 RestartPolicy 时不抛
     payload = {"Name": "/bare", "Config": {}, "State": {"Status": "running"}}

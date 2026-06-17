@@ -124,5 +124,22 @@ class DockerClient:
         resp.raise_for_status()
         return _demux_docker_logs(resp.content)
 
+    async def container_env_values(self, name: str) -> list[str]:
+        """仅供运行时日志脱敏:读容器 Config.Env 的值部分(不含变量名)。
+
+        用于把容器自有密钥(如 litellm-proxy 把自己的 master key 打进日志)从其日志里精确
+        scrub。返回值只在内存里建脱敏集、绝不返回给模型也绝不落证据链——与 inspect_safe
+        相反(那个故意只留变量名给模型看,绝不暴露值)。"""
+        _check_name(name)
+        resp = await self._client.get(f"/containers/{name}/json")
+        resp.raise_for_status()
+        config = resp.json().get("Config") or {}
+        out: list[str] = []
+        for e in config.get("Env") or []:
+            _, sep, val = str(e).partition("=")
+            if sep and val:
+                out.append(val)
+        return out
+
     async def aclose(self) -> None:
         await self._client.aclose()
