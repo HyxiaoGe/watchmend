@@ -2,6 +2,7 @@
 {% block title %}{{ t('changelog.title') }} · WatchMend{% endblock %}
 {% block body %}
 <div class="wrap">
+  <div class="crumb"><a href="{{ tab_url('/') }}">{{ t('tab.overview') }}</a> / {{ t('changelog.title') }}</div>
   <h1>{{ t('changelog.heading') }}</h1>
   {% if not releases %}
   <p class="muted">{{ t('changelog.empty') }}</p>
