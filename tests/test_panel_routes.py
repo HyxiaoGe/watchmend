@@ -1371,8 +1371,11 @@ async def test_nav_no_ai_indicator_when_llm_off(tmp_path, monkeypatch):
     app = _build_app(store, settings)
     html = (await _get(app, "/")).text
     assert re.search(r"↻ \d{2}:\d{2}", html)
-    # 仅查顶栏状态区(.sub mono),不查整页——版本模态里的 changelog 正文会含「AI 诊断」字样。
-    nav_sub = html.split('class="sub mono">', 1)[1].split("</span>", 1)[0]
+    # 仅查顶栏状态区(navrow 内 .sub mono span),不查整页——版本模态里的 changelog 正文含
+    # 「AI 诊断」字样。注意 .sub mono 内嵌刷新子 span(↻ HH:MM),故须切到 navrow 的 </div>
+    # 收口,而非第一个 </span>(否则会把其后的 AI 指示区切掉,断言变恒真)。
+    nav_sub = html.split('class="sub mono">', 1)[1].split("</div>", 1)[0]
+    assert "↻" in nav_sub  # 切片确含状态区(防再次切错成恒真)
     assert "AI 诊断" not in nav_sub  # 关态顶栏不显示 AI 行
     store.close()
 

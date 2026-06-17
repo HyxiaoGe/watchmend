@@ -267,6 +267,7 @@ async def test_version_chip_is_zero_js_target_modal(tmp_path, monkeypatch):
     assert 'href="#wm-changelog"' in resp.text  # chip 触发锚
     assert 'id="wm-changelog" class="vmodal"' in resp.text  # :target 模态容器
     assert 'class="vmodal-bg" href="#wm-close"' in resp.text  # 点外关闭(全屏遮罩 <a>)
+    assert 'class="vmodal-x" href="#wm-close"' in resp.text  # × 关闭(与遮罩同锚)
     assert "vchev" in resp.text  # chip caret(暗示可展开)
     assert "<script" not in resp.text  # 零-JS 铁律
     store.close()
@@ -290,6 +291,22 @@ async def test_version_modal_embeds_full_changelog(tmp_path, monkeypatch):
         assert present >= 2, f"模态只嵌了 {present} 个版本块,应为全量历史"
     if __version__ in versions:
         assert "当前版本" in resp.text  # changelog.current:当前运行版本高亮
+    store.close()
+
+
+async def test_version_modal_empty_changelog_degrades(tmp_path, monkeypatch):
+    # changelog 定位失败(releases=[])→ 模态降级空态:不崩、200、显示 changelog.empty、仍零-JS。
+    from sentinel.panel import changelog
+
+    monkeypatch.setattr(changelog, "_resolve", lambda lang: None)
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/?lang=zh")
+    assert resp.status_code == 200
+    assert 'id="wm-changelog" class="vmodal"' in resp.text  # 模态外壳仍在
+    assert "暂无更新日志" in resp.text  # changelog.empty zh
+    assert "<script" not in resp.text  # 零-JS 铁律
     store.close()
 
 
