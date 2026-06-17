@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from sentinel.config import Settings
 
 
@@ -43,3 +46,21 @@ def test_overview_knobs_overridable(monkeypatch):
     s = Settings(_env_file=None)
     assert s.sentinel_panel_overview_roster_cap == 8
     assert s.sentinel_panel_green_uptime_pct == 99.95
+
+
+def test_panel_refresh_seconds_default():
+    s = Settings(_env_file=None)
+    assert s.sentinel_panel_refresh_seconds == 30  # 默认 30,行为不变
+
+
+def test_panel_refresh_seconds_overridable(monkeypatch):
+    monkeypatch.setenv("SENTINEL_PANEL_REFRESH_SECONDS", "45")
+    s = Settings(_env_file=None)
+    assert s.sentinel_panel_refresh_seconds == 45
+
+
+def test_panel_refresh_seconds_floor(monkeypatch):
+    # 下限 5s:防过频整页渲染打服务端;<5 启动即拒绝(逼操作员改对)
+    monkeypatch.setenv("SENTINEL_PANEL_REFRESH_SECONDS", "3")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)

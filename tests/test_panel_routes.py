@@ -72,8 +72,8 @@ async def test_header_shows_inline_brand_logo_and_favicon(tmp_path, monkeypatch)
     # favicon:data-URI SVG,不新增静态路由/文件(additive 不变量)
     assert 'rel="icon"' in html
     assert "data:image/svg+xml" in html
-    # 仍是零-JS
-    assert "<script" not in html
+    # 无外部 JS(渐进增强:允许内联脚本)
+    assert "<script src" not in html
     store.close()
 
 
@@ -1786,3 +1786,56 @@ def test_when_formatter_includes_date_and_year_when_crossyear(monkeypatch):
     assert view._when(int(same_year.timestamp()), tz) == same_year.strftime("%m-%d %H:%M")
     old = now - timedelta(days=400)  # 必跨年
     assert view._when(int(old.timestamp()), tz) == old.strftime("%Y-%m-%d %H:%M")
+
+
+async def test_overview_smooth_refresh_contract(tmp_path, monkeypatch):
+    # 刷新页:#wm-live 可替换区带 data-refresh、meta-refresh 包进 <noscript>(JS 关才生效)、
+    # 全页仅此一个 http-equiv(防 JS-on 双刷)、内联轮询脚本在、且无外部 JS。
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    html = (await _get(app, "/")).text
+    assert 'id="wm-live"' in html
+    assert 'data-refresh="30"' in html  # 默认 30
+    assert '<noscript><meta http-equiv="refresh" content="30">' in html  # 降级兜底
+    assert html.count('http-equiv="refresh"') == 1  # 唯一 meta = noscript 那个
+    assert "new DOMParser()" in html  # 内联轮询脚本存在
+    assert "<script src" not in html  # 绝不引外部 JS
+    # 单一定时器防多链叠加:重排前必 clearTimeout(回退到无句柄多 setTimeout 版会失守)。
+    assert "clearTimeout" in html
+    store.close()
+
+
+async def test_refresh_seconds_flows_to_page(tmp_path, monkeypatch):
+    # 配置值贯通到模板:data-refresh 与 noscript meta 都用配置间隔。
+    settings = _settings(monkeypatch, SENTINEL_PANEL_REFRESH_SECONDS="45")
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    html = (await _get(app, "/")).text
+    assert 'data-refresh="45"' in html
+    assert '<noscript><meta http-equiv="refresh" content="45">' in html
+    store.close()
+
+
+async def test_detail_page_has_live_region_but_no_autorefresh(tmp_path, monkeypatch):
+    # 详情页:有 #wm-live 容器(脚本对所有页存在),但不带 data-refresh 属性、也无 meta-refresh
+    # → 脚本读到空间隔即不轮询(维持详情页不自动刷新)。
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    eid = store.insert_event(
+        ts=1700000000,
+        rule="container_down",
+        subject="postgres",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+    app = _build_app(store, settings)
+    html = (await _get(app, f"/event/{eid}")).text
+    assert 'id="wm-live"' in html  # 容器在
+    assert 'data-refresh="' not in html  # 但无刷新属性(getAttribute("data-refresh") 不含 ="）
+    assert "http-equiv" not in html  # 详情页无任何 meta-refresh
+    store.close()

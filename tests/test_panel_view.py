@@ -1557,3 +1557,11 @@ async def test_build_hygiene_shape_and_banner(tmp_path, monkeypatch):
     assert data["posture"]["docker"]["mode"] == "off"
     assert data["posture"]["channels"] == ["飞书"]
     store.close()
+
+
+async def test_overview_refresh_seconds_from_settings(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch, SENTINEL_PANEL_REFRESH_SECONDS="45")
+    store = Store(str(tmp_path / "s.db"))
+    ov = await view.build_overview(store, settings, now=NOW)
+    assert ov["refresh_seconds"] == 45  # 间隔来自 settings,非写死常量
+    store.close()

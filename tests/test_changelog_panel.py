@@ -190,7 +190,7 @@ async def test_changelog_page_renders_zero_js(tmp_path, monkeypatch):
     app = _build_app(store, settings)
     resp = await _get(app, "/changelog")
     assert resp.status_code == 200
-    assert "<script" not in resp.text  # 零-JS 铁律
+    assert "<script src" not in resp.text  # 无外部 JS(渐进增强:允许内联脚本)
     assert "v0.1.0" in resp.text  # 含历史版本块
     assert "</html>" in resp.text  # 渲染了 _base 外壳
     store.close()
@@ -264,7 +264,7 @@ async def test_version_chip_is_zero_js_target_modal(tmp_path, monkeypatch):
     assert 'class="vmodal-bg" href="#wm-close"' in resp.text  # 点外关闭(全屏遮罩 <a>)
     assert 'class="vmodal-x" href="#wm-close"' in resp.text  # × 关闭(与遮罩同锚)
     assert "vchev" in resp.text  # chip caret(暗示可展开)
-    assert "<script" not in resp.text  # 零-JS 铁律
+    assert "<script src" not in resp.text  # 无外部 JS(渐进增强:允许内联脚本)
     store.close()
 
 
@@ -301,7 +301,7 @@ async def test_version_modal_empty_changelog_degrades(tmp_path, monkeypatch):
     assert resp.status_code == 200
     assert 'id="wm-changelog" class="vmodal"' in resp.text  # 模态外壳仍在
     assert "暂无更新日志" in resp.text  # changelog.empty zh
-    assert "<script" not in resp.text  # 零-JS 铁律
+    assert "<script src" not in resp.text  # 无外部 JS(渐进增强:允许内联脚本)
     store.close()
 
 

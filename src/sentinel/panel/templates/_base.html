@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {# 品牌 favicon:内联 data-URI SVG(WM pulse mark),不新增静态路由/文件,随浏览器缩放清晰 #}
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='60%2060%20392%20392'%3E%3Crect%20x='76'%20y='76'%20width='360'%20height='360'%20rx='78'%20fill='%230F766E'/%3E%3Cpath%20d='M140%20170l47%20172%2058-134%2052%20134%2064-172'%20fill='none'%20stroke='%23ECFEFF'%20stroke-width='34'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3Cpath%20d='M134%20263h66l24-39%2036%2090%2031-66h88'%20fill='none'%20stroke='%230F172A'%20stroke-width='22'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3Ccircle%20cx='374'%20cy='138'%20r='30'%20fill='%2322C55E'%20stroke='%23F8FAFC'%20stroke-width='12'/%3E%3C/svg%3E">
-{% if refresh_seconds %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endif %}
+{# JS 关 / 不支持时的降级:<noscript> 里的整页刷新(= 历史行为)。JS 开时此 meta 不生效,
+   由 </body> 前的内联轮询脚本接管做无闪烁局部刷新(见 CONTRIBUTING.md 渐进增强原则)。 #}
+{% if refresh_seconds %}<noscript><meta http-equiv="refresh" content="{{ refresh_seconds }}"></noscript>{% endif %}
 {# tab 标题 = [事故红灯] 页面名 · WatchMend。状态灯复用 nav.incident_count(badge 同源),
    平时安静、出事才亮红;页面名由各页 {% block title %} 提供(默认=总览),后台/固定 tab 可区分。 #}
 <title>{% if nav and nav.incident_count %}🔴 {{ nav.incident_count }} · {% endif %}{% block title %}{{ t('tab.overview') if t else 'WatchMend' }}{% endblock %} · WatchMend</title>
@@ -422,6 +424,50 @@
 </div>
 {% endif %}
 {% endif %}
+{# 可替换区:JS 局部刷新只换这块的 innerHTML;头部/导航/更新日志模态在区外故不受影响
+   (保滚动、保打开的模态)。data-refresh 仅在自动刷新页输出,详情页无此属性 → 脚本不轮询。 #}
+<main id="wm-live"{% if refresh_seconds %} data-refresh="{{ refresh_seconds }}"{% endif %}>
 {% block body %}{% endblock %}
+</main>
+<script>
+/* 渐进增强(见 CONTRIBUTING.md「面板 JavaScript 原则」):仅内联、零依赖。关 JS 时退回
+   <noscript> 的整页 meta 刷新。本脚本定时抓本页自身 HTML,只替换 #wm-live + 同步 <title>
+   与状态行 → 无闪烁、保滚动、保打开的更新日志模态。详情页无 data-refresh 故自动不轮询。 */
+(function () {
+  var live = document.getElementById("wm-live");
+  if (!live) return;
+  var sec = parseInt(live.getAttribute("data-refresh") || "0", 10);
+  if (!sec || sec < 1) return;                 // 详情页 / 未配置 → 不轮询
+  var ms = sec * 1000, inflight = null, timer = null;
+  function schedule(delay) {                    // 单一定时器:重排前先清旧句柄,杜绝多链叠加
+    if (timer) { window.clearTimeout(timer); }
+    timer = window.setTimeout(tick, delay);
+  }
+  function tick() {
+    timer = null;
+    if (document.hidden) { schedule(ms); return; }  // 后台标签不空跑(省服务端)
+    if (inflight) { inflight.abort(); }             // 防慢请求叠加
+    var ctrl = window.AbortController ? new AbortController() : null;
+    inflight = ctrl;
+    fetch(window.location.href, { signal: ctrl && ctrl.signal, headers: { "X-WM-Live": "1" } })
+      .then(function (r) { return r.ok ? r.text() : Promise.reject(r.status); })
+      .then(function (html) {
+        var doc = new DOMParser().parseFromString(html, "text/html");
+        var fresh = doc.getElementById("wm-live");
+        if (fresh) { live.innerHTML = fresh.innerHTML; }   // 瞬时替换,无白闪
+        if (doc.title) { document.title = doc.title; }     // 保住 🔴N 事故灯
+        var so = document.querySelector(".navrow .sub"),
+            sn = doc.querySelector(".navrow .sub");
+        if (so && sn) { so.innerHTML = sn.innerHTML; }     // ↻ HH:MM 确认活着
+      })
+      .catch(function () {})                               // 失败静默,下周期再来,绝不弄坏页面
+      .then(function () { if (inflight === ctrl) { inflight = null; } schedule(ms); });
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) { schedule(200); }  // 回前台尽快补刷:清旧定时器再排,绝不叠加
+  });
+  schedule(ms);
+})();
+</script>
 </body>
 </html>
