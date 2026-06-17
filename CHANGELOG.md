@@ -10,6 +10,25 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-06-17
+
+### Changed
+- Panel auto-refresh is now flicker-free. With JavaScript enabled, a tiny inline
+  script refreshes the page content in place — swapping only the main region and
+  syncing the title and status line — instead of doing a full-page reload, so the
+  scroll position and any open changelog modal are preserved and the page no
+  longer blinks every interval. With JavaScript disabled it falls back to the
+  previous full-page `<meta refresh>` via `<noscript>`, so nothing is lost.
+- The long-standing "zero JavaScript" rule for the panel is now a bounded
+  progressive-enhancement principle (documented in `CONTRIBUTING.md`): the panel
+  must work fully with JS off, no framework/bundler/build/external JS is allowed,
+  and only tiny inline vanilla scripts are permitted.
+
+### Added
+- New optional `SENTINEL_PANEL_REFRESH_SECONDS` setting (default 30, minimum 5)
+  controls the panel refresh cadence for both the live poller and the
+  `<noscript>` fallback. Old images ignore it, so it rolls back cleanly.
+
 ## [0.13.3] - 2026-06-17
 
 ### Changed
