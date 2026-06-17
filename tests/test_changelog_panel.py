@@ -232,7 +232,8 @@ async def test_version_chip_opens_modal_not_page(tmp_path, monkeypatch):
     store.close()
 
 
-async def test_title_marker_when_update_available(tmp_path, monkeypatch):
+async def test_update_available_lives_in_chip_not_title(tmp_path, monkeypatch):
+    # 更新提示移到版本 chip(updot + 模态横幅);tab 标题前缀让位给运行态(事故红灯)。
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
     store.set_meta("latest_known_version", "v999.0.0")
@@ -241,16 +242,10 @@ async def test_title_marker_when_update_available(tmp_path, monkeypatch):
     )
     app = _build_app(store, settings)
     resp = await _get(app, "/")
-    assert "<title>● " in resp.text  # 后台 tab 标签标记
-    store.close()
-
-
-async def test_no_title_marker_when_current(tmp_path, monkeypatch):
-    settings = _settings(monkeypatch)
-    store = Store(str(tmp_path / "s.db"))  # 无 latest_known_version → update_available False
-    app = _build_app(store, settings)
-    resp = await _get(app, "/")
-    assert "<title>● " not in resp.text
+    title = resp.text.split("<title>", 1)[1].split("</title>", 1)[0]
+    assert "●" not in title  # 标题不再带更新标记
+    assert "🔴" not in title  # 有新版 ≠ 有事故
+    assert 'class="updot"' in resp.text  # chip 仍亮更新点
     store.close()
 
 

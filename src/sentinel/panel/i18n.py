@@ -8,7 +8,7 @@ from __future__ import annotations
 # 界面外壳静态串。缺某 key 时 make_translator 回退 zh→key（见下）。
 MESSAGES: dict[str, dict[str, str]] = {
     "zh": {
-        "hdr.title": "WatchMend 证据台",
+        "hdr.title": "WatchMend",
         "hdr.refreshed": "刷新于 {ts}",
         "nav.lang": "语言",
         "nav.theme": "主题",
@@ -171,7 +171,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "hyg.all_clear": "体检通过 · 无告警",
     },
     "en": {
-        "hdr.title": "WatchMend Evidence Panel",
+        "hdr.title": "WatchMend",
         "hdr.refreshed": "Refreshed {ts}",
         "nav.lang": "Language",
         "nav.theme": "Theme",
