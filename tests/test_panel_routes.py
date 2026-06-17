@@ -1921,3 +1921,36 @@ async def test_gear_settings_link_in_header(tmp_path, monkeypatch):
     resp2 = await _get(app, "/settings")
     assert 'class="gearlink on"' in resp2.text  # selected on the settings page itself
     store.close()
+
+
+async def test_settings_never_leaks_secret_values(tmp_path, monkeypatch):
+    fakes = {
+        "SENTINEL_DIAG_TOKEN": "diagtok-ZZZ111secretAAA222value",
+        "SENTINEL_TELEGRAM_BOT_TOKEN": "999888:TGsecret-bbbccc-not-shown",
+        "SENTINEL_NTFY_TOKEN": "ntfytok-secret-qqqwww-eee",
+        "SENTINEL_WEBHOOK_TOKEN": "whtok-secret-rrrttt-yyy",
+        "FEISHU_VENDOR_WEBHOOK": "https://open.feishu.cn/hook/SECRETPATH123456",
+    }
+    settings = _settings(monkeypatch, **fakes)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/settings")
+    html = resp.text
+    for env, val in fakes.items():
+        if env == "FEISHU_VENDOR_WEBHOOK":
+            assert "SECRETPATH123456" not in html  # webhook path token must never appear
+        else:
+            assert val not in html, f"{env} 明文密钥泄露到 /settings!"
+    # 状态仍可见
+    assert "已配置" in html or "configured" in html
+    store.close()
+
+
+async def test_settings_bare_emits_no_set_cookie(tmp_path, monkeypatch):
+    # 齿轮点击(无 querystring)进入 /settings 不得动任何 cookie(否则会误擦用户偏好)
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/settings")
+    assert resp.headers.get_list("set-cookie") == []
+    store.close()
