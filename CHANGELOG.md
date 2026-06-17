@@ -10,6 +10,19 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-06-17
+
+### Changed
+- The panel header now shows just the WatchMend wordmark — the logo carries the
+  identity, so the "Evidence Panel" descriptor was dropped.
+- The browser tab title is now page-aware: `{page} · WatchMend` (Overview /
+  Services / Events / Hygiene / Changelog), so pinned or background tabs are
+  distinguishable. It gains a status-light prefix `🔴 {n} · ` that appears only
+  when there are open incidents — quiet when healthy, red when not — reusing the
+  same open-incident signal as the status badge. The previous update-available
+  `●` title marker was removed; update availability still shows in the version
+  chip (dot + modal banner).
+
 ## [0.13.2] - 2026-06-17
 
 ### Added
@@ -282,7 +295,8 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 ### Security
 - Secret-leak redaction across docker metadata and environment values.
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.2...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.3...HEAD
+[0.13.3]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.1...v0.13.0
