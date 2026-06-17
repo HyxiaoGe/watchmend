@@ -1885,3 +1885,26 @@ async def test_settings_no_token_required(tmp_path, monkeypatch):
     resp = await _get(app, "/settings")
     assert resp.status_code == 200
     store.close()
+
+
+async def test_refresh_cookie_overrides_refresh_seconds(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)  # server default 30
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/?refresh=15")
+    assert 'data-refresh="15"' in resp.text
+    resp0 = await _get(app, "/?refresh=0")  # 0 = off
+    # 0 → 关闭:poller 属性 data-refresh="N" 与 noscript meta 双双消失。
+    # 用带 =" 的属性形式(脚本里 getAttribute("data-refresh") 不含 ="),与既有契约一致。
+    assert 'data-refresh="' not in resp0.text
+    assert 'http-equiv="refresh"' not in resp0.text
+    store.close()
+
+
+async def test_refresh_default_when_no_pref(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch, SENTINEL_PANEL_REFRESH_SECONDS="45")
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/")
+    assert 'data-refresh="45"' in resp.text  # no browser pref → server default verbatim
+    store.close()

@@ -94,6 +94,17 @@ def _read_prefs(request: Request, settings: Settings) -> tuple[str, str, int]:
     return lang, theme, window_days
 
 
+def _resolve_refresh(request: Request, settings: Settings) -> int:
+    """自动刷新间隔(秒)解析:浏览器偏好(query > wm_refresh cookie)优先,否则服务端默认。
+    允许集 {0,15,30,60} 外/'default' 哨兵一律回落 server_default(prefs.resolve_refresh 兜底)。
+    四个 live 页在 render 前用此覆盖 view 注入的 refresh_seconds,让浏览器偏好当次生效。"""
+    return prefs.resolve_refresh(
+        request.query_params.get("refresh"),
+        request.cookies.get("wm_refresh"),
+        settings.sentinel_panel_refresh_seconds,
+    )
+
+
 def _write_pref_cookies(resp: Response, request: Request, lang: str, theme: str, win: int) -> None:
     """仅对出现在 querystring 的偏好写 cookie(cookie 跨页兜底,querystring 当次生效)。"""
     q = request.query_params
@@ -139,6 +150,8 @@ def register_panel_routes(app: FastAPI) -> None:
             window_days=window_days,
             service_labels=getattr(state, "service_labels", None),
         )
+        # 浏览器刷新偏好(query/wm_refresh cookie)覆盖服务端默认,render 前生效(spec /settings)
+        overview["refresh_seconds"] = _resolve_refresh(request, settings)
 
         t = i18n.make_translator(lang)
 
@@ -264,6 +277,7 @@ def register_panel_routes(app: FastAPI) -> None:
             window_days=window_days,
             service_labels=getattr(state, "service_labels", None),
         )
+        data["refresh_seconds"] = _resolve_refresh(request, settings)  # 浏览器偏好覆盖,render 前
         qurl, tab_url = _nav_helpers("/services", lang=lang, theme=theme, window_days=window_days)
 
         def surl(name: str) -> str:
@@ -379,6 +393,7 @@ def register_panel_routes(app: FastAPI) -> None:
             llm_config=getattr(state, "llm_config", None),
             diag_registered=getattr(state, "diag_job_registered", None),
         )
+        data["refresh_seconds"] = _resolve_refresh(request, settings)  # 浏览器偏好覆盖,render 前
         qurl, tab_url = _nav_helpers(
             "/events",
             lang=lang,
@@ -437,6 +452,7 @@ def register_panel_routes(app: FastAPI) -> None:
             llm_config=getattr(state, "llm_config", None),
             diag_registered=getattr(state, "diag_job_registered", None),
         )
+        data["refresh_seconds"] = _resolve_refresh(request, settings)  # 浏览器偏好覆盖,render 前
         qurl, tab_url = _nav_helpers("/hygiene", lang=lang, theme=theme, window_days=window_days)
 
         def eurl(event_id: int) -> str:
