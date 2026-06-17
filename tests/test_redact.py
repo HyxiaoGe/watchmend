@@ -1,3 +1,5 @@
+import time
+
 from sentinel.redact import PLACEHOLDER, redact_text
 
 
@@ -192,3 +194,25 @@ def test_assign_value_special_char_before_digit_still_redacted():
     out, n = redact_text("password=P@ssw0rd!", secrets=[], use_patterns=True)
     assert "P@ssw0rd" not in out
     assert "password" in out
+
+
+def test_connstring_no_redos_on_long_unbroken_run():
+    # ReDoS 守护:超长无空白的连接串状串(scheme://user:pass 反复、无闭合 @)是 _CONNSTR
+    # 二次回溯的真正诱因——scheme run 逐起点贪婪扫 + password 吞到结尾再回溯找 @。三段收界
+    # 前此输入 O(n²)(36k 约 4.7s);收界后线性(约几十 ms)。须远低于 1s,不阻塞事件循环。
+    payload = ("a://:" + "p" * 40) * 800  # ~36k 字符,无 @
+    t0 = time.perf_counter()
+    out, _ = redact_text(payload, secrets=[], use_patterns=True)
+    elapsed = time.perf_counter() - t0
+    assert "@" not in out  # 无闭合 @ → 不该有任何连接串脱敏
+    assert elapsed < 1.0, f"redact 过慢({elapsed:.2f}s)——_CONNSTR 二次回溯未收敛?"
+
+
+def test_connstring_long_real_scheme_still_redacts_password():
+    # scheme 收界后,真实长 scheme(postgresql=10 / mongodb+srv=11)的连接串仍正确脱密码。
+    out, n = redact_text(
+        "dsn postgresql://user:S3cretpass99@db:5432/x", secrets=[], use_patterns=True
+    )
+    assert "S3cretpass99" not in out
+    assert "user" in out
+    assert "db:5432" in out

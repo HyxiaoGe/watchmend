@@ -10,6 +10,14 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+### Security
+- Log-redaction ReDoS hardening: the connection-string pattern in the diagnosis
+  log redactor was quadratic on a long, unbroken `scheme://user:pass` run with no
+  closing `@`, so an adversarial log line fed through `loki_logs` / `docker_logs`
+  could stall the event loop for seconds. All three segments (scheme / user /
+  password) are now length-bounded, making redaction linear; real connection
+  strings are unaffected.
+
 ## [0.12.0] - 2026-06-17
 
 ### Added

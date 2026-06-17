@@ -10,6 +10,12 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [Unreleased]
 
+### 安全
+- 日志脱敏 ReDoS 加固:诊断日志脱敏器的连接串正则在超长、无空白、无闭合 `@` 的
+  `scheme://user:pass` 串上呈二次回溯,经 `loki_logs` / `docker_logs` 喂入的对抗性
+  日志行可能让事件循环卡顿数秒。现对 scheme / user / 密码三段全部长度收界,脱敏恢复
+  线性;真实连接串不受影响。
+
 ## [0.12.0] - 2026-06-17
 
 ### 新增

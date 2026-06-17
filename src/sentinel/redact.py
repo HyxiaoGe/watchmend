@@ -60,7 +60,10 @@ _ASSIGN = re.compile(
 
 # 连接串密码 scheme://user:pass@host:保留 scheme/user/host,只脱 pass。用户名可空
 # (redis://:pass@ 是 redis-py 默认形态);密码段放行 / 在 @ 处收尾(含 / 的强口令不漏)。
-_CONNSTR = re.compile(r"([a-z][a-z0-9+.\-]*://[^\s:/@]*:)([^\s@]+)(@)")
+# 三段全部收界(ReDoS 防护):无界量词在超长无空白 alnum 串上 re.sub 逐起点贪婪扫+回溯
+# 呈 O(n²),同步阻塞 asyncio 事件循环。scheme≤20(最长真实 scheme mongodb+srv=11)、
+# user≤127、pass≤512 远超任何真实连接串,逐起点工作量封顶→整体线性。
+_CONNSTR = re.compile(r"([a-z][a-z0-9+.\-]{0,19}://[^\s:/@]{0,127}:)([^\s@]{1,512})(@)")
 
 
 def _apply_patterns(text: str) -> tuple[str, int]:
