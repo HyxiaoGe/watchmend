@@ -19,6 +19,10 @@ from sentinel.config import Settings
 from sentinel.docker_client import DockerClient
 from sentinel.findings import EventRecord
 from sentinel.llm_config import LLMProfile
+from sentinel.redact import redact_text
+
+# 跑形态正则(②层)的自由文本日志工具;其余工具只过①层精确匹配(零误伤)。
+_LOG_TOOLS = frozenset({"docker_logs", "loki_logs"})
 
 logger = logging.getLogger("sentinel")
 
@@ -179,6 +183,7 @@ class LLMDriver:
 
     async def _tool_loop(self, messages: list[dict], profile: LLMProfile) -> tuple[str, list[dict]]:
         tools = self._tool_specs()
+        secrets = self._own_secrets(profile)  # ①层:WatchMend 自有密钥,所有工具输出都脱
         tool_log: list[dict] = []  # 证据链:每次工具调用一项(子项目③),不影响决策
         for _ in range(self._settings.llm_max_tool_rounds):
             msg = await self._chat(messages, tools, profile)
@@ -192,7 +197,7 @@ class LLMDriver:
                 except json.JSONDecodeError:
                     args = {}
                 name = call["function"]["name"]
-                result, ok = await self._run_tool(name, args)
+                result, ok = await self._run_tool(name, args, secrets=secrets)
                 tool_log.append(
                     {
                         "tool": name,
@@ -211,16 +216,55 @@ class LLMDriver:
         msg = await self._chat(messages, tools=[], profile=profile)
         return msg.get("content") or "", tool_log
 
-    async def _run_tool(self, name: str, args: dict) -> tuple[str, bool]:
-        """工具失败不崩整轮:错误文本回给模型让它换路推理。返回 (文本, 是否成功)。"""
+    async def _run_tool(
+        self, name: str, args: dict, *, secrets: list[str] = ()
+    ) -> tuple[str, bool]:
+        """工具失败不崩整轮:错误文本回给模型让它换路推理。返回 (文本, 是否成功)。
+
+        成功输出在喂模型/落证据链之前先脱敏(redact),再截断——密钥绝不出内网到外部 LLM。
+        """
         handler = self._handlers().get(name)
         if handler is None:
             return f"unknown tool: {name}", False
         try:
             out = await handler(**args)
         except Exception as exc:  # 含参数错误(TypeError)/网络错/校验错
-            return f"tool {name} failed: {exc}", False
+            # 错误文本也回模型+落库:万一 exc 里带密钥(连接串/URL),①层精确匹配兜一道。
+            err, _ = redact_text(f"tool {name} failed: {exc}", secrets=secrets)
+            return err, False
+        out = await self._redact_tool_output(name, args, out, secrets)
         return out[:_MAX_TOOL_OUT], True
+
+    async def _redact_tool_output(self, name: str, args: dict, out: str, secrets: list[str]) -> str:
+        """日志类工具(docker_logs/loki_logs)跑①+②层;其余工具只跑①层精确匹配(零误伤)。
+        docker_logs 额外读目标容器自有 env 值(①层 b),scrub 容器把自己密钥打进日志的场景。"""
+        if name not in _LOG_TOOLS:
+            red, _ = redact_text(out, secrets=secrets)
+            return red
+        extra: list[str] = []
+        if name == "docker_logs" and self._docker is not None:
+            try:
+                extra = await self._docker.container_env_values(args.get("name", ""))
+            except Exception:  # ①层 b 失败(容器没了/inspect 报错)不影响①+②层
+                extra = []
+        red, _ = redact_text(out, secrets=[*secrets, *extra], use_patterns=True)
+        return red
+
+    def _own_secrets(self, profile: LLMProfile) -> list[str]:
+        """WatchMend 自有密钥字面值(精确匹配,零误伤):active LLM key + 各渠道密钥。"""
+        s = self._settings
+        raw = [
+            profile.api_key,
+            s.llm_api_key,
+            s.sentinel_diag_token,
+            s.feishu_vendor_webhook,
+            s.feishu_patrol_webhook,
+            s.feishu_vendor_sign_secret,
+            s.feishu_patrol_sign_secret,
+            s.sentinel_telegram_bot_token,
+            s.sentinel_webhook_url,
+        ]
+        return [v for v in raw if v]
 
     # ---- 工具集:按可用数据源装配 ----
 
