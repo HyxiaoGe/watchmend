@@ -10,6 +10,8 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-06-17
+
 ### 安全
 - 日志脱敏 ReDoS 加固:诊断日志脱敏器的连接串正则在超长、无空白、无闭合 `@` 的
   `scheme://user:pass` 串上呈二次回溯,经 `loki_logs` / `docker_logs` 喂入的对抗性
@@ -207,7 +209,8 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 ### 安全
 - docker 元数据与环境值的密钥泄漏遮蔽。
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.10.1...v0.11.0
