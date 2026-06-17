@@ -172,3 +172,42 @@ def test_display_prefs_invalid_cookie_falls_to_neutral():
     )
     assert d["lang"]["selected"] == "auto"
     assert d["refresh"]["selected"] == "default"
+
+
+def test_settings_i18n_keys_present_in_both_langs():
+    from sentinel.panel import i18n
+
+    keys = [
+        # KEEP THIS LIST IN SYNC WITH THE KEYS settings.html ACTUALLY USES
+        "nav.settings",
+        "set.title",
+        "set.prefs",
+        "set.prefs_hint",
+        "set.inventory",
+        "set.inventory_hint",
+        "set.configured",
+        "set.not_configured",
+        "set.change_env",
+        "set.change_llm",
+        "set.save",
+        "set.f_lang",
+        "set.f_theme",
+        "set.f_window",
+        "set.f_refresh",
+        "set.lang_auto",
+        "set.refresh_default",
+        "set.refresh_off",
+        "set.llm_active",
+        "set.llm_fallback",
+        "set.g_probe",
+        "set.g_datasource",
+        "set.g_channels",
+        "set.g_llm",
+        "set.g_docker",
+        "set.g_panel",
+        "set.g_backup_cert",
+        "set.g_security",
+    ]
+    for k in keys:
+        assert k in i18n.MESSAGES["zh"], f"zh 缺 {k}"
+        assert k in i18n.MESSAGES["en"], f"en 缺 {k}"

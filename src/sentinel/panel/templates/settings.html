@@ -1,0 +1,108 @@
+{% extends "_base.html" %}
+{% block title %}{{ t('set.title') }}{% endblock %}
+{% block body %}
+{# 零-JS 渐进增强:偏好表单是纯 <form method="get">,radio 隐藏、label 当 chip 点;
+   选中态由服务端 'on' 类渲染,关 JS 一样可用(点 label 选 radio,提交 GET /settings)。 #}
+<style>
+  .fform { display:flex; flex-direction:column; gap:12px; }
+  .fchip { position:relative; cursor:pointer; user-select:none; }
+  .fchip input { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+  .fsave { margin-top:4px; }
+  .iv-rows { display:flex; flex-direction:column; }
+  .iv-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.1fr) auto;
+    align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); }
+  .iv-row:last-child { border-bottom:0; }
+  .iv-k { min-width:0; word-break:break-all; }
+  .iv-v { min-width:0; word-break:break-all; color:var(--txt); }
+  .iv-c { text-align:right; white-space:nowrap; }
+  .iv-c .tag { font-size:10px; border:1px solid var(--line); border-radius:8px; padding:1px 6px; color:var(--mut); }
+</style>
+<div class="wrap">
+  <div class="crumb"><a href="{{ tab_url('/') }}">{{ t('tab.overview') }}</a> / {{ t('set.title') }}</div>
+  <h1>{{ t('set.title') }}</h1>
+
+  {# —— 显示偏好(浏览器 cookie,零-JS GET 表单)—— #}
+  <section class="card">
+    <div class="comp-hd"><b>{{ t('set.prefs') }}</b></div>
+    <p class="muted" style="margin:6px 0 0">{{ t('set.prefs_hint') }}</p>
+    <form class="fform" method="get" action="/settings" style="margin-top:12px">
+      <div class="frow">
+        <span class="fk">{{ t('set.f_lang') }}</span>
+        <div class="fchips">
+          {% for opt in display.lang.options %}
+          <label class="fchip{% if display.lang.selected == opt %} on{% endif %}">
+            <input type="radio" name="lang" value="{{ opt }}"{% if display.lang.selected == opt %} checked{% endif %}>
+            {% if opt == 'auto' %}{{ t('set.lang_auto') }}{% elif opt == 'zh' %}中文{% else %}English{% endif %}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="frow">
+        <span class="fk">{{ t('set.f_theme') }}</span>
+        <div class="fchips">
+          {% for opt in display.theme.options %}
+          <label class="fchip{% if display.theme.selected == opt %} on{% endif %}">
+            <input type="radio" name="theme" value="{{ opt }}"{% if display.theme.selected == opt %} checked{% endif %}>
+            {{ t('theme.' ~ opt) }}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="frow">
+        <span class="fk">{{ t('set.f_window') }}</span>
+        <div class="fchips">
+          {% for opt in display.window.options %}
+          <label class="fchip{% if display.window.selected == opt %} on{% endif %}">
+            <input type="radio" name="win" value="{{ opt }}"{% if display.window.selected == opt %} checked{% endif %}>
+            {{ t('win.label', days=opt) }}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="frow">
+        <span class="fk">{{ t('set.f_refresh') }}</span>
+        <div class="fchips">
+          {% for opt in display.refresh.options %}
+          <label class="fchip{% if display.refresh.selected == opt %} on{% endif %}">
+            <input type="radio" name="refresh" value="{{ opt }}"{% if display.refresh.selected == opt %} checked{% endif %}>
+            {% if opt == 'default' %}{{ t('set.refresh_default', n=display.refresh.server) }}{% elif opt == '0' %}{{ t('set.refresh_off') }}{% else %}{{ opt }}s{% endif %}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="fsave"><button class="ver" type="submit">{{ t('set.save') }}</button></div>
+    </form>
+  </section>
+
+  {# —— 配置一览(只读;密钥只显状态,值已上游脱敏 → 任何地方都不用 |safe)—— #}
+  <section class="card">
+    <div class="comp-hd"><b>{{ t('set.inventory') }}</b></div>
+    <p class="muted" style="margin:6px 0 0">{{ t('set.inventory_hint') }}</p>
+    {% for group in inventory.groups %}
+    <details{% if loop.index <= 2 %} open{% endif %} style="margin-top:10px">
+      <summary class="sec">{{ t('set.g_' ~ group.key) }}</summary>
+      <div class="iv-rows" style="margin-top:6px">
+        {% for row in group.rows %}
+        <div class="iv-row">
+          <span class="iv-k mono">
+            {%- if row.synthetic == 'active' %}{{ t('set.llm_active') }}
+            {%- elif row.synthetic == 'fallback' %}{{ t('set.llm_fallback') }}
+            {%- else %}{{ row.env }}{% endif -%}
+          </span>
+          <span class="iv-v">
+            {%- if row.secret %}
+              {%- if row.configured %}<span class="ok">{{ t('set.configured') }}</span>
+              {%- else %}<span class="muted">{{ t('set.not_configured') }}</span>{% endif -%}
+            {%- else %}<span class="mono">{{ row.value or '—' }}</span>{% endif -%}
+          </span>
+          <span class="iv-c">
+            <span class="tag">{% if row.change == 'llm' %}{{ t('set.change_llm') }}{% else %}{{ t('set.change_env') }}{% endif %}</span>
+          </span>
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+    {% endfor %}
+  </section>
+</div>
+{% endblock %}
