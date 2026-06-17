@@ -29,7 +29,7 @@ joined="$(IFS='|'; echo "${PATTERNS[*]}")"
 if grep -rnE "$joined" . \
     --exclude-dir=.git --exclude-dir=.venv --exclude-dir=data \
     --exclude-dir=__pycache__ --exclude-dir=.pytest_cache --exclude-dir=.ruff_cache \
-    --exclude-dir=superpowers \
+    --exclude-dir=superpowers --exclude-dir=.superpowers \
     --exclude=leak_check.sh --exclude=leak_patterns.local; then
     echo "leak-check: 发现敏感串(见上),禁止发布" >&2
     exit 1
