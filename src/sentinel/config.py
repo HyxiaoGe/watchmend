@@ -94,6 +94,9 @@ class Settings(BaseSettings):
     sentinel_panel_default_theme: str = "system"  # dark|light|system
     sentinel_panel_history_days: int = 90  # 健康柱条最长窗口 = 90/30 切换的上限
     sentinel_panel_default_window: int = 30  # 首屏默认窗口（{30, history_days} 之一）；降噪默认 30
+    # 面板自动刷新间隔(秒)。JS 开 → 内联轮询用此值做无闪烁局部刷新;
+    # JS 关 → <noscript> meta 用此值整页刷新。ge=5 防过频整页渲染打服务端。
+    sentinel_panel_refresh_seconds: int = Field(default=30, ge=5)
     sentinel_panel_page_size: int = 8  # 事件流每页条数
     sentinel_panel_red_uptime_pct: float = 50.0  # 当日 uptime 低于此 → down（红）
     sentinel_panel_partial_uptime_pct: float = 99.5  # 低于此（且≥red）→ partial（橙）
