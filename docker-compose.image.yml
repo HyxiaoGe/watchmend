@@ -23,7 +23,7 @@ services:
   sentinel:
     # 固定补丁版本(仓库策略:绝不用 :latest/:main,只用显式版本号)。
     # 发新版后记得同步 bump 这里(见 RELEASING.md);想换更新版先去 releases 页看最新 tag。
-    image: ghcr.io/hyxiaoge/watchmend:0.14.0
+    image: ghcr.io/hyxiaoge/watchmend:0.15.0
     container_name: watchmend
     restart: unless-stopped
     mem_limit: 256m
