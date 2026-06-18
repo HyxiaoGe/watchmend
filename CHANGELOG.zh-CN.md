@@ -10,6 +10,18 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-06-18
+
+### 变更
+- **设置**页的「配置一览」重做了排版,更易读:每行改为以友好名称与一行说明为主,
+  原始环境变量名降级为下方的小标签;设置按区块分组并可折叠(默认仅展开第一组),
+  当前生效 / 回退的诊断模型以「来源标签 + 模型名」呈现。九项凭证仍只显示
+  已配置 / 未配置状态,绝不渲染其值。
+
+### 修复
+- **设置**页可访问性:显示偏好的选项标签现在带有键盘聚焦框,浅色主题下
+  「已配置」状态与标签颜色满足 WCAG AA 对比度。
+
 ## [0.15.0] - 2026-06-18
 
 ### 新增
@@ -265,7 +277,8 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 ### 安全
 - docker 元数据与环境值的密钥泄漏遮蔽。
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.3...v0.14.0
 [0.13.3]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.2...v0.13.3

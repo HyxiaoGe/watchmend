@@ -10,6 +10,22 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-06-18
+
+### Changed
+- The **Settings** page configuration inventory was redesigned for readability.
+  Each row now leads with a human-friendly name and a one-line description, and
+  the raw environment-variable name is demoted to a small chip beneath it.
+  Settings are grouped into collapsible sections (only the first is open by
+  default), and the active / fallback diagnosis model is shown with the provider
+  as a chip and the model as the value. The nine credential settings keep their
+  configured / not-configured status only — their values are still never rendered.
+
+### Fixed
+- **Settings** page accessibility: the display-preference chips now show a
+  keyboard focus ring, and the "configured" status and tag colours meet WCAG AA
+  contrast in the light theme.
+
 ## [0.15.0] - 2026-06-18
 
 ### Added
@@ -332,7 +348,8 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 ### Security
 - Secret-leak redaction across docker metadata and environment values.
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.3...v0.14.0
 [0.13.3]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.2...v0.13.3
