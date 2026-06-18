@@ -104,6 +104,11 @@
   .ver.up { color:var(--txt); border-color:var(--st-degraded); }
   .ver .updot { width:6px; height:6px; border-radius:50%; background:var(--st-degraded); display:inline-block; box-shadow:0 0 0 2px rgba(210,153,34,.2); }
   .ver .vchev { font-size:9px; color:var(--vio); }  /* 紫色 caret:暗示可展开 */
+  /* 设置入口齿轮:与 .ver/seg 同视觉语言(图标尺寸描边胶囊),hover 高亮、当前页填实 */
+  .gearlink { display:inline-flex; align-items:center; font-size:14px; line-height:1; padding:3px 8px;
+    border:1px solid var(--line); border-radius:7px; color:var(--mut); background:var(--panel); text-decoration:none; }
+  .gearlink:hover { border-color:var(--vio); color:var(--txt); background:var(--viobg); }
+  .gearlink.on { border-color:var(--vio); color:#fff; background:var(--vio); }
   /* :target 居中模态:背景遮罩(全屏 <a> 点外关闭)+ 卡片(可滚历史)。close 锚指向不存在
      的 #wm-close → :target 不命中即关闭,且浏览器找不到该 id 不滚动。z-index 高于 tip/导航。 */
   .vmodal { position:fixed; inset:0; z-index:100; display:none; }
@@ -372,6 +377,7 @@
       <a href="{{ qurl(lang='zh') }}" class="{{ 'on' if lang == 'zh' else '' }}" title="中文" aria-label="中文">中</a>
       <a href="{{ qurl(lang='en') }}" class="{{ 'on' if lang == 'en' else '' }}" title="English" aria-label="English">EN</a>
     </span>
+    <a class="gearlink{% if active_tab == 'settings' %} on{% endif %}" href="{{ tab_url('/settings') }}" title="{{ t('nav.settings') }}" aria-label="{{ t('nav.settings') }}">⚙</a>
   </div>
 </div>
 <div class="navrow">

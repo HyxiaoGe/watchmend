@@ -1839,3 +1839,118 @@ async def test_detail_page_has_live_region_but_no_autorefresh(tmp_path, monkeypa
     assert 'data-refresh="' not in html  # 但无刷新属性(getAttribute("data-refresh") 不含 ="）
     assert "http-equiv" not in html  # 详情页无任何 meta-refresh
     store.close()
+
+
+async def test_settings_page_renders(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/settings")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "设置" in html  # set.title (zh default)
+    assert "SENTINEL_DISK_USAGE_PCT" in html  # inventory lists env var names
+    assert "<script src" not in html  # progressive enhancement: no external JS
+    assert "<form" in html and 'method="get"' in html
+    store.close()
+
+
+async def test_settings_submit_sets_pref_cookies(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/settings?lang=en&theme=dark&win=90&refresh=15")
+    setcookies = "\n".join(resp.headers.get_list("set-cookie"))
+    assert "wm_lang=en" in setcookies
+    assert "wm_theme=dark" in setcookies
+    assert "wm_win=90" in setcookies
+    assert "wm_refresh=15" in setcookies
+    store.close()
+
+
+async def test_settings_neutral_choices_clear_cookies(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/settings?lang=auto&refresh=default")
+    setcookies = "\n".join(resp.headers.get_list("set-cookie"))
+    assert "wm_lang=" in setcookies and "Max-Age=0" in setcookies  # deleted
+    store.close()
+
+
+async def test_settings_no_token_required(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch, SENTINEL_DIAG_TOKEN="tok-abc123def456ghi")
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/settings")
+    assert resp.status_code == 200
+    store.close()
+
+
+async def test_refresh_cookie_overrides_refresh_seconds(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)  # server default 30
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/?refresh=15")
+    assert 'data-refresh="15"' in resp.text
+    resp0 = await _get(app, "/?refresh=0")  # 0 = off
+    # 0 → 关闭:poller 属性 data-refresh="N" 与 noscript meta 双双消失。
+    # 用带 =" 的属性形式(脚本里 getAttribute("data-refresh") 不含 ="),与既有契约一致。
+    assert 'data-refresh="' not in resp0.text
+    assert 'http-equiv="refresh"' not in resp0.text
+    store.close()
+
+
+async def test_refresh_default_when_no_pref(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch, SENTINEL_PANEL_REFRESH_SECONDS="45")
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/")
+    assert 'data-refresh="45"' in resp.text  # no browser pref → server default verbatim
+    store.close()
+
+
+async def test_gear_settings_link_in_header(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/")
+    html = resp.text
+    assert "/settings?" in html  # gear links to /settings with pref querystring
+    assert 'class="gearlink"' in html  # not-selected on overview
+    resp2 = await _get(app, "/settings")
+    assert 'class="gearlink on"' in resp2.text  # selected on the settings page itself
+    store.close()
+
+
+async def test_settings_never_leaks_secret_values(tmp_path, monkeypatch):
+    fakes = {
+        "SENTINEL_DIAG_TOKEN": "diagtok-ZZZ111secretAAA222value",
+        "SENTINEL_TELEGRAM_BOT_TOKEN": "999888:TGsecret-bbbccc-not-shown",
+        "SENTINEL_NTFY_TOKEN": "ntfytok-secret-qqqwww-eee",
+        "SENTINEL_WEBHOOK_TOKEN": "whtok-secret-rrrttt-yyy",
+        "FEISHU_VENDOR_WEBHOOK": "https://open.feishu.cn/hook/SECRETPATH123456",
+    }
+    settings = _settings(monkeypatch, **fakes)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/settings")
+    html = resp.text
+    for env, val in fakes.items():
+        if env == "FEISHU_VENDOR_WEBHOOK":
+            assert "SECRETPATH123456" not in html  # webhook path token must never appear
+        else:
+            assert val not in html, f"{env} 明文密钥泄露到 /settings!"
+    # 状态仍可见
+    assert "已配置" in html or "configured" in html
+    store.close()
+
+
+async def test_settings_bare_emits_no_set_cookie(tmp_path, monkeypatch):
+    # 齿轮点击(无 querystring)进入 /settings 不得动任何 cookie(否则会误擦用户偏好)
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/settings")
+    assert resp.headers.get_list("set-cookie") == []
+    store.close()
