@@ -6,7 +6,14 @@ from sentinel.panel.settings_view import _SECRETS
 
 # 裸端点 URL:凭证在配对的 *_token 字段里,URL 本身过 redact 兜底,故有意不列为 secret
 _URL_ALLOWLIST = {"sentinel_webhook_url", "sentinel_ntfy_url"}
-_CRED_RE = re.compile(r"(secret|token|key|password|passwd|pwd|sign|credential|webhook)", re.I)
+# 凭证形态字段名启发式:命中即必须登记进 _SECRETS(裸 URL 例外见 _URL_ALLOWLIST)。
+# 覆盖未来可能的命名(pat/auth/bearer/cookie/apikey/client_id/cred…),让遗漏登记
+# 变成红测试而非静默泄露明文;'pat' 按 snake_case 词界锚定,避免误伤 db_path / *_pattern。
+_CRED_RE = re.compile(
+    r"(secret|token|key|apikey|password|passwd|pwd|sign|credential|cred|"
+    r"webhook|auth|bearer|cookie|client[_-]?id|(?:^|_)pat(?:_|$))",
+    re.I,
+)
 
 
 def _settings(monkeypatch, **env):
@@ -101,6 +108,33 @@ def test_all_credential_shaped_fields_are_secret():
     }
     missing = suspects - set(_SECRETS)
     assert not missing, f"这些凭证形态字段未登记进 _SECRETS,会泄露明文: {missing}"
+
+
+def test_credential_name_heuristic_catches_future_shapes():
+    """加固守卫:未来若新增这些命名的凭证字段,必须被识别为凭证形态——
+    否则会绕过 _SECRETS 登记、静默泄露明文。同时普通字段不得被误伤。"""
+    must_flag = [
+        "github_pat",
+        "gitlab_pat",
+        "session_cookie",
+        "basic_auth",
+        "oauth_client_id",
+        "service_apikey",
+        "x_api_creds",
+        "llm_bearer",
+    ]
+    for name in must_flag:
+        assert _CRED_RE.search(name), f"凭证形态未被识别: {name}"
+    must_not_flag = [
+        "sentinel_db_path",
+        "sentinel_telegram_chat_id",
+        "sentinel_poll_interval",
+        "sentinel_providers",
+        "sentinel_panel_history_days",
+        "sentinel_update_check_url",
+    ]
+    for name in must_not_flag:
+        assert not _CRED_RE.search(name), f"普通字段被误判为凭证: {name}"
 
 
 def test_bare_url_fields_redact_embedded_credentials(monkeypatch):
