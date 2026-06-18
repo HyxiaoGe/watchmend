@@ -10,6 +10,18 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-06-18
+
+### 新增
+- 新增**设置**页 `/settings`,从页头齿轮(⚙)进入。两个只读区块,关闭 JavaScript
+  也完全可用:
+  - **显示偏好**——选择面板语言、主题、历史窗口与自动刷新间隔。选择经一个普通 GET
+    表单按浏览器存为 cookie;选「自动 / 默认」会清除该偏好、回落服务端默认值。
+  - **配置清单**——按环境变量名逐项列出全部配置(分组展示)及其生效值。九个凭证类
+    配置(token、key、签名密钥、webhook)只显示「已配置 / 未配置」状态,绝不渲染其值。
+- 面板自动刷新间隔现可在设置页按浏览器覆盖,作用于实时页(总览、服务、事件、巡检);
+  详情页与更新日志页一如既往保持静态。设为「关闭」即停止该浏览器的自动刷新。
+
 ## [0.14.0] - 2026-06-17
 
 ### 变更
@@ -253,7 +265,9 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 ### 安全
 - docker 元数据与环境值的密钥泄漏遮蔽。
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.3...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.3...v0.14.0
 [0.13.3]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.0...v0.13.1

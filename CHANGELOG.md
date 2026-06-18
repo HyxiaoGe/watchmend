@@ -10,6 +10,24 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-06-18
+
+### Added
+- New **Settings** page at `/settings`, reachable from the header gear (⚙). It
+  has two read-only sections and works fully with JavaScript off:
+  - **Display preferences** — choose the panel language, theme, history window,
+    and auto-refresh interval. Choices are saved per-browser as cookies through
+    a plain GET form; selecting "auto" / "default" clears that preference and
+    reverts to the server default.
+  - **Configuration inventory** — every setting listed by its environment-variable
+    name, grouped by area, with its effective value. The nine credential settings
+    (tokens, keys, sign secrets, webhooks) show a configured / not-configured
+    status only — their values are never rendered.
+- The panel auto-refresh interval is now overridable per browser from the
+  Settings page on the live pages (overview, services, events, hygiene); detail
+  and changelog pages stay static as before. Setting it to "off" stops
+  auto-refresh for that browser.
+
 ## [0.14.0] - 2026-06-17
 
 ### Changed
@@ -314,7 +332,9 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 ### Security
 - Secret-leak redaction across docker metadata and environment values.
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.3...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.3...v0.14.0
 [0.13.3]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.13.0...v0.13.1
