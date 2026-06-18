@@ -160,6 +160,45 @@ def test_secret_row_value_is_none_whether_configured_or_not(monkeypatch):
     assert rows["SENTINEL_WEBHOOK_TOKEN"]["configured"] is False
 
 
+def test_field_meta_covers_every_grouped_field():
+    """每个登记进 _GROUPS 的字段都必须有中/英友好名 + 说明——
+    新增字段忘配元数据会变红,而不是在页面上裸露 env 名。"""
+    from sentinel.panel.settings_view import _FIELD_META, _GROUPS
+
+    grouped = {name for _, names in _GROUPS for name in names}
+    missing = grouped - set(_FIELD_META)
+    assert not missing, f"_FIELD_META 缺这些字段的友好名: {missing}"
+    ghost = set(_FIELD_META) - {n for n in Settings.model_fields}
+    assert not ghost, f"_FIELD_META 有幽灵字段(不在 Settings): {ghost}"
+    for name, meta in _FIELD_META.items():
+        for lang in ("zh", "en"):
+            assert lang in meta, f"{name} 缺 {lang} 友好名"
+            label, desc = meta[lang]
+            assert label and desc, f"{name}.{lang} 友好名/说明不得为空"
+
+
+def test_inventory_rows_carry_friendly_label_distinct_from_env(monkeypatch):
+    # 每个真实字段行都带小写 field + 友好名 label + 说明;label 不是裸 env 名。
+    s = _settings(monkeypatch)
+    inv = settings_view.build_config_inventory(s, llm_config=None, lang="zh")
+    rows = [r for g in inv["groups"] for r in g["rows"] if r.get("env")]
+    assert rows
+    for r in rows:
+        assert r["field"] and r["field"] == r["env"].lower()
+        assert r["label"] and r["label"] != r["env"]
+        assert "desc" in r
+
+
+def test_inventory_label_follows_lang(monkeypatch):
+    s = _settings(monkeypatch)
+    zh = settings_view.build_config_inventory(s, llm_config=None, lang="zh")
+    en = settings_view.build_config_inventory(s, llm_config=None, lang="en")
+    zh_rows = {r["field"]: r for g in zh["groups"] for r in g["rows"] if r.get("field")}
+    en_rows = {r["field"]: r for g in en["groups"] for r in g["rows"] if r.get("field")}
+    assert zh_rows["sentinel_disk_usage_pct"]["label"] == "磁盘水位阈值"
+    assert en_rows["sentinel_disk_usage_pct"]["label"] == "Disk usage threshold"
+
+
 def test_display_prefs_lang_auto_when_no_cookie():
     d = settings_view.build_display_prefs(
         lang_eff="zh",
@@ -224,7 +263,6 @@ def test_settings_i18n_keys_present_in_both_langs():
         "set.inventory_hint",
         "set.configured",
         "set.not_configured",
-        "set.change_env",
         "set.change_llm",
         "set.save",
         "set.f_lang",
@@ -236,6 +274,8 @@ def test_settings_i18n_keys_present_in_both_langs():
         "set.refresh_off",
         "set.llm_active",
         "set.llm_fallback",
+        "set.llm_active_hint",
+        "set.llm_fallback_hint",
         "set.g_probe",
         "set.g_datasource",
         "set.g_channels",

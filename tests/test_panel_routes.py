@@ -1855,6 +1855,30 @@ async def test_settings_page_renders(tmp_path, monkeypatch):
     store.close()
 
 
+async def test_settings_shows_friendly_names_not_raw_env_as_title(tmp_path, monkeypatch):
+    # 重设计:友好名做主标题,原始 env 名降级为 chip(仍出现,供运维照着改)。
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/settings")
+    html = resp.text
+    assert "磁盘水位阈值" in html  # sentinel_disk_usage_pct 的中文友好名(主标题)
+    assert "状态页轮询间隔" in html  # sentinel_poll_interval 的中文友好名
+    assert "SENTINEL_DISK_USAGE_PCT" in html  # env 名仍作为 chip 出现
+    store.close()
+
+
+async def test_settings_friendly_names_follow_lang(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    resp = await _get(app, "/settings?lang=en")
+    html = resp.text
+    assert "Disk usage threshold" in html  # 英文友好名随 lang 切换
+    assert "SENTINEL_DISK_USAGE_PCT" in html
+    store.close()
+
+
 async def test_settings_submit_sets_pref_cookies(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))

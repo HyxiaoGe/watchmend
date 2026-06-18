@@ -554,7 +554,7 @@ def register_panel_routes(app: FastAPI) -> None:
             server_refresh=settings.sentinel_panel_refresh_seconds,
         )
         inventory = settings_view.build_config_inventory(
-            settings, llm_config=getattr(state, "llm_config", None)
+            settings, llm_config=getattr(state, "llm_config", None), lang=lang
         )
         qurl, tab_url = _nav_helpers("/settings", lang=lang, theme=theme, window_days=window_days)
         html = _env.get_template("settings.html").render(
