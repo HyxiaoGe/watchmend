@@ -2,20 +2,55 @@
 {% block title %}{{ t('set.title') }}{% endblock %}
 {% block body %}
 {# 零-JS 渐进增强:偏好表单是纯 <form method="get">,radio 隐藏、label 当 chip 点;
-   选中态由服务端 'on' 类渲染,关 JS 一样可用(点 label 选 radio,提交 GET /settings)。 #}
+   选中态由服务端 'on' 类渲染,关 JS 一样可用(点 label 选 radio,提交 GET /settings)。
+   配置一览只读:友好名为主标题、说明为副行、ENV 名降级为 chip;密钥只显状态,值已上游脱敏。 #}
 <style>
-  .fform { display:flex; flex-direction:column; gap:12px; }
+  /* —— 显示偏好(浏览器 cookie,零-JS GET 表单)—— */
+  .fform { display:flex; flex-direction:column; gap:14px; }
+  .frow { display:grid; grid-template-columns:104px 1fr; align-items:center; gap:14px; }
+  .frow .fk { text-transform:none; letter-spacing:0; font-size:12px; color:var(--mut); min-width:0; }
   .fchip { position:relative; cursor:pointer; user-select:none; }
   .fchip input { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
-  .fsave { margin-top:4px; }
-  .iv-rows { display:flex; flex-direction:column; }
-  .iv-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.1fr) auto;
-    align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); }
-  .iv-row:last-child { border-bottom:0; }
-  .iv-k { min-width:0; word-break:break-all; }
-  .iv-v { min-width:0; word-break:break-all; color:var(--txt); }
-  .iv-c { text-align:right; white-space:nowrap; }
-  .iv-c .tag { font-size:10px; border:1px solid var(--line); border-radius:8px; padding:1px 6px; color:var(--mut); }
+  /* 键盘可达性:radio 视觉隐藏,焦点落在隐藏 input 上 → 把焦点环画到 label(WCAG 2.4.7) */
+  .fchip:focus-within { outline:2px solid var(--vio); outline-offset:2px; }
+  .fsave { margin-top:6px; }
+  @media (max-width:560px){ .frow { grid-template-columns:1fr; gap:6px; } }
+
+  /* —— 配置一览:友好名为主、ENV 名降级为 chip —— */
+  .cfg-grps { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
+  .cfg-grp { border:1px solid var(--line); border-radius:var(--rad); background:var(--panel); overflow:hidden; }
+  .cfg-sum { list-style:none; cursor:pointer; display:flex; align-items:center; gap:10px; padding:11px 15px; }
+  .cfg-sum::-webkit-details-marker { display:none; }
+  .cfg-sum .gname { font-size:12.5px; font-weight:600; color:var(--txt); letter-spacing:.2px; }
+  .cfg-sum .gn { margin-left:auto; font-size:11px; color:var(--mut); font-variant-numeric:tabular-nums;
+    border:1px solid var(--line); border-radius:8px; padding:0 7px; }
+  .cfg-sum .gchev { color:var(--mut); width:11px; height:11px; flex:none; transition:transform .15s; }
+  details[open] > .cfg-sum .gchev { transform:rotate(90deg); }
+  .cfg-sum:hover .gname { color:var(--vio); }
+  .cfg-rows { padding:0 15px 6px; }
+  .cfg-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(120px,240px); gap:16px;
+    align-items:start; padding:12px 0; border-top:1px solid var(--line); }
+  .cfg-main { min-width:0; }
+  .cfg-name { font-size:13px; color:var(--txt); font-weight:500; }
+  .cfg-desc { color:var(--mut); font-size:12px; line-height:1.5; margin-top:3px; }
+  .cfg-meta { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:7px; }
+  .cfg-env { font-size:10px; color:var(--mut); background:var(--bg); border:1px solid var(--line);
+    border-radius:5px; padding:1px 6px; overflow-wrap:anywhere; }
+  .cfg-tag { font-size:10px; color:var(--vio); border:1px solid var(--vio); background:var(--viobg);
+    border-radius:8px; padding:1px 6px; white-space:nowrap; }
+  .cfg-val { text-align:right; min-width:0; }
+  .cfg-v { font-size:12.5px; color:var(--txt); overflow-wrap:anywhere; }
+  .cfg-v.empty { color:var(--mut); }
+  .cfg-st { display:inline-flex; align-items:center; gap:6px; font-size:12px; white-space:nowrap; }
+  .cfg-st.on { color:var(--st-ok); } .cfg-st.off { color:var(--mut); }
+  .cfg-lock { width:11px; height:12px; flex:none; color:var(--mut); }
+  /* 浅色主题:亮绿 --st-ok 当文字在浅卡上仅 2.39:1 → 用更深的绿;紫标 10px 同理略压暗(AA) */
+  :root[data-theme="light"] .cfg-st.on { color:#1a7f37; }
+  :root[data-theme="light"] .cfg-tag { color:#6d28d9; }
+  @media (prefers-color-scheme: light) {
+    :root[data-theme="system"] .cfg-st.on { color:#1a7f37; }
+    :root[data-theme="system"] .cfg-tag { color:#6d28d9; }
+  }
 </style>
 <div class="wrap">
   <div class="crumb"><a href="{{ tab_url('/') }}">{{ t('tab.overview') }}</a> / {{ t('set.title') }}</div>
@@ -25,7 +60,7 @@
   <section class="card">
     <div class="comp-hd"><b>{{ t('set.prefs') }}</b></div>
     <p class="muted" style="margin:6px 0 0">{{ t('set.prefs_hint') }}</p>
-    <form class="fform" method="get" action="/settings" style="margin-top:12px">
+    <form class="fform" method="get" action="/settings" style="margin-top:14px">
       <div class="frow">
         <span class="fk">{{ t('set.f_lang') }}</span>
         <div class="fchips">
@@ -78,31 +113,55 @@
   <section class="card">
     <div class="comp-hd"><b>{{ t('set.inventory') }}</b></div>
     <p class="muted" style="margin:6px 0 0">{{ t('set.inventory_hint') }}</p>
-    {% for group in inventory.groups %}
-    <details{% if loop.index <= 2 %} open{% endif %} style="margin-top:10px">
-      <summary class="sec">{{ t('set.g_' ~ group.key) }}</summary>
-      <div class="iv-rows" style="margin-top:6px">
-        {% for row in group.rows %}
-        <div class="iv-row">
-          <span class="iv-k mono">
-            {%- if row.synthetic == 'active' %}{{ t('set.llm_active') }}
-            {%- elif row.synthetic == 'fallback' %}{{ t('set.llm_fallback') }}
-            {%- else %}{{ row.env }}{% endif -%}
-          </span>
-          <span class="iv-v">
-            {%- if row.secret %}
-              {%- if row.configured %}<span class="ok">{{ t('set.configured') }}</span>
-              {%- else %}<span class="muted">{{ t('set.not_configured') }}</span>{% endif -%}
-            {%- else %}<span class="mono">{{ row.value or '—' }}</span>{% endif -%}
-          </span>
-          <span class="iv-c">
-            <span class="tag">{% if row.change == 'llm' %}{{ t('set.change_llm') }}{% else %}{{ t('set.change_env') }}{% endif %}</span>
-          </span>
+    <div class="cfg-grps">
+      {% for group in inventory.groups %}
+      <details class="cfg-grp"{% if loop.first %} open{% endif %}>
+        <summary class="cfg-sum">
+          <span class="gname">{{ t('set.g_' ~ group.key) }}</span>
+          <span class="gn">{{ group.rows|length }}</span>
+          <svg class="gchev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
+        </summary>
+        <div class="cfg-rows">
+          {% for row in group.rows %}
+          <div class="cfg-row">
+            <div class="cfg-main">
+              <div class="cfg-name">
+                {%- if row.synthetic == 'active' %}{{ t('set.llm_active') }}
+                {%- elif row.synthetic == 'fallback' %}{{ t('set.llm_fallback') }}
+                {%- else %}{{ row.label }}{% endif -%}
+              </div>
+              <div class="cfg-desc">
+                {%- if row.synthetic == 'active' %}{{ t('set.llm_active_hint') }}
+                {%- elif row.synthetic == 'fallback' %}{{ t('set.llm_fallback_hint') }}
+                {%- else %}{{ row.desc }}{% endif -%}
+              </div>
+              {% if row.env or row.source or row.change == 'llm' %}
+              <div class="cfg-meta">
+                {%- if row.env %}<span class="cfg-env mono">{{ row.env }}</span>{% endif -%}
+                {%- if row.source %}<span class="cfg-env mono">{{ row.source }}</span>{% endif -%}
+                {%- if row.change == 'llm' %}<span class="cfg-tag">{{ t('set.change_llm') }}</span>{% endif -%}
+              </div>
+              {% endif %}
+            </div>
+            <div class="cfg-val">
+              {%- if row.secret -%}
+                {%- if row.configured -%}
+                <span class="cfg-st on"><svg class="cfg-lock" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="3.4" y="7" width="9.2" height="6.3" rx="1.3"/><path d="M5.4 7V5.1a2.6 2.6 0 0 1 5.2 0V7" stroke-linecap="round"/></svg>{{ t('set.configured') }}</span>
+                {%- else -%}
+                <span class="cfg-st off"><svg class="cfg-lock" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="3.4" y="7" width="9.2" height="6.3" rx="1.3"/><path d="M5.4 7V5.1a2.6 2.6 0 0 1 4.9-1.2" stroke-linecap="round"/></svg>{{ t('set.not_configured') }}</span>
+                {%- endif -%}
+              {%- elif row.value -%}
+                <span class="cfg-v mono">{{ row.value }}</span>
+              {%- else -%}
+                <span class="cfg-v empty">—</span>
+              {%- endif -%}
+            </div>
+          </div>
+          {% endfor %}
         </div>
-        {% endfor %}
-      </div>
-    </details>
-    {% endfor %}
+      </details>
+      {% endfor %}
+    </div>
   </section>
 </div>
 {% endblock %}

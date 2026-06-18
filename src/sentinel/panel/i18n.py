@@ -30,10 +30,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "set.prefs": "显示偏好",
         "set.prefs_hint": "存在你这台浏览器(cookie),不影响服务端,关闭 JS 也生效。",
         "set.inventory": "配置一览",
-        "set.inventory_hint": "只读。想改照「改法」走 env/yaml/CLI;密钥只显是否已配置。",
+        "set.inventory_hint": (
+            "只读快照。每项给出友好名与对应环境变量;改值走 env/yaml/CLI 后重启,密钥只显是否已配置。"
+        ),
         "set.configured": "已配置",
         "set.not_configured": "未配置",
-        "set.change_env": "env · 重启",
         "set.change_llm": "llm.yaml · 热加载",
         "set.save": "保存偏好",
         "set.f_lang": "语言",
@@ -43,8 +44,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "set.lang_auto": "自动",
         "set.refresh_default": "默认 ({n}s)",
         "set.refresh_off": "关闭",
-        "set.llm_active": "active 模型",
-        "set.llm_fallback": "fallback 模型",
+        "set.llm_active": "当前生效模型",
+        "set.llm_fallback": "回退模型",
+        "set.llm_active_hint": "当前生效的诊断模型(来自 llm.yaml,热加载)",
+        "set.llm_fallback_hint": "主模型失败时的回退模型",
         "set.g_probe": "探测与阈值",
         "set.g_datasource": "数据源",
         "set.g_channels": "通知渠道",
@@ -225,12 +228,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         ),
         "set.inventory": "Configuration",
         "set.inventory_hint": (
-            'Read-only. To change, follow the "How" column via env/yaml/CLI; '
-            "secrets only show whether configured."
+            "Read-only snapshot. Each item shows a friendly name and its environment variable; "
+            "change via env/yaml/CLI then restart — secrets only show whether configured."
         ),
         "set.configured": "Configured",
         "set.not_configured": "Not configured",
-        "set.change_env": "env · restart",
         "set.change_llm": "llm.yaml · hot-reload",
         "set.save": "Save preferences",
         "set.f_lang": "Language",
@@ -242,6 +244,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "set.refresh_off": "Off",
         "set.llm_active": "active model",
         "set.llm_fallback": "fallback model",
+        "set.llm_active_hint": "Currently active diagnosis model (from llm.yaml, hot-reloaded)",
+        "set.llm_fallback_hint": "Fallback model used when the primary fails",
         "set.g_probe": "Probing & thresholds",
         "set.g_datasource": "Data sources",
         "set.g_channels": "Notification channels",
