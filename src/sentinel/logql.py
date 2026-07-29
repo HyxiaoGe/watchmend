@@ -26,3 +26,38 @@ class LokiClient:
         if data.get("resultType") != "vector":
             raise RuntimeError(f"unexpected loki result type: {data.get('resultType')}")
         return [(item["metric"], float(item["value"][1])) for item in data["result"]]
+
+    async def query_range(
+        self,
+        logql: str,
+        *,
+        start_ts: int,
+        end_ts: int,
+        limit: int,
+        direction: str = "backward",
+    ) -> list[tuple[dict, str]]:
+        """查询日志行窗口，返回扁平的（stream 标签，原始行）。"""
+        resp = await self._client.get(
+            f"{self._base}/loki/api/v1/query_range",
+            params={
+                "query": logql,
+                "start": str(start_ts * 1_000_000_000),
+                "end": str(end_ts * 1_000_000_000),
+                "limit": str(limit),
+                "direction": direction,
+            },
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        if body.get("status") != "success":
+            raise RuntimeError(f"loki query_range failed: {body}")
+        data = body["data"]
+        if data.get("resultType") != "streams":
+            raise RuntimeError(f"unexpected loki result type: {data.get('resultType')}")
+        out: list[tuple[dict, str]] = []
+        for stream in data["result"]:
+            labels = stream.get("stream", {})
+            for _timestamp, line in stream.get("values", []):
+                out.append((labels, line))
+        return out

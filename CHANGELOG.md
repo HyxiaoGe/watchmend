@@ -10,6 +10,19 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+### Added
+- Optional deferred-notification policy: hard alerts remain immediate while
+  non-urgent findings are aggregated into the 09:00 report and 18:00 digest.
+- A separate LiteLLM-compatible upstream status editor with `shadow`, `enrich`
+  and `gate` modes. Major/critical events can never be suppressed, failures
+  always fall back to deterministic cards, and every analysis is audited.
+- Optional Loki error-fingerprint scanning and Restic backup-freshness checks.
+- A side-effect-free `shadow` notification mode for parallel migration checks.
+
+### Changed
+- Loki spike detection now counts explicit error-level records instead of broad
+  `error|exception|traceback` substring matches and excludes WatchMend itself.
+
 ## [0.15.1] - 2026-06-18
 
 ### Changed

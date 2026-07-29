@@ -1,6 +1,8 @@
 # src/sentinel/config.py
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -14,7 +16,15 @@ class Settings(BaseSettings):
     sentinel_poll_interval: int = 60
     sentinel_incident_verbosity: str = "phase"
     sentinel_fail_threshold: int = 3
+    # 上游状态编辑器：独立于内部事件诊断 LLM，支持影子评测、增强和低风险门控。
+    sentinel_provider_card_min_gap_s: int = 600
+    sentinel_editor_mode: Literal["off", "shadow", "enrich", "gate"] = "off"
+    sentinel_editor_base_url: str = ""
+    sentinel_editor_api_key: str = ""
+    sentinel_editor_model: str = ""
+    sentinel_editor_timeout_seconds: float = 15
     sentinel_db_path: str = "/data/sentinel.db"
+    sentinel_notification_mode: Literal["live", "shadow"] = "live"
     # 心跳日报:每天 heartbeat_hour 点(按 utc_offset 时区)推一张全绿汇总,给"存在感"+确认存活。
     sentinel_heartbeat_enabled: bool = True
     sentinel_heartbeat_hour: int = 9
@@ -24,6 +34,9 @@ class Settings(BaseSettings):
     sentinel_probe_interval: int = 300
     sentinel_services_file: str = "services.yaml"
     sentinel_report_hour: int = 9  # 体检日报发送时刻(与 heartbeat_hour 独立,可配不同时间)
+    sentinel_evening_digest_hour: int = 18
+    # 默认关闭以保持既有逐事件实时广播；启用后非硬告警进入 09:00/18:00 摘要。
+    sentinel_defer_nonurgent: bool = False
     sentinel_probe_retention_days: int = 30
     feishu_patrol_webhook: str = ""  # 留空 → 复用 vendor webhook(基础设施群)
     feishu_patrol_sign_secret: str | None = None
@@ -40,6 +53,15 @@ class Settings(BaseSettings):
     sentinel_latency_min_samples: int = 6
     sentinel_log_spike_ratio: float = 3.0
     sentinel_log_spike_min: int = 10  # 绝对下限,基线为 0 时防误报
+    # 新错误指纹扫描默认关闭，启用后与错误尖峰互补；每个稳定指纹只生成 point 事件。
+    sentinel_error_alert_enabled: bool = False
+    sentinel_error_alert_interval: int = 300
+    sentinel_error_window_minutes: int = 10
+    sentinel_error_max_per_cycle: int = 8
+    sentinel_error_query_limit: int = 1000
+    sentinel_error_containers: str = ".+"
+    sentinel_error_ignore_patterns: str = ""
+    sentinel_self_container: str = "watchmend"
     sentinel_disk_usage_pct: float = 85.0
     sentinel_disk_forecast_days: int = 14
     sentinel_container_mem_pct: float = 90.0
@@ -50,6 +72,8 @@ class Settings(BaseSettings):
     sentinel_backup_dir: str = "/backups/postgresql"
     # 28h:备份 03:00/检查 09:00,正常龄 6h,漏一天 30h → 次晨即告警(设计稿 36h 会漏单日失败)
     sentinel_backup_max_age_hours: int = 28
+    # 0=关闭；启用时读取 restic_backup_last_success_timestamp_seconds。
+    sentinel_restic_backup_max_age_hours: int = 0
     sentinel_cert_domains: str = ""  # 逗号分隔公网域名;空=跳过证书检查
     sentinel_cert_min_days: int = 14
     # Phase 3 编排 API 写端点鉴权 token;空=不鉴权(仅容器网内可达时可接受)
@@ -118,6 +142,14 @@ class Settings(BaseSettings):
         return [p.strip() for p in self.sentinel_providers.split(",") if p.strip()]
 
     @property
+    def editor_enabled(self) -> bool:
+        return (
+            self.sentinel_editor_mode != "off"
+            and bool(self.sentinel_editor_base_url)
+            and bool(self.sentinel_editor_model)
+        )
+
+    @property
     def vendor_webhook(self) -> str:
         # 对称回退:vendor 留空但配了 patrol 时,vendor 流(状态页/心跳)复用 patrol 群,
         # 避免 patrol-only 配置下 vendor broadcaster 为空、状态页事件静默不发(见 build_jobs 校验)。
@@ -142,6 +174,20 @@ class Settings(BaseSettings):
     @property
     def cert_domains_list(self) -> list[str]:
         return [d.strip() for d in self.sentinel_cert_domains.split(",") if d.strip()]
+
+    @property
+    def error_ignore_list(self) -> list[str]:
+        return [
+            pattern.strip().lower()
+            for pattern in self.sentinel_error_ignore_patterns.split(",")
+            if pattern.strip()
+        ]
+
+    def loki_stream_selector(self, container_re: str) -> str:
+        selector = f'container=~"{container_re}"'
+        if self.sentinel_self_container:
+            selector += f', container!="{self.sentinel_self_container}"'
+        return "{" + selector + "}"
 
     @property
     def middleware_subjects(self) -> dict[str, str]:

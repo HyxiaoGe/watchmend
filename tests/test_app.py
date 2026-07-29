@@ -979,6 +979,33 @@ async def test_build_jobs_requires_at_least_one_channel(tmp_path, monkeypatch):
     store.close()
 
 
+async def test_shadow_mode_starts_without_external_channel(tmp_path, monkeypatch):
+    monkeypatch.delenv("FEISHU_VENDOR_WEBHOOK", raising=False)
+    monkeypatch.delenv("FEISHU_PATROL_WEBHOOK", raising=False)
+    monkeypatch.setenv("SENTINEL_NOTIFICATION_MODE", "shadow")
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "s.db"))
+    monkeypatch.setenv("SENTINEL_SERVICES_FILE", str(tmp_path / "no-such.yaml"))
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "")
+    monkeypatch.setenv("SENTINEL_LOKI_URL", "")
+    monkeypatch.setenv("SENTINEL_UPDATE_CHECK_ENABLED", "false")
+
+    from sentinel.app import _broadcaster_for, build_jobs
+    from sentinel.config import Settings
+    from sentinel.store import Store
+
+    settings = Settings(_env_file=None)
+    client = httpx.AsyncClient()
+    store = Store(str(tmp_path / "s.db"))
+    assert [name for name, _, _ in build_jobs(settings, client, store)] == [
+        "statuspage",
+        "daily_report",
+    ]
+    broadcaster = _broadcaster_for(settings, client, webhook="", secret=None)
+    assert [channel.name for channel in broadcaster.channels] == ["shadow"]
+    await client.aclose()
+    store.close()
+
+
 async def test_build_jobs_telegram_only_starts(tmp_path, monkeypatch):
     # 海外用户只配 Telegram(无飞书)也能起来:statuspage + daily_report
     monkeypatch.delenv("FEISHU_VENDOR_WEBHOOK", raising=False)

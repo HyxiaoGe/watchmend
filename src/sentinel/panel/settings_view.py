@@ -27,6 +27,7 @@ _SECRETS: frozenset[str] = frozenset(
         "sentinel_ntfy_token",
         "sentinel_webhook_token",
         "sentinel_diag_token",
+        "sentinel_editor_api_key",
     }
 )
 
@@ -39,6 +40,7 @@ _GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "sentinel_poll_interval",
             "sentinel_incident_verbosity",
             "sentinel_fail_threshold",
+            "sentinel_provider_card_min_gap_s",
             "sentinel_probe_interval",
             "sentinel_services_file",
             "sentinel_probe_retention_days",
@@ -49,6 +51,14 @@ _GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "sentinel_latency_min_samples",
             "sentinel_log_spike_ratio",
             "sentinel_log_spike_min",
+            "sentinel_error_alert_enabled",
+            "sentinel_error_alert_interval",
+            "sentinel_error_window_minutes",
+            "sentinel_error_max_per_cycle",
+            "sentinel_error_query_limit",
+            "sentinel_error_containers",
+            "sentinel_error_ignore_patterns",
+            "sentinel_self_container",
             "sentinel_disk_usage_pct",
             "sentinel_disk_forecast_days",
             "sentinel_container_mem_pct",
@@ -68,6 +78,7 @@ _GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "channels",
         (
+            "sentinel_notification_mode",
             "feishu_vendor_webhook",
             "feishu_vendor_sign_secret",
             "feishu_patrol_webhook",
@@ -82,6 +93,8 @@ _GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "sentinel_heartbeat_hour",
             "sentinel_heartbeat_utc_offset",
             "sentinel_report_hour",
+            "sentinel_evening_digest_hour",
+            "sentinel_defer_nonurgent",
         ),
     ),
     (
@@ -95,6 +108,11 @@ _GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "sentinel_diag_interval",
             "sentinel_llm_config_file",
             "sentinel_llm_lang",
+            "sentinel_editor_mode",
+            "sentinel_editor_base_url",
+            "sentinel_editor_api_key",
+            "sentinel_editor_model",
+            "sentinel_editor_timeout_seconds",
         ),
     ),
     (
@@ -133,6 +151,7 @@ _GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         (
             "sentinel_backup_dir",
             "sentinel_backup_max_age_hours",
+            "sentinel_restic_backup_max_age_hours",
             "sentinel_cert_domains",
             "sentinel_cert_min_days",
         ),
@@ -160,6 +179,10 @@ _FIELD_META: dict[str, dict[str, tuple[str, str]]] = {
     "sentinel_fail_threshold": {
         "zh": ("状态页判障阈值", "连续失败几次判厂商异常并发卡"),
         "en": ("Status-page fail threshold", "Consecutive failures before a vendor is flagged"),
+    },
+    "sentinel_provider_card_min_gap_s": {
+        "zh": ("上游卡片最小间隔", "同一厂商非紧急状态卡的最小发送间隔（秒）"),
+        "en": ("Provider card min gap", "Minimum gap between non-urgent cards per vendor (sec)"),
     },
     "sentinel_probe_interval": {
         "zh": ("内部探针周期", "对 services.yaml 内部服务健康探测的周期（秒）"),
@@ -201,6 +224,38 @@ _FIELD_META: dict[str, dict[str, tuple[str, str]]] = {
         "zh": ("日志激增下限", "错误条数绝对下限，基线为 0 时防误报"),
         "en": ("Log spike floor", "Absolute error-count floor to avoid false spikes"),
     },
+    "sentinel_error_alert_enabled": {
+        "zh": ("新错误指纹开关", "启用低频/单条错误指纹扫描"),
+        "en": ("New-error scanner", "Enable low-frequency error fingerprint scanning"),
+    },
+    "sentinel_error_alert_interval": {
+        "zh": ("错误指纹扫描周期", "新错误指纹扫描间隔（秒）"),
+        "en": ("Error scan interval", "Error fingerprint scan interval (seconds)"),
+    },
+    "sentinel_error_window_minutes": {
+        "zh": ("错误回看窗口", "每轮错误指纹扫描回看的分钟数"),
+        "en": ("Error lookback window", "Minutes inspected by each fingerprint scan"),
+    },
+    "sentinel_error_max_per_cycle": {
+        "zh": ("单轮错误上限", "每轮最多接纳的新错误指纹数"),
+        "en": ("Errors per cycle", "Maximum new fingerprints admitted per cycle"),
+    },
+    "sentinel_error_query_limit": {
+        "zh": ("错误日志查询上限", "单轮从 Loki 拉取的最大日志行数"),
+        "en": ("Error query limit", "Maximum Loki log lines fetched per scan"),
+    },
+    "sentinel_error_containers": {
+        "zh": ("错误扫描容器", "纳入错误指纹扫描的容器正则"),
+        "en": ("Error containers", "Container regex included in error scanning"),
+    },
+    "sentinel_error_ignore_patterns": {
+        "zh": ("错误静默词", "命中指纹即忽略的大小写无关子串 CSV"),
+        "en": ("Error ignore patterns", "Case-insensitive fingerprint substrings to ignore (CSV)"),
+    },
+    "sentinel_self_container": {
+        "zh": ("自身容器名", "从日志扫描排除，避免监控反馈环"),
+        "en": ("Self container", "Excluded from log scans to prevent feedback loops"),
+    },
     "sentinel_disk_usage_pct": {
         "zh": ("磁盘水位阈值", "磁盘占用超此百分比告警"),
         "en": ("Disk usage threshold", "Alert when disk usage exceeds this percent"),
@@ -239,6 +294,10 @@ _FIELD_META: dict[str, dict[str, tuple[str, str]]] = {
         "en": ("Scan fail threshold", "Consecutive data-source failures before a scan-fail card"),
     },
     # —— channels：通知渠道 ——
+    "sentinel_notification_mode": {
+        "zh": ("通知运行模式", "live=真实投递；shadow=只记日志不外发"),
+        "en": ("Notification mode", "live = deliver; shadow = log only"),
+    },
     "feishu_vendor_webhook": {
         "zh": ("飞书·业务群 Webhook", "状态页/心跳推送的飞书机器人地址"),
         "en": ("Feishu vendor webhook", "Feishu bot webhook for status-page / heartbeat pushes"),
@@ -295,6 +354,14 @@ _FIELD_META: dict[str, dict[str, tuple[str, str]]] = {
         "zh": ("体检日报时刻", "体检日报发送的小时（与心跳独立）"),
         "en": ("Report hour", "Hour the hygiene report is sent (independent of heartbeat)"),
     },
+    "sentinel_evening_digest_hour": {
+        "zh": ("晚间摘要时刻", "非紧急事件晚间汇总发送小时"),
+        "en": ("Evening digest hour", "Hour the non-urgent evening digest is sent"),
+    },
+    "sentinel_defer_nonurgent": {
+        "zh": ("非紧急事件延后", "将非硬告警合并进早晚摘要"),
+        "en": ("Defer non-urgent events", "Aggregate non-hard alerts into scheduled digests"),
+    },
     # —— llm：LLM 诊断 ——
     "llm_base_url": {
         "zh": ("LLM 接口地址", "OpenAI 兼容端点 base_url；与模型同时配齐才启用"),
@@ -327,6 +394,26 @@ _FIELD_META: dict[str, dict[str, tuple[str, str]]] = {
     "sentinel_llm_lang": {
         "zh": ("诊断语言", "此后新生成诊断的语言（zh|en），历史不回溯"),
         "en": ("Diagnosis language", "Language for new diagnoses (zh|en); not retroactive"),
+    },
+    "sentinel_editor_mode": {
+        "zh": ("状态编辑器模式", "off | shadow | enrich | gate"),
+        "en": ("Status editor mode", "off | shadow | enrich | gate"),
+    },
+    "sentinel_editor_base_url": {
+        "zh": ("状态编辑器地址", "LiteLLM/OpenAI 兼容接口 base URL"),
+        "en": ("Status editor URL", "LiteLLM/OpenAI-compatible base URL"),
+    },
+    "sentinel_editor_api_key": {
+        "zh": ("状态编辑器密钥", "调用状态编辑模型的专用虚拟密钥"),
+        "en": ("Status editor API key", "Dedicated virtual key for the editor model"),
+    },
+    "sentinel_editor_model": {
+        "zh": ("状态编辑器模型", "上游状态降噪与解释使用的模型"),
+        "en": ("Status editor model", "Model used for upstream status editing"),
+    },
+    "sentinel_editor_timeout_seconds": {
+        "zh": ("状态编辑器超时", "单次编辑请求超时（秒）"),
+        "en": ("Status editor timeout", "Per-editor-request timeout (seconds)"),
     },
     # —— docker：Docker 扫描 ——
     "sentinel_docker_socket": {
@@ -422,6 +509,10 @@ _FIELD_META: dict[str, dict[str, tuple[str, str]]] = {
     "sentinel_backup_max_age_hours": {
         "zh": ("备份最大龄", "最新备份超此小时数判过期"),
         "en": ("Backup max age", "Latest backup older than this (hours) = stale"),
+    },
+    "sentinel_restic_backup_max_age_hours": {
+        "zh": ("Restic 最大龄", "最近成功时间超过此小时数告警；0=关闭"),
+        "en": ("Restic max age", "Alert when last success is older than this; 0=off"),
     },
     "sentinel_cert_domains": {
         "zh": ("证书域名", "检查 TLS 到期的公网域名 CSV；空=跳过"),

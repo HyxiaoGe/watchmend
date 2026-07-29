@@ -9,9 +9,11 @@ from sentinel.feishu.cards import (
     build_card,
     build_daily_report_card,
     build_diagnosis_card,
+    build_digest_card,
     build_event_card,
     build_heartbeat_card,
     build_recovery_card,
+    build_status_editor_card,
     build_summary_card,
 )
 from sentinel.feishu.client import FeishuClient
@@ -25,6 +27,15 @@ def render_card(n: Notification) -> dict:
     if n.kind == Kind.RECOVERY:
         return build_recovery_card(d["event"], now_ts=d["now_ts"], now_str=d["now_str"])
     if n.kind == Kind.VENDOR_INCIDENT:
+        if d.get("analysis") is not None:
+            return build_status_editor_card(
+                d["provider_display"],
+                d["analysis"],
+                d["events"],
+                d["status_url"],
+                now_str=d["now_str"],
+                model=d["editor_model"],
+            )
         return build_card(d["provider_display"], d["events"], d["status_url"], now_str=d["now_str"])
     if n.kind == Kind.HEARTBEAT:
         return build_heartbeat_card(d["snapshots"], now_str=d["now_str"], interval=d["interval"])
@@ -35,6 +46,13 @@ def render_card(n: Notification) -> dict:
             now_str=d["now_str"],
             open_events=d["open_events"],
             resolved_24h=d["resolved_24h"],
+            digest_items=d.get("digest_items"),
+        )
+    if n.kind == Kind.DIGEST:
+        return build_digest_card(
+            d["items"],
+            window_label=d["window_label"],
+            now_str=d["now_str"],
         )
     if n.kind == Kind.DIAGNOSIS:
         return build_diagnosis_card(d["event"], d["diagnosis"], now_str=d["now_str"])

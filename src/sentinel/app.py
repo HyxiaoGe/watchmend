@@ -23,6 +23,7 @@ from sentinel.fetcher import Fetcher
 from sentinel.findings import (
     DOCKER_OPEN_RULES,
     DOCKER_RULES,
+    ERROR_RULES,
     LOG_RULES,
     METRICS_RULES,
     PROBE_RULES,
@@ -36,6 +37,7 @@ from sentinel.notify.base import Broadcaster
 from sentinel.notify.build import diagnosis_notification, summary_notification
 from sentinel.notify.feishu_channel import FeishuChannel
 from sentinel.notify.ntfy import NtfyChannel
+from sentinel.notify.shadow import ShadowChannel
 from sentinel.notify.telegram import TelegramChannel
 from sentinel.notify.webhook import WebhookChannel
 from sentinel.panel.routes import register_panel_routes
@@ -44,11 +46,13 @@ from sentinel.probe import load_targets, run_probe_cycle
 from sentinel.probe_rules import evaluate_probe_rules
 from sentinel.promql import PromClient
 from sentinel.registry import build_adapters
-from sentinel.report import build_daily_stats, report_due, run_daily_report
+from sentinel.report import build_daily_stats, report_due, run_daily_report, run_evening_digest
 from sentinel.scan_docker import detect_crashloops, run_docker_scan
+from sentinel.scan_errors import run_error_scan
 from sentinel.scan_hygiene import run_hygiene
 from sentinel.scan_logs import run_log_scan
 from sentinel.scan_metrics import run_metrics_scan
+from sentinel.status_editor import StatusEditor
 from sentinel.store import Store
 from sentinel.update_check import fetch_latest, is_newer
 
@@ -155,6 +159,8 @@ def _new_channels(settings: Settings, client: httpx.AsyncClient) -> list:
     """飞书之外的渠道(Telegram/ntfy/webhook),按配置启用。vendor/patrol 两流各建一份
     (无状态、单事件只进一个流,等价共享)。ntfy URL 坏会在此抛 ValueError,启动响亮失败。"""
     channels: list = []
+    if settings.sentinel_notification_mode == "shadow":
+        return [ShadowChannel()]
     if settings.telegram_enabled:
         channels.append(
             TelegramChannel(
@@ -179,6 +185,8 @@ def _new_channels(settings: Settings, client: httpx.AsyncClient) -> list:
 def _broadcaster_for(
     settings: Settings, client: httpx.AsyncClient, *, webhook: str, secret: str | None
 ) -> Broadcaster:
+    if settings.sentinel_notification_mode == "shadow":
+        return Broadcaster([ShadowChannel()])
     feishu = [FeishuChannel(FeishuClient(client, webhook, secret=secret))] if webhook else []
     return Broadcaster(feishu + _new_channels(settings, client))
 
@@ -215,6 +223,17 @@ def build_jobs(
     loki = LokiClient(client, settings.sentinel_loki_url)
     driver = LLMDriver(client, settings, docker)
     config = LLMConfig(settings)
+    status_editor = (
+        StatusEditor(
+            client,
+            base_url=settings.sentinel_editor_base_url,
+            api_key=settings.sentinel_editor_api_key,
+            model=settings.sentinel_editor_model,
+            timeout_seconds=settings.sentinel_editor_timeout_seconds,
+        )
+        if settings.editor_enabled
+        else None
+    )
     cooldown_seconds = settings.sentinel_cooldown_hours * 3600
     # _prom_enabled:Prometheus 接入是否启用。docker 层是否发 OOM 卡由它 + metrics
     # 巡检健康度共同决定(emit_oom 在 docker_tick 内计算),既去重又不漏报,见该闭包注释。
@@ -231,6 +250,12 @@ def build_jobs(
         # 仅当 llm.yaml 未在管时才提醒 env 半配置;有效 llm.yaml 已接管,env LLM_* 无关
         logger.warning(
             "LLM_BASE_URL 和 LLM_MODEL 必须同时配置,当前只有一个非空:LLM 诊断/总结层不会启用"
+        )
+    if settings.sentinel_editor_mode != "off" and not settings.editor_enabled:
+        logger.warning(
+            "状态编辑器已设为 %s，但 SENTINEL_EDITOR_BASE_URL / "
+            "SENTINEL_EDITOR_MODEL 未完整配置，当前回退规则消息",
+            settings.sentinel_editor_mode,
         )
     logger.info(
         "jobs built: providers=%s probes=%d",
@@ -251,6 +276,9 @@ def build_jobs(
             state=state,
             verbosity=settings.sentinel_incident_verbosity,
             fail_threshold=settings.sentinel_fail_threshold,
+            card_min_gap_s=settings.sentinel_provider_card_min_gap_s,
+            status_editor=status_editor,
+            editor_mode=settings.sentinel_editor_mode,
         )
         if settings.sentinel_heartbeat_enabled:
             try:
@@ -280,6 +308,7 @@ def build_jobs(
             now_str=now_str,
             cooldown_seconds=cooldown_seconds,
             hold=hold,
+            defer_nonurgent=settings.sentinel_defer_nonurgent,
         )
 
     async def metrics_tick() -> None:
@@ -318,6 +347,7 @@ def build_jobs(
             now_ts=now_ts,
             now_str=now_str,
             cooldown_seconds=cooldown_seconds,
+            defer_nonurgent=settings.sentinel_defer_nonurgent,
         )
 
     async def logs_tick() -> None:
@@ -349,6 +379,26 @@ def build_jobs(
             now_ts=now_ts,
             now_str=now_str,
             cooldown_seconds=cooldown_seconds,
+            defer_nonurgent=settings.sentinel_defer_nonurgent,
+        )
+
+    async def error_alert_tick() -> None:
+        now_ts, now_str, _ = _now()
+        try:
+            findings = await run_error_scan(loki, settings, now_ts=now_ts)
+        except Exception:
+            logger.exception("error fingerprint scan failed")
+            return
+        await apply_findings(
+            findings,
+            scope=ERROR_RULES,
+            store=store,
+            broadcaster=patrol_broadcaster,
+            now_ts=now_ts,
+            now_str=now_str,
+            cooldown_seconds=cooldown_seconds,
+            max_new_sends=settings.sentinel_error_max_per_cycle,
+            defer_nonurgent=settings.sentinel_defer_nonurgent,
         )
 
     async def docker_tick() -> None:
@@ -403,6 +453,7 @@ def build_jobs(
             now_str=now_str,
             cooldown_seconds=cooldown_seconds,
             hold=hold,
+            defer_nonurgent=settings.sentinel_defer_nonurgent,
         )
 
     async def diag_tick() -> None:
@@ -456,6 +507,7 @@ def build_jobs(
                 now_str=now_str,
                 cooldown_seconds=cooldown_seconds,
                 hold=hold,
+                defer_nonurgent=settings.sentinel_defer_nonurgent,
             )
         except Exception:
             logger.exception("hygiene failed")
@@ -488,6 +540,15 @@ def build_jobs(
             except Exception:
                 logger.exception("daily AI summary failed")
 
+    async def evening_digest_tick() -> None:
+        _, _, now_local = _now()
+        await run_evening_digest(
+            store=store,
+            broadcaster=patrol_broadcaster,
+            now_local=now_local,
+            hour=settings.sentinel_evening_digest_hour,
+        )
+
     async def update_tick() -> None:
         # 后台拉 GitHub releases/latest,有新版才写 meta(零新表);render 路径只读 meta 不外呼。
         result = await fetch_latest(
@@ -508,10 +569,14 @@ def build_jobs(
     if targets:
         jobs.append(("internal_probe", settings.sentinel_probe_interval, probe_tick))
     jobs.append(("daily_report", _REPORT_CHECK_INTERVAL, report_tick))
+    if settings.sentinel_defer_nonurgent:
+        jobs.append(("evening_digest", _REPORT_CHECK_INTERVAL, evening_digest_tick))
     if settings.sentinel_prometheus_url:
         jobs.append(("metrics_scan", settings.sentinel_scan_interval, metrics_tick))
     if settings.sentinel_loki_url:
         jobs.append(("log_scan", settings.sentinel_scan_interval, logs_tick))
+        if settings.sentinel_error_alert_enabled:
+            jobs.append(("error_alert", settings.sentinel_error_alert_interval, error_alert_tick))
     if docker is not None:
         jobs.append(("docker_scan", settings.sentinel_docker_scan_interval, docker_tick))
     if config.enabled:
