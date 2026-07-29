@@ -1266,6 +1266,44 @@ async def test_event_detail_timeline_and_confidence_ring(tmp_path, monkeypatch):
     store.close()
 
 
+async def test_event_detail_keeps_historical_diagnosis_when_runtime_llm_is_off(
+    tmp_path, monkeypatch
+):
+    settings = _settings(monkeypatch)  # 当前诊断 LLM 主动关闭
+    store = Store(str(tmp_path / "s.db"))
+    eid = store.insert_event(
+        ts=1700000000,
+        rule="log_error_spike",
+        subject="litellm-proxy",
+        severity="warning",
+        status="resolved",
+        detail="近 15 分钟错误日志 119 行",
+        payload_json="{}",
+        diagnosis_status="pending",
+        cooldown_until=0,
+        resolved_ts=1700000900,
+    )
+    store.set_diagnosis(
+        eid,
+        status="done",
+        diagnosis_json=json.dumps(
+            {
+                "summary": "DeepSeek 请求参数不兼容",
+                "root_cause": "response_format 类型不可用",
+                "confidence": "high",
+            }
+        ),
+    )
+    app = _build_app(store, settings)
+    response = await _get(app, f"/event/{eid}?lang=zh")
+
+    assert response.status_code == 200
+    assert 'class="diaghero"' in response.text
+    assert "response_format 类型不可用" in response.text
+    assert '<div class="card muted">未配置</div>' not in response.text
+    store.close()
+
+
 async def test_hygiene_renders_tristate_and_nav(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)  # backup ok / disk·cert unevaluated
     store = Store(str(tmp_path / "s.db"))
@@ -1277,6 +1315,28 @@ async def test_hygiene_renders_tristate_and_nav(tmp_path, monkeypatch):
     assert 'class="hcard unevaluated"' in r.text  # disk/cert 未评估(灰态,不画绿)
     assert "未启用" in r.text  # hyg.unevaluated
     assert 'class="tab-on" title="体检"' in r.text  # 「体检」标签高亮
+    store.close()
+
+
+async def test_hygiene_distinguishes_disabled_capabilities_from_failures(tmp_path, monkeypatch):
+    settings = _settings(
+        monkeypatch,
+        SENTINEL_PROMETHEUS_URL="http://prometheus:9090",
+        SENTINEL_LOKI_URL="http://loki:3100",
+        SENTINEL_EDITOR_MODE="gate",
+        SENTINEL_EDITOR_BASE_URL="http://litellm:4000",
+        SENTINEL_EDITOR_MODEL="gemini/gemini-2.5-flash",
+    )
+    store = Store(str(tmp_path / "s.db"))
+    app = _build_app(store, settings)
+    response = await _get(app, "/hygiene?lang=zh")
+
+    assert response.status_code == 200
+    assert "3/5 项能力已启用 · 2 项按策略关闭" in response.text
+    assert "状态编辑器" in response.text
+    assert "gemini/gemini-2.5-flash" in response.text
+    assert "诊断 LLM" in response.text
+    assert "按策略关闭" in response.text
     store.close()
 
 

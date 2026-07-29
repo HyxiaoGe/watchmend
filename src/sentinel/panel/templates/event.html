@@ -11,15 +11,13 @@
 {% set e = detail.event %}
 <div class="sd-head">
   <span class="sdot {{ 'down' if e.severity == 'critical' else 'degraded' }}"></span>
-  <h1>{% if e.service_linkable %}<a class="svc-link" href="{{ surl(e.subject) }}">{{ e.subject }}</a>{% else %}{{ e.subject }}{% endif %} · {{ rule_label(e.rule, lang) }}</h1>
+  <h1>{% if e.service_linkable %}<a class="svc-link" href="{{ surl(e.subject) }}">{{ e.display_subject }}</a>{% else %}{{ e.display_subject }}{% endif %} · {{ rule_label(e.rule, lang) }}</h1>
   <span class="upt {{ 'bad' if e.severity == 'critical' else 'warn' }}" style="font-size:13px">{{ t('sev.' ~ e.severity) }}</span>
 </div>
 <p class="muted">{{ e.ts_str }} · {{ t('life.' ~ e.lifecycle) }}{% if e.resolved_str %} · {{ e.resolved_str }}{% endif %}</p>
 <p>{{ e.detail }}</p>
 
-{% if not detail.llm_enabled %}
-<div class="card muted">{{ t('host.llm.off') }}</div>
-{% elif detail.diagnosis %}
+{% if detail.diagnosis %}
 <div class="diaghero">
   <div class="hero-ring">
     <svg viewBox="0 0 100 100" aria-hidden="true">
@@ -71,6 +69,8 @@
 <pre>{% for c in detail.diagnosis.suggested_commands %}{{ c }}
 {% endfor %}</pre>
 {% endif %}
+{% elif not detail.llm_enabled %}
+<div class="card muted">{{ t('host.llm.off') }}</div>
 {% else %}
 <div class="card muted">{{ t('ev.ai') }} —</div>
 {% endif %}

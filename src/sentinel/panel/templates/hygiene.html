@@ -7,7 +7,7 @@
   <div class="bmetrics">
     <span>{% if banner.alert_count %}<b class="crit">{{ t('hyg.m_local', ok=banner.evaluated_count, total=banner.local_total, alerts=banner.alert_count) }}</b>{% else %}{{ t('hyg.m_local', ok=banner.evaluated_count, total=banner.local_total, alerts=0) }}{% endif %}</span>
     <span>{% if banner.worst_upstream %}<b class="warn">{{ t('hyg.m_upstream', name=banner.worst_upstream) }}</b>{% elif banner.upstream_any_data %}{{ t('hyg.m_upstream_ok') }}{% else %}{{ t('hyg.no_data') }}{% endif %}</span>
-    <span>{{ t('hyg.m_layers', online=banner.layers_online, total=banner.layers_total) }}</span>
+    <span>{{ t('hyg.m_layers', enabled=banner.layers_enabled, total=banner.layers_total, disabled=banner.layers_disabled) }}</span>
     <span>{% if banner.last_report_date %}{{ t('hyg.m_report', date=banner.last_report_date) }}{% else %}<b class="warn">{{ t('hyg.m_report_never') }}</b>{% endif %}</span>
   </div>
 </div>
@@ -71,14 +71,18 @@
     <span>{{ t('host.channels') }}
       <span class="{{ 'ok' if posture.channels else 'muted' }}">{% if posture.channels %}{{ posture.channels|join('、') }}{% else %}{{ t('footer.none') }}{% endif %}</span></span>
     <span>{{ t('host.layers') }}
-      <span class="muted">prom{{ '✓' if posture.layers.prometheus else '✗' }}
-      loki{{ '✓' if posture.layers.loki else '✗' }}
-      docker{{ '✓' if posture.layers.docker else '✗' }}
-      LLM{{ '✓' if posture.layers.llm else '✗' }}</span></span>
+      <span class="{{ 'ok' if posture.layers.prometheus else 'muted' }}">{{ t('host.layer.prometheus') }} {{ t('host.cap.enabled') if posture.layers.prometheus else t('host.cap.disabled') }}</span>
+      <span class="{{ 'ok' if posture.layers.loki else 'muted' }}">{{ t('host.layer.loki') }} {{ t('host.cap.enabled') if posture.layers.loki else t('host.cap.disabled') }}</span>
+      <span class="{{ 'ok' if posture.layers.docker else 'muted' }}">{{ t('host.layer.docker') }} {{ t('host.cap.enabled') if posture.layers.docker else t('host.cap.disabled') }}</span>
+      <span class="{{ 'ok' if posture.layers.llm else 'muted' }}">{{ t('host.layer.llm') }} {{ t('host.cap.enabled') if posture.layers.llm else t('host.cap.disabled') }}</span>
+      <span class="{{ 'vio' if posture.layers.editor else 'muted' }}">{{ t('host.layer.editor') }} {{ t('host.cap.enabled') if posture.layers.editor else t('host.cap.disabled') }}</span></span>
     <span>{{ t('host.llm') }}
       {% if host_self.llm.active %}<span class="vio">{{ host_self.llm.active }} ✓</span>
       {% if host_self.llm.fallback_ready %}<span class="tag">{{ t('host.llm.fallback', model=host_self.llm.fallback) }}</span>{% endif %}
-      {% else %}<span class="muted">{{ t('host.llm.off') }}</span>{% endif %}</span>
+      {% else %}<span class="muted">{{ t('host.cap.disabled') }}</span>{% endif %}</span>
+    <span>{{ t('host.editor') }}
+      {% if posture.editor.enabled %}<span class="vio">{{ posture.editor.mode }} · {{ posture.editor.model }} ✓</span>
+      {% else %}<span class="muted">{{ t('host.cap.disabled') }}</span>{% endif %}</span>
   </div>
   <div class="ln1">
     <span class="k">docker</span>
