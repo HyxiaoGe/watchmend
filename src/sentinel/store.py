@@ -5,7 +5,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from sentinel.findings import EventRecord
+from sentinel.findings import DigestItem, EventRecord, Finding
 from sentinel.models import (
     ProbeDailyRow,
     ProbeSample,
@@ -61,13 +61,33 @@ class Store:
             "status TEXT NOT NULL, detail TEXT NOT NULL, payload_json TEXT NOT NULL, "
             "diagnosis_status TEXT NOT NULL, diagnosis_json TEXT, "
             "cooldown_until INTEGER NOT NULL, resolved_ts INTEGER, "
-            "diagnosis_tools_json TEXT)"
+            "diagnosis_tools_json TEXT, notified INTEGER NOT NULL DEFAULT 1)"
         )
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_events_rule_subject ON events (rule, subject)"
         )
         # 旧库(升级前已建 events 表)补列:CREATE TABLE IF NOT EXISTS 不会改既有表
         _ensure_column(self._conn, "events", "diagnosis_tools_json", "TEXT")
+        _ensure_column(self._conn, "events", "notified", "INTEGER NOT NULL DEFAULT 1")
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS digest_items ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, first_ts INTEGER NOT NULL, "
+            "last_ts INTEGER NOT NULL, rule TEXT NOT NULL, subject TEXT NOT NULL, "
+            "severity TEXT NOT NULL, state TEXT NOT NULL, detail TEXT NOT NULL, "
+            "payload_json TEXT NOT NULL, occurrences INTEGER NOT NULL DEFAULT 1, "
+            "sent_ts INTEGER)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_digest_items_pending "
+            "ON digest_items (sent_ts, first_ts)"
+        )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS llm_analyses ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, "
+            "provider TEXT NOT NULL, mode TEXT NOT NULL, model TEXT NOT NULL, "
+            "events_json TEXT NOT NULL, analysis_json TEXT NOT NULL)"
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_analyses_ts ON llm_analyses (ts)")
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS container_restart_baseline ("
             "subject TEXT PRIMARY KEY, "
@@ -104,6 +124,36 @@ class Store:
             (key, value),
         )
         self._conn.commit()
+
+    # ---- LLM 告警编辑审计 ----
+
+    def record_llm_analysis(
+        self,
+        *,
+        ts: int,
+        provider: str,
+        mode: str,
+        model: str,
+        events_json: str,
+        analysis_json: str,
+    ) -> int:
+        cur = self._conn.execute(
+            "INSERT INTO llm_analyses "
+            "(ts, provider, mode, model, events_json, analysis_json) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (ts, provider, mode, model, events_json, analysis_json),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def get_recent_llm_analyses(self, *, limit: int = 100) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT id, ts, provider, mode, model, events_json, analysis_json "
+            "FROM llm_analyses ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        keys = ("id", "ts", "provider", "mode", "model", "events_json", "analysis_json")
+        return [dict(zip(keys, row, strict=True)) for row in rows]
 
     # ---- 容器 crash-loop 基线(docker-only 检测,见设计稿 §4)----
 
@@ -219,7 +269,8 @@ class Store:
 
     _EVENT_COLS = (
         "id, ts, rule, subject, severity, status, detail, payload_json, "
-        "diagnosis_status, diagnosis_json, cooldown_until, resolved_ts, diagnosis_tools_json"
+        "diagnosis_status, diagnosis_json, cooldown_until, resolved_ts, "
+        "diagnosis_tools_json, notified"
     )
 
     def insert_event(
@@ -235,12 +286,13 @@ class Store:
         diagnosis_status: str,
         cooldown_until: int,
         resolved_ts: int | None = None,
+        notified: bool = True,
     ) -> int:
         """status='resolved'(点事件)时必须同时传 resolved_ts,否则 count_resolved_since 看不到。"""
         cur = self._conn.execute(
             "INSERT INTO events (ts, rule, subject, severity, status, detail, payload_json, "
-            "diagnosis_status, diagnosis_json, cooldown_until, resolved_ts) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+            "diagnosis_status, diagnosis_json, cooldown_until, resolved_ts, notified) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
             (
                 ts,
                 rule,
@@ -252,6 +304,7 @@ class Store:
                 diagnosis_status,
                 cooldown_until,
                 resolved_ts,
+                int(notified),
             ),
         )
         self._conn.commit()
@@ -261,14 +314,14 @@ class Store:
         rows = self._conn.execute(
             f"SELECT {self._EVENT_COLS} FROM events WHERE status = 'open' ORDER BY ts"
         ).fetchall()
-        return [EventRecord(*r) for r in rows]
+        return [self._event_from_row(r) for r in rows]
 
     def get_pending_diagnosis_events(self) -> list[EventRecord]:
         """Phase 3 /events/pending 的数据源;本期仅供测试断言。"""
         rows = self._conn.execute(
             f"SELECT {self._EVENT_COLS} FROM events WHERE diagnosis_status = 'pending' ORDER BY ts"
         ).fetchall()
-        return [EventRecord(*r) for r in rows]
+        return [self._event_from_row(r) for r in rows]
 
     def resolve_event(self, event_id: int, *, resolved_ts: int) -> None:
         self._conn.execute(
@@ -299,7 +352,7 @@ class Store:
             "WHERE status = 'resolved' AND resolved_ts >= ? ORDER BY resolved_ts DESC LIMIT ?",
             (since_ts, limit),
         ).fetchall()
-        return [EventRecord(*r) for r in rows]
+        return [self._event_from_row(r) for r in rows]
 
     def get_events_since(self, since_ts: int, *, limit: int | None = None) -> list[EventRecord]:
         """窗口内全部事件（open + resolved），按 ts 降序。供逐日着色与事件流分页。
@@ -310,13 +363,19 @@ class Store:
             sql += " LIMIT ?"
             params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()
-        return [EventRecord(*r) for r in rows]
+        return [self._event_from_row(r) for r in rows]
 
     def get_event(self, event_id: int) -> EventRecord | None:
         row = self._conn.execute(
             f"SELECT {self._EVENT_COLS} FROM events WHERE id = ?", (event_id,)
         ).fetchone()
-        return EventRecord(*row) if row else None
+        return self._event_from_row(row) if row else None
+
+    @staticmethod
+    def _event_from_row(row) -> EventRecord:
+        values = list(row)
+        values[-1] = bool(values[-1])
+        return EventRecord(*values)
 
     def set_diagnosis(
         self,
@@ -340,6 +399,88 @@ class Store:
         cur = self._conn.execute(f"UPDATE events SET {', '.join(cols)} WHERE id = ?", params)
         self._conn.commit()
         return cur.rowcount > 0
+
+    # ---- 分时巡检摘要 ----
+
+    def enqueue_digest(
+        self,
+        finding: Finding,
+        *,
+        now_ts: int,
+        state: str = "observed",
+    ) -> int:
+        """同一未播报 (rule, subject) 合并，保留最新状态并累计观察次数。"""
+        row = self._conn.execute(
+            "SELECT id, occurrences FROM digest_items "
+            "WHERE sent_ts IS NULL AND rule = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+            (finding.rule, finding.subject),
+        ).fetchone()
+        payload_json = json.dumps(finding.payload, ensure_ascii=False)
+        if row:
+            item_id, occurrences = row
+            self._conn.execute(
+                "UPDATE digest_items SET last_ts = ?, severity = ?, state = ?, "
+                "detail = ?, payload_json = ?, occurrences = ? WHERE id = ?",
+                (
+                    now_ts,
+                    finding.severity,
+                    state,
+                    finding.detail,
+                    payload_json,
+                    occurrences + 1,
+                    item_id,
+                ),
+            )
+        else:
+            cur = self._conn.execute(
+                "INSERT INTO digest_items "
+                "(first_ts, last_ts, rule, subject, severity, state, detail, payload_json, "
+                "occurrences, sent_ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NULL)",
+                (
+                    now_ts,
+                    now_ts,
+                    finding.rule,
+                    finding.subject,
+                    finding.severity,
+                    state,
+                    finding.detail,
+                    payload_json,
+                ),
+            )
+            item_id = cur.lastrowid
+        self._conn.commit()
+        return item_id
+
+    def resolve_deferred_digest(self, event: EventRecord, *, now_ts: int) -> int:
+        """未实时通知的状态型事件恢复时，将待摘要项改成已恢复。"""
+        finding = Finding(
+            rule=event.rule,
+            subject=event.subject,
+            severity=event.severity,
+            detail=f"已恢复；原始触发：{event.detail}",
+            payload=json.loads(event.payload_json),
+        )
+        return self.enqueue_digest(finding, now_ts=now_ts, state="resolved")
+
+    def get_pending_digest_items(self, *, limit: int = 200) -> list[DigestItem]:
+        rows = self._conn.execute(
+            "SELECT id, first_ts, last_ts, rule, subject, severity, state, detail, "
+            "payload_json, occurrences FROM digest_items "
+            "WHERE sent_ts IS NULL ORDER BY "
+            "CASE severity WHEN 'critical' THEN 0 ELSE 1 END, last_ts DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [DigestItem(*row) for row in rows]
+
+    def mark_digest_items_sent(self, item_ids: list[int], *, sent_ts: int) -> None:
+        if not item_ids:
+            return
+        placeholders = ",".join("?" for _ in item_ids)
+        self._conn.execute(
+            f"UPDATE digest_items SET sent_ts = ? WHERE id IN ({placeholders})",
+            (sent_ts, *item_ids),
+        )
+        self._conn.commit()
 
     def close(self) -> None:
         self._conn.close()

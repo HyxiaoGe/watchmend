@@ -189,3 +189,102 @@ async def test_hold_blocks_recovery_without_firing(tmp_path):
     assert len(bc.sent) == 1  # 没发恢复
     assert len(store.get_open_events()) == 1
     store.close()
+
+
+async def test_nonurgent_finding_is_deferred_into_digest(tmp_path):
+    store, bc = _store(tmp_path), FakeBroadcaster()
+    finding = _finding(
+        rule="latency_degraded",
+        subject="auth",
+        severity="warning",
+        detail="P95 延迟升高",
+        needs_diagnosis=True,
+    )
+    scope = frozenset({"latency_degraded"})
+    await apply_findings(
+        [finding],
+        scope=scope,
+        store=store,
+        broadcaster=bc,
+        now_ts=1000,
+        now_str="n",
+        cooldown_seconds=COOLDOWN,
+        defer_nonurgent=True,
+    )
+    assert bc.sent == []
+    event = store.get_open_events()[0]
+    assert event.notified is False
+    assert event.diagnosis_status == "skipped"
+    assert [(item.rule, item.subject, item.state) for item in store.get_pending_digest_items()] == [
+        ("latency_degraded", "auth", "observed")
+    ]
+
+    await apply_findings(
+        [],
+        scope=scope,
+        store=store,
+        broadcaster=bc,
+        now_ts=2000,
+        now_str="n",
+        cooldown_seconds=COOLDOWN,
+        defer_nonurgent=True,
+    )
+    assert bc.sent == []
+    assert store.get_open_events() == []
+    assert store.get_pending_digest_items()[0].state == "resolved"
+    store.close()
+
+
+async def test_hard_alert_stays_immediate_when_defer_enabled(tmp_path):
+    store, bc = _store(tmp_path), FakeBroadcaster()
+    finding = _finding(
+        rule="service_down",
+        subject="auth",
+        severity="critical",
+        detail="连续 3 次失败",
+        needs_diagnosis=True,
+    )
+    await apply_findings(
+        [finding],
+        scope=frozenset({"service_down"}),
+        store=store,
+        broadcaster=bc,
+        now_ts=1000,
+        now_str="n",
+        cooldown_seconds=COOLDOWN,
+        defer_nonurgent=True,
+    )
+    assert len(bc.sent) == 1
+    event = store.get_open_events()[0]
+    assert event.notified is True
+    assert event.diagnosis_status == "pending"
+    assert store.get_pending_digest_items() == []
+    store.close()
+
+
+async def test_deferred_new_events_respect_per_cycle_cap(tmp_path):
+    store, bc = _store(tmp_path), FakeBroadcaster()
+    findings = [
+        _finding(
+            rule="log_error_new",
+            subject=f"worker · error-{index}",
+            severity="warning",
+            point=True,
+        )
+        for index in range(3)
+    ]
+    await apply_findings(
+        findings,
+        scope=frozenset({"log_error_new"}),
+        store=store,
+        broadcaster=bc,
+        now_ts=1000,
+        now_str="n",
+        cooldown_seconds=COOLDOWN,
+        defer_nonurgent=True,
+        max_new_sends=2,
+    )
+    assert bc.sent == []
+    assert len(store.get_pending_digest_items()) == 2
+    assert store.count_resolved_since(0) == 2
+    store.close()

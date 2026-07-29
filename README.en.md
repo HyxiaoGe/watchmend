@@ -6,7 +6,7 @@
 
 WatchMend is a lightweight monitoring sentinel for personal servers, homelabs and
 small teams. **Deterministic rules decide when to alert; an LLM (optional) only
-explains what happened.** Alerts arrive as rich Feishu (Lark) cards with automated
+explains and de-noises the result.** Alerts arrive as rich Feishu (Lark) cards with automated
 root-cause diagnosis attached. Everything degrades gracefully by configuration —
 the minimal footprint is Docker plus a single Feishu webhook.
 
@@ -60,6 +60,10 @@ Most data sources are optional — leave one empty and that layer turns off clea
 | `services.yaml` | HTTP probes + latency baselines (per-entry optional `label` sets panel display name) | vendor-status-only mode |
 | `SENTINEL_PROMETHEUS_URL` | disk/memory/restart metric rules | metrics layer off |
 | `SENTINEL_LOKI_URL` | error-log spike detection | log layer off |
+| `SENTINEL_ERROR_ALERT_ENABLED` | low-frequency error fingerprint detection | off by default |
+| `SENTINEL_DEFER_NONURGENT` | aggregate non-hard alerts into 09:00/18:00 digests | real-time delivery |
+| `SENTINEL_EDITOR_MODE` + editor endpoint/model | LiteLLM status-page explanation and low-risk gating | deterministic card unchanged |
+| `SENTINEL_RESTIC_BACKUP_MAX_AGE_HOURS` | Restic Pushgateway freshness check | off by default |
 | `SENTINEL_MIDDLEWARE_METRICS` | pg/redis exporter `up` fallback | check skipped |
 | `SENTINEL_CERT_DOMAINS` | TLS certificate expiry check | check skipped |
 | backup dir mount | pg_dump freshness check | check skipped |

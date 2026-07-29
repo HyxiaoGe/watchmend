@@ -4,7 +4,8 @@
 demo: .env llm-yaml-ready
 	@if grep -q REPLACE_ME .env; then \
 		echo "✗ .env 里还有 REPLACE_ME 占位符,替换成真实值再运行"; exit 1; fi
-	@if ! { grep -qE '^(FEISHU_VENDOR_WEBHOOK|FEISHU_PATROL_WEBHOOK|SENTINEL_NTFY_URL|SENTINEL_WEBHOOK_URL)=..*' .env \
+	@if ! { grep -qE '^SENTINEL_NOTIFICATION_MODE=shadow$$' .env \
+		|| grep -qE '^(FEISHU_VENDOR_WEBHOOK|FEISHU_PATROL_WEBHOOK|SENTINEL_NTFY_URL|SENTINEL_WEBHOOK_URL)=..*' .env \
 		|| { grep -qE '^SENTINEL_TELEGRAM_BOT_TOKEN=..*' .env && grep -qE '^SENTINEL_TELEGRAM_CHAT_ID=..*' .env; }; }; then \
 		echo "✗ .env 未配置任何通知渠道:飞书/Telegram(需 token+chat_id)/ntfy/webhook 至少填一个再运行"; exit 1; fi
 	docker compose -f docker-compose.demo.yml up -d --build
@@ -22,7 +23,8 @@ demo-logs:
 up: .env services-yaml-ready llm-yaml-ready
 	@if grep -q REPLACE_ME .env; then \
 		echo "✗ .env 里还有 REPLACE_ME 占位符,替换成真实值再运行"; exit 1; fi
-	@if ! { grep -qE '^(FEISHU_VENDOR_WEBHOOK|FEISHU_PATROL_WEBHOOK|SENTINEL_NTFY_URL|SENTINEL_WEBHOOK_URL)=..*' .env \
+	@if ! { grep -qE '^SENTINEL_NOTIFICATION_MODE=shadow$$' .env \
+		|| grep -qE '^(FEISHU_VENDOR_WEBHOOK|FEISHU_PATROL_WEBHOOK|SENTINEL_NTFY_URL|SENTINEL_WEBHOOK_URL)=..*' .env \
 		|| { grep -qE '^SENTINEL_TELEGRAM_BOT_TOKEN=..*' .env && grep -qE '^SENTINEL_TELEGRAM_CHAT_ID=..*' .env; }; }; then \
 		echo "✗ .env 未配置任何通知渠道:飞书/Telegram(需 token+chat_id)/ntfy/webhook 至少填一个再运行"; exit 1; fi
 	docker compose up -d --build

@@ -11,6 +11,19 @@ def test_defaults(monkeypatch):
     assert s.sentinel_poll_interval == 60
     assert s.sentinel_incident_verbosity == "phase"
     assert s.sentinel_fail_threshold == 3
+    assert s.sentinel_editor_mode == "off"
+    assert s.editor_enabled is False
+    assert s.sentinel_error_alert_enabled is False
+    assert s.sentinel_restic_backup_max_age_hours == 0
+    assert s.sentinel_notification_mode == "live"
+
+
+def test_status_editor_enabled_when_mode_and_endpoint_are_complete(monkeypatch):
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://x")
+    monkeypatch.setenv("SENTINEL_EDITOR_MODE", "gate")
+    monkeypatch.setenv("SENTINEL_EDITOR_BASE_URL", "http://litellm:4000")
+    monkeypatch.setenv("SENTINEL_EDITOR_MODEL", "gemini/gemini-2.5-flash")
+    assert Settings(_env_file=None).editor_enabled is True
 
 
 def test_providers_list_parses_csv(monkeypatch):

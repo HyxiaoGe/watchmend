@@ -1,9 +1,16 @@
 # tests/test_report.py
 from datetime import datetime, timedelta, timezone
 
+from sentinel.findings import Finding
 from sentinel.models import ProbeSample
 from sentinel.notify.message import Kind
-from sentinel.report import aggregate_window, build_daily_stats, percentile, run_daily_report
+from sentinel.report import (
+    aggregate_window,
+    build_daily_stats,
+    percentile,
+    run_daily_report,
+    run_evening_digest,
+)
 from sentinel.store import Store
 
 TZ = timezone(timedelta(hours=8))
@@ -224,3 +231,61 @@ def test_report_due_gate(tmp_path):
     assert not report_due(store, at_nine, 9)  # 当天已发
     assert not report_due(store, datetime(2026, 6, 12, 8, 0, tzinfo=tz), 9)  # 没到点
     store.close()
+
+
+async def test_evening_digest_empty_window_only_commits_gate(tmp_path):
+    store = Store(str(tmp_path / "d.db"))
+    bc = RecordingBroadcaster()
+    now = datetime(2026, 6, 12, 18, 0, tzinfo=TZ)
+    sent = await run_evening_digest(store=store, broadcaster=bc, now_local=now, hour=18)
+    assert sent is False
+    assert bc.sent == []
+    assert store.get_meta("evening_digest_last_date") == "2026-06-12"
+
+
+async def test_evening_digest_sends_and_marks_items(tmp_path):
+    store = Store(str(tmp_path / "d.db"))
+    store.enqueue_digest(
+        Finding(
+            rule="latency_degraded",
+            subject="auth",
+            severity="warning",
+            detail="P95 延迟升高",
+        ),
+        now_ts=1000,
+        state="observed",
+    )
+    bc = RecordingBroadcaster()
+    now = datetime(2026, 6, 12, 18, 0, tzinfo=TZ)
+    sent = await run_evening_digest(store=store, broadcaster=bc, now_local=now, hour=18)
+    assert sent is True
+    assert bc.sent[0].kind is Kind.DIGEST
+    assert store.get_pending_digest_items() == []
+    assert store.get_meta("evening_digest_last_date") == "2026-06-12"
+
+
+async def test_daily_report_carries_and_consumes_digest(tmp_path):
+    store = Store(str(tmp_path / "r.db"))
+    store.enqueue_digest(
+        Finding(
+            rule="latency_degraded",
+            subject="auth",
+            severity="warning",
+            detail="P95 延迟升高",
+        ),
+        now_ts=1000,
+        state="observed",
+    )
+    bc = RecordingBroadcaster()
+    now = datetime(2026, 6, 12, 9, 0, tzinfo=TZ)
+    sent = await run_daily_report(
+        store=store,
+        broadcaster=bc,
+        services=["auth"],
+        now_local=now,
+        hour=9,
+        retention_days=30,
+    )
+    assert sent is True
+    assert bc.sent[0].data["digest_items"][0].subject == "auth"
+    assert store.get_pending_digest_items() == []

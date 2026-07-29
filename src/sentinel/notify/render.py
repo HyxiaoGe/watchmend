@@ -17,6 +17,7 @@ _NTFY_SEVERITY_TAG = {
 _NTFY_KIND_TAG = {
     Kind.RECOVERY: "white_check_mark",
     Kind.REPORT: "clipboard",
+    Kind.DIGEST: "memo",
     Kind.HEARTBEAT: "heartbeat",
     Kind.DIAGNOSIS: "brain",
     Kind.SUMMARY: "memo",

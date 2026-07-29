@@ -1,4 +1,5 @@
 # tests/test_poller.py
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -6,6 +7,7 @@ import pytest
 from sentinel.models import Incident, IncidentStatus, Indicator, Snapshot
 from sentinel.notify.message import Kind
 from sentinel.poller import PollState, run_cycle, run_heartbeat, should_send_heartbeat
+from sentinel.status_editor import StatusAnalysis
 from sentinel.store import Store
 
 
@@ -33,6 +35,35 @@ class RecordingBroadcaster:
     async def send(self, n):
         self.sent.append(n)
         return 0 if self.fail else 1
+
+
+class FakeEditor:
+    model = "test-model"
+
+    def __init__(self, result=None, error=None):
+        self.result = result
+        self.error = error
+        self.calls = []
+
+    async def analyze(self, snapshot, events):
+        self.calls.append((snapshot, events))
+        if self.error:
+            raise self.error
+        return self.result
+
+
+def _analysis(decision="notify"):
+    return StatusAnalysis(
+        decision=decision,
+        severity="info",
+        headline="低影响状态更新",
+        summary="官方状态发生变化。",
+        impact_summary="暂无内部影响证据。",
+        affected_services=[],
+        evidence=["官方影响级别为 minor"],
+        recommended_action="继续观察。",
+        confidence=0.9,
+    )
 
 
 def _snap(provider, indicator=Indicator.NONE, incidents=None):
@@ -214,3 +245,119 @@ async def test_run_heartbeat_failed_send_not_recorded(tmp_path):
     )
     assert len(bc.sent) == 1  # 试图发了
     assert store.get_meta("heartbeat_last_date") is None  # 失败不记 → 下轮重试
+
+
+async def test_gate_mode_suppresses_nonurgent_event_and_commits(tmp_path):
+    old = Incident(
+        key="i1",
+        title="minor incident",
+        status=IncidentStatus.INVESTIGATING,
+        impact=Indicator.MINOR,
+        url="https://x",
+        started_at=None,
+        updated_at=None,
+        latest_update_id="u1",
+    )
+    new = Incident(
+        key="i1",
+        title="minor incident",
+        status=IncidentStatus.MONITORING,
+        impact=Indicator.MINOR,
+        url="https://x",
+        started_at=None,
+        updated_at=None,
+        latest_update_id="u2",
+    )
+    store = Store(str(tmp_path / "s.db"))
+    store.put("cloudflare", _snap("cloudflare", Indicator.MINOR, [old]))
+    bc = RecordingBroadcaster()
+    await run_cycle(
+        [FakeAdapter("cloudflare", _snap("cloudflare", Indicator.MINOR, [new]))],
+        fetcher=None,
+        store=store,
+        broadcaster=bc,
+        state=PollState(),
+        status_editor=FakeEditor(_analysis("suppress")),
+        editor_mode="gate",
+    )
+    assert bc.sent == []
+    assert store.get("cloudflare").incidents[0].status is IncidentStatus.MONITORING
+    assert store.get_recent_llm_analyses()[0]["mode"] == "gate"
+
+
+async def test_gate_mode_cannot_suppress_major_event(tmp_path):
+    store = Store(str(tmp_path / "s.db"))
+    store.put("openai", _snap("openai"))
+    bc = RecordingBroadcaster()
+    await run_cycle(
+        [FakeAdapter("openai", _snap("openai", Indicator.MAJOR, [_inc("i1")]))],
+        fetcher=None,
+        store=store,
+        broadcaster=bc,
+        state=PollState(),
+        status_editor=FakeEditor(_analysis("suppress")),
+        editor_mode="gate",
+    )
+    assert len(bc.sent) == 1
+    assert bc.sent[0].title == "openai · 低影响状态更新"
+
+
+async def test_shadow_mode_keeps_original_notification(tmp_path):
+    store = Store(str(tmp_path / "s.db"))
+    store.put("openai", _snap("openai"))
+    bc = RecordingBroadcaster()
+    await run_cycle(
+        [FakeAdapter("openai", _snap("openai", Indicator.MAJOR, [_inc("i1")]))],
+        fetcher=None,
+        store=store,
+        broadcaster=bc,
+        state=PollState(),
+        status_editor=FakeEditor(_analysis()),
+        editor_mode="shadow",
+    )
+    assert len(bc.sent) == 1
+    assert bc.sent[0].title == "openai 状态变更"
+    assert store.get_recent_llm_analyses()[0]["mode"] == "shadow"
+
+
+async def test_editor_failure_falls_back_to_original_notification(tmp_path):
+    store = Store(str(tmp_path / "s.db"))
+    store.put("openai", _snap("openai"))
+    bc = RecordingBroadcaster()
+    await run_cycle(
+        [FakeAdapter("openai", _snap("openai", Indicator.MAJOR, [_inc("i1")]))],
+        fetcher=None,
+        store=store,
+        broadcaster=bc,
+        state=PollState(),
+        status_editor=FakeEditor(error=RuntimeError("editor down")),
+        editor_mode="gate",
+    )
+    assert len(bc.sent) == 1
+    assert bc.sent[0].title == "openai 状态变更"
+
+
+async def test_minor_incident_obeys_provider_min_gap(tmp_path):
+    minor = Incident(
+        key="i1",
+        title="minor",
+        status=IncidentStatus.INVESTIGATING,
+        impact=Indicator.MINOR,
+        url="https://x",
+        started_at=None,
+        updated_at=None,
+        latest_update_id="u1",
+    )
+    store = Store(str(tmp_path / "s.db"))
+    store.put("openai", _snap("openai"))
+    bc = RecordingBroadcaster()
+    await run_cycle(
+        [FakeAdapter("openai", _snap("openai", Indicator.MINOR, [minor]))],
+        fetcher=None,
+        store=store,
+        broadcaster=bc,
+        state=PollState(last_card_ts={"openai": time.monotonic()}),
+        card_min_gap_s=600,
+    )
+    assert bc.sent == []
+    assert store.get("openai").incidents == []

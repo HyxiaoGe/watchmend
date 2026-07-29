@@ -6,13 +6,14 @@ import math
 from datetime import datetime
 
 from sentinel.models import ProbeSample, ServiceDayStats
-from sentinel.notify.build import report_notification
+from sentinel.notify.build import digest_notification, report_notification
 from sentinel.poller import should_send_heartbeat
 from sentinel.store import Store
 
 logger = logging.getLogger("sentinel")
 
 _REPORT_KEY = "daily_report_last_date"
+_EVENING_DIGEST_KEY = "evening_digest_last_date"
 WINDOW_SECONDS = 24 * 3600
 
 
@@ -74,6 +75,7 @@ async def run_daily_report(
     date_str = now_local.date().isoformat()
     now_ts = int(now_local.timestamp())
     stats = build_daily_stats(store, services, now_ts=now_ts, date_str=date_str)
+    digest_items = store.get_pending_digest_items()
     n = report_notification(
         stats,
         date_str=date_str,
@@ -81,10 +83,12 @@ async def run_daily_report(
         now_ts=now_ts,
         open_events=store.get_open_events(),
         resolved_24h=store.count_resolved_since(now_ts - WINDOW_SECONDS),
+        digest_items=digest_items,
     )
     if await broadcaster.send(n) < 1:
         logger.warning("daily report not delivered to any channel; retrying next minute")
         return False
+    store.mark_digest_items_sent([item.id for item in digest_items], sent_ts=now_ts)
     store.set_meta(_REPORT_KEY, date_str)
     for st in stats:
         store.upsert_probe_daily(
@@ -98,6 +102,37 @@ async def run_daily_report(
     deleted = store.prune_probe_samples(now_ts - retention_days * 86400)
     if deleted:
         logger.info("pruned %d probe samples", deleted)
+    return True
+
+
+async def run_evening_digest(
+    *,
+    store: Store,
+    broadcaster,
+    now_local: datetime,
+    hour: int,
+) -> bool:
+    """到点且有内容时发送非紧急事件摘要；空窗口只提交日期门控。"""
+    last = store.get_meta(_EVENING_DIGEST_KEY)
+    if not should_send_heartbeat(now_local, last, hour):
+        return False
+    date_str = now_local.date().isoformat()
+    now_ts = int(now_local.timestamp())
+    items = store.get_pending_digest_items()
+    if not items:
+        store.set_meta(_EVENING_DIGEST_KEY, date_str)
+        return False
+    notification = digest_notification(
+        items,
+        window_label=f"{hour:02d}:00 前",
+        now_ts=now_ts,
+        now_str=now_local.strftime("%Y-%m-%d %H:%M:%S"),
+    )
+    if await broadcaster.send(notification) < 1:
+        logger.warning("digest not delivered to any channel; retrying next minute")
+        return False
+    store.mark_digest_items_sent([item.id for item in items], sent_ts=now_ts)
+    store.set_meta(_EVENING_DIGEST_KEY, date_str)
     return True
 
 

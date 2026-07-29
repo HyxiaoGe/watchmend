@@ -1,13 +1,22 @@
 # src/sentinel/poller.py
 from __future__ import annotations
 
+import json
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from sentinel.differ import diff
 from sentinel.events import EventType, TransitionEvent
+from sentinel.models import Indicator
 from sentinel.notify.build import heartbeat_notification, vendor_incident_notification
+from sentinel.status_editor import (
+    StatusAnalysis,
+    StatusEditor,
+    StatusEditorError,
+    events_to_dict,
+)
 
 logger = logging.getLogger("sentinel.poller")
 
@@ -20,6 +29,53 @@ class PollState:
     # 已送达 meta 卡的 provider:达阈值后若全渠道宕,meta 未送达就不入此集,下轮继续重试;
     # 送达一次即记下不再重复,抓取恢复时清除以便下次故障重新武装。
     meta_sent: set[str] = field(default_factory=set)
+    last_card_ts: dict[str, float] = field(default_factory=dict)
+
+
+_URGENT_IMPACTS = {Indicator.MAJOR, Indicator.CRITICAL}
+
+
+def _is_urgent(events: list[TransitionEvent]) -> bool:
+    return any(
+        event.impact in _URGENT_IMPACTS
+        or "partial_outage" in event.detail
+        or "major_outage" in event.detail
+        for event in events
+    )
+
+
+async def _analyze(
+    editor: StatusEditor | None,
+    mode: str,
+    *,
+    snapshot,
+    events,
+    store,
+) -> StatusAnalysis | None:
+    if editor is None or mode == "off":
+        return None
+    try:
+        analysis = await editor.analyze(snapshot, events)
+    except StatusEditorError:
+        logger.exception("status editor failed for %s", snapshot.provider)
+        return None
+    except Exception:
+        logger.exception("unexpected status editor failure for %s", snapshot.provider)
+        return None
+    try:
+        store.record_llm_analysis(
+            ts=int(time.time()),
+            provider=snapshot.provider,
+            mode=mode,
+            model=editor.model,
+            events_json=json.dumps(events_to_dict(events), ensure_ascii=False),
+            analysis_json=analysis.model_dump_json(),
+        )
+    except Exception:
+        # gate 模式不能在审计失败时静默消息：回退原规则卡片。
+        logger.exception("status editor audit failed for %s", snapshot.provider)
+        return None
+    return analysis
 
 
 async def run_cycle(
@@ -31,8 +87,11 @@ async def run_cycle(
     state: PollState,
     verbosity: str = "phase",
     fail_threshold: int = 3,
+    card_min_gap_s: int = 600,
+    status_editor: StatusEditor | None = None,
+    editor_mode: str = "off",
 ) -> None:
-    """一轮:每 provider fetch→diff→(有事件)广播→仅 ≥1 渠道成功才 commit。每家独立隔离。"""
+    """一轮抓取和差异检测；非紧急事件按 provider 限速，编辑器失败时安全回退原消息。"""
     now = datetime.now(UTC)
     now_str = now.strftime("%Y-%m-%d %H:%M:%S UTC")
     now_ts = int(now.timestamp())
@@ -60,11 +119,49 @@ async def run_cycle(
         events = diff(old, snapshot, verbosity=verbosity)
 
         if events:
+            since_last = time.monotonic() - state.last_card_ts.get(provider, -float(card_min_gap_s))
+            if since_last < card_min_gap_s and not _is_urgent(events):
+                logger.info(
+                    "provider card for %s held by min-gap (%.0fs/%ds, %d events pending)",
+                    provider,
+                    since_last,
+                    card_min_gap_s,
+                    len(events),
+                )
+                continue
+            analysis = await _analyze(
+                status_editor,
+                editor_mode,
+                snapshot=snapshot,
+                events=events,
+                store=store,
+            )
+            urgent = _is_urgent(events)
+            if (
+                editor_mode == "gate"
+                and analysis is not None
+                and analysis.decision == "suppress"
+                and not urgent
+            ):
+                logger.info(
+                    "status editor suppressed provider card for %s (confidence=%.2f)",
+                    provider,
+                    analysis.confidence,
+                )
+                store.put(provider, snapshot)
+                continue
             n = vendor_incident_notification(
-                adapter.display_name, events, snapshot.status_url, now_ts=now_ts, now_str=now_str
+                adapter.display_name,
+                events,
+                snapshot.status_url,
+                now_ts=now_ts,
+                now_str=now_str,
+                analysis=analysis if editor_mode in ("enrich", "gate") else None,
+                editor_model=status_editor.model if status_editor is not None else "",
             )
             if await broadcaster.send(n) < 1:
                 continue  # 全渠道失败 -> 不 commit,下轮重试
+            state.last_card_ts[provider] = time.monotonic()
         store.put(provider, snapshot)  # ≥1 成功 或 无事件 -> commit
 
 

@@ -189,6 +189,7 @@ def test_rule_sets_cover_rule_names():
         findings.PROBE_RULES
         | findings.METRICS_RULES
         | findings.LOG_RULES
+        | findings.ERROR_RULES
         | findings.HYGIENE_RULES
         | findings.DOCKER_RULES
         | {"scan_failed_prometheus", "scan_failed_loki", "scan_failed_docker"}
@@ -211,6 +212,35 @@ def test_ensure_column_idempotent_migration(tmp_path):
     cols2 = [r[1] for r in conn.execute("PRAGMA table_info(events)").fetchall()]
     assert cols2.count("diagnosis_tools_json") == 1
     conn.close()
+
+
+def test_store_migrates_legacy_events_with_notified_default(tmp_path):
+    import sqlite3
+
+    path = str(tmp_path / "legacy.db")
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE events ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, "
+        "rule TEXT NOT NULL, subject TEXT NOT NULL, severity TEXT NOT NULL, "
+        "status TEXT NOT NULL, detail TEXT NOT NULL, payload_json TEXT NOT NULL, "
+        "diagnosis_status TEXT NOT NULL, diagnosis_json TEXT, "
+        "cooldown_until INTEGER NOT NULL, resolved_ts INTEGER, "
+        "diagnosis_tools_json TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO events "
+        "(ts, rule, subject, severity, status, detail, payload_json, "
+        "diagnosis_status, cooldown_until) "
+        "VALUES (1000, 'service_down', 'auth', 'critical', 'open', "
+        "'失败', '{}', 'pending', 0)"
+    )
+    conn.commit()
+    conn.close()
+
+    store = Store(path)
+    assert store.get_open_events()[0].notified is True
+    store.close()
 
 
 def test_set_diagnosis_tools_json_roundtrip(tmp_path):

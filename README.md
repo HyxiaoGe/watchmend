@@ -5,7 +5,7 @@
 [English](README.en.md) · MIT License · Python 3.12+ · 单容器 · SQLite
 
 WatchMend 是一个面向个人服务器 / homelab / 小团队的轻量监控哨兵:
-**确定性规则负责发现问题,LLM(可选)只负责解释问题**。异常以飞书富卡片推送,
+**确定性规则负责发现问题,LLM(可选)只负责解释与降噪**。异常以飞书富卡片推送,
 附带自动根因诊断;一切按配置优雅降级——最小可跑面 = Docker + 一个飞书 webhook。
 
 ```
@@ -56,6 +56,10 @@ make up                                   # 或 docker compose up -d --build
 | `services.yaml` | 内部服务 HTTP 探针 + 延迟基线(每项可选 `label` 设面板显示名) | 只监控外部状态页 |
 | `SENTINEL_PROMETHEUS_URL` | 磁盘/内存/容器重启等指标规则 | 指标层关闭 |
 | `SENTINEL_LOKI_URL` | 错误日志激增检测 | 日志层关闭 |
+| `SENTINEL_ERROR_ALERT_ENABLED` | 低频/单条错误指纹检测 | 默认关闭 |
+| `SENTINEL_DEFER_NONURGENT` | 非硬告警并入 09:00/18:00 摘要 | 保持实时通知 |
+| `SENTINEL_EDITOR_MODE` + 编辑器端点/模型 | LiteLLM 状态页解释与非紧急降噪 | 规则卡片原样发送 |
+| `SENTINEL_RESTIC_BACKUP_MAX_AGE_HOURS` | Restic Pushgateway 成功时效检查 | 默认关闭 |
 | `SENTINEL_MIDDLEWARE_METRICS` | pg/redis 等 exporter up 兜底 | 跳过该检查 |
 | `SENTINEL_CERT_DOMAINS` | 公网证书临期检查 | 跳过该检查 |
 | 备份目录挂载 | pg_dump 备份新鲜度检查 | 跳过该检查 |

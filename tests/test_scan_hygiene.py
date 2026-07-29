@@ -7,7 +7,12 @@ import pytest
 import respx
 
 from sentinel.promql import PromClient
-from sentinel.scan_hygiene import check_backup, check_certs, run_hygiene
+from sentinel.scan_hygiene import (
+    check_backup,
+    check_certs,
+    check_restic_backup,
+    run_hygiene,
+)
 
 NOW = int(time.time())
 
@@ -227,3 +232,46 @@ async def test_run_hygiene_cert_domains_empty_not_evaluated(monkeypatch, tmp_pat
     assert findings == []
     assert evaluated == set()  # 全最小模式:一项都没评估,scope 为空,任何 open 事件都不动
     assert hold == set()
+
+
+async def test_restic_backup_stale_and_missing_metric(monkeypatch):
+    stale = {
+        "status": "success",
+        "data": {
+            "resultType": "vector",
+            "result": [{"metric": {}, "value": [0, str(30 * 3600)]}],
+        },
+    }
+    missing = {"status": "success", "data": {"resultType": "vector", "result": []}}
+    with respx.mock:
+        route = respx.get("http://prom.test/api/v1/query")
+        route.mock(return_value=httpx.Response(200, json=stale))
+        async with httpx.AsyncClient() as client:
+            findings = await check_restic_backup(PromClient(client, "http://prom.test"), 26)
+        assert findings[0].rule == "restic_backup_stale"
+        assert "30.0 小时" in findings[0].detail
+
+        route.mock(return_value=httpx.Response(200, json=missing))
+        async with httpx.AsyncClient() as client:
+            findings = await check_restic_backup(PromClient(client, "http://prom.test"), 26)
+        assert "不可见" in findings[0].detail
+
+
+async def test_run_hygiene_restic_disabled_by_default(monkeypatch, tmp_path):
+    monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://x")
+    monkeypatch.setenv("SENTINEL_PROMETHEUS_URL", "http://prom.test")
+    monkeypatch.setenv("SENTINEL_BACKUP_DIR", str(tmp_path / "nope"))
+    monkeypatch.setenv("SENTINEL_CERT_DOMAINS", "")
+    monkeypatch.setenv("SENTINEL_RESTIC_BACKUP_MAX_AGE_HOURS", "0")
+    from sentinel.config import Settings
+
+    settings = Settings(_env_file=None)
+    empty = {"status": "success", "data": {"resultType": "vector", "result": []}}
+    with respx.mock:
+        route = respx.get("http://prom.test/api/v1/query").mock(
+            return_value=httpx.Response(200, json=empty)
+        )
+        async with httpx.AsyncClient() as client:
+            await run_hygiene(PromClient(client, "http://prom.test"), settings, now_ts=NOW)
+    queries = [call.request.url.params["query"] for call in route.calls]
+    assert all("restic_backup_last_success" not in query for query in queries)

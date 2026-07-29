@@ -17,6 +17,7 @@ _FORECAST_QUERY = 'predict_linear(node_filesystem_avail_bytes{{mountpoint="/"}}[
 # 历史门槛探测:24h 前有没有样本。新装机首日 predict_linear 只见装机/拉镜像的写盘
 # 斜率,必然外推成"即将写满"——历史不足时跳过预测,防开箱误报
 _HISTORY_PROBE_QUERY = 'node_filesystem_avail_bytes{mountpoint="/"} offset 24h'
+_RESTIC_AGE_QUERY = "time() - restic_backup_last_success_timestamp_seconds"
 
 
 def check_backup(backup_dir: str, max_age_hours: int, *, now_ts: int) -> list[Finding] | None:
@@ -90,6 +91,32 @@ async def check_disk_forecast(prom: PromClient, settings: Settings) -> list[Find
     return findings
 
 
+async def check_restic_backup(prom: PromClient, max_age_hours: int) -> list[Finding]:
+    """检查 Pushgateway 中 restic 最近成功时间；指标缺失也视为不可见。"""
+    rows = await prom.query(_RESTIC_AGE_QUERY)
+    if not rows:
+        return [
+            Finding(
+                rule="restic_backup_stale",
+                subject="restic",
+                severity="critical",
+                detail="未找到 restic 最近成功时间戳，离线备份状态不可见",
+            )
+        ]
+    age_hours = max(value for _, value in rows) / 3600
+    if age_hours > max_age_hours:
+        return [
+            Finding(
+                rule="restic_backup_stale",
+                subject="restic",
+                severity="critical",
+                detail=f"restic 最近成功已过去 {age_hours:.1f} 小时(阈值 {max_age_hours}h)",
+                payload={"age_hours": age_hours},
+            )
+        ]
+    return []
+
+
 def _cert_expiry_ts(domain: str) -> float:
     ctx = ssl.create_default_context()
     with socket.create_connection((domain, 443), timeout=10) as sock:
@@ -151,6 +178,15 @@ async def run_hygiene(
     except Exception:
         logger.exception("backup check failed")
     if settings.sentinel_prometheus_url:  # URL 留空=指标层未接入,forecast 不评估
+        if settings.sentinel_restic_backup_max_age_hours > 0:
+            try:
+                findings += await check_restic_backup(
+                    prom,
+                    settings.sentinel_restic_backup_max_age_hours,
+                )
+                evaluated.add("restic_backup_stale")
+            except Exception:
+                logger.exception("restic backup check failed")
         try:
             forecast_findings = await check_disk_forecast(prom, settings)
             if forecast_findings is None:

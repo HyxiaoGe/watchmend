@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from sentinel.events import EventType, TransitionEvent
-from sentinel.findings import RULE_NAMES, EventRecord, Finding
+from sentinel.findings import RULE_NAMES, DigestItem, EventRecord, Finding
 from sentinel.models import Indicator, ServiceDayStats, Snapshot
+from sentinel.status_editor import StatusAnalysis
 
 # 严重度→飞书 header 色名(只用色名,绝不用 hex)
 _RED = "red"
@@ -72,6 +73,103 @@ def build_card(
             "header": {
                 "title": {"tag": "plain_text", "content": f"{provider_display} · {now_str}"},
                 "template": _color(events),
+            },
+            "elements": elements,
+        },
+    }
+
+
+def build_status_editor_card(
+    provider_display: str,
+    analysis: StatusAnalysis,
+    events: list[TransitionEvent],
+    status_url: str,
+    *,
+    now_str: str,
+    model: str,
+) -> dict:
+    """模型只负责解释，程序固定版式并保留原始变化供人工核验。"""
+    severity_style = {
+        "critical": ("🚨", _RED),
+        "warning": ("🟡", _ORANGE),
+        "info": ("🔵", _BLUE),
+    }
+    icon, template = severity_style[analysis.severity]
+    affected = "、".join(analysis.affected_services) if analysis.affected_services else "未确认"
+    evidence = (
+        "\n".join(f"• {item}" for item in analysis.evidence)
+        if analysis.evidence
+        else "• 暂无可引用证据"
+    )
+    raw_changes = "\n".join(
+        f"• {event.title}" + (f"（{event.detail}）" if event.detail else "") for event in events[:6]
+    )
+    elements: list[dict] = [
+        {
+            "tag": "div",
+            "text": {"tag": "lark_md", "content": f"**结论**\n{analysis.summary}"},
+        },
+        {
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**影响**\n{analysis.impact_summary}\n可能涉及：{affected}",
+            },
+        },
+        {
+            "tag": "div",
+            "text": {"tag": "lark_md", "content": f"**证据**\n{evidence}"},
+        },
+        {
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**建议**\n{analysis.recommended_action}",
+            },
+        },
+        {"tag": "hr"},
+        {
+            "tag": "div",
+            "text": {"tag": "lark_md", "content": f"**原始变化**\n{raw_changes}"},
+        },
+    ]
+    if status_url:
+        elements.append(
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "查看状态页"},
+                        "url": status_url,
+                        "type": "primary",
+                    }
+                ],
+            }
+        )
+    elements.append(
+        {
+            "tag": "note",
+            "elements": [
+                {
+                    "tag": "plain_text",
+                    "content": (
+                        f"🤖 AI 辅助分析 · 置信度 {analysis.confidence:.0%} · {model} · {now_str}"
+                    ),
+                }
+            ],
+        }
+    )
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {
+                    "tag": "plain_text",
+                    "content": f"{icon} {provider_display} · {analysis.headline}",
+                },
+                "template": template,
             },
             "elements": elements,
         },
@@ -273,6 +371,7 @@ def build_daily_report_card(
     now_str: str,
     open_events: list[EventRecord] | None = None,
     resolved_24h: int = 0,
+    digest_items: list[DigestItem] | None = None,
 ) -> dict:
     """内部体检日报:近 24h 各服务可用率 + p95 延迟 + 七日基线趋势 + 未决事件汇总。
 
@@ -290,6 +389,28 @@ def build_daily_report_card(
     summary = f"{full}/{len(stats)} 服务全勤　·　总探针 {total_probes} 次　·　失败 {failed} 次"
     footer = f"🤖 WatchMend · 内部体检日报 · {now_str}"
 
+    elements: list[dict] = [
+        {"tag": "div", "text": {"tag": "lark_md", "content": body}},
+        {"tag": "hr"},
+        {"tag": "div", "text": {"tag": "lark_md", "content": summary}},
+        {
+            "tag": "div",
+            "text": {"tag": "lark_md", "content": _event_block(open_events, resolved_24h)},
+        },
+    ]
+    digest_items = digest_items or []
+    if digest_items:
+        elements.extend(
+            [
+                {"tag": "hr"},
+                {
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": _digest_body(digest_items)},
+                },
+            ]
+        )
+    elements.append({"tag": "note", "elements": [{"tag": "plain_text", "content": footer}]})
+
     return {
         "msg_type": "interactive",
         "card": {
@@ -301,15 +422,53 @@ def build_daily_report_card(
                 },
                 "template": color,
             },
+            "elements": elements,
+        },
+    }
+
+
+def _digest_body(items: list[DigestItem]) -> str:
+    lines = [f"**分时巡检摘要**\n共聚合 {len(items)} 类非紧急事件"]
+    for item in items[:6]:
+        state = "（已恢复）" if item.state == "resolved" else ""
+        lines.append(
+            f"• {RULE_NAMES.get(item.rule, item.rule)} · {item.subject}{state}"
+            f" · 观察 {item.occurrences} 轮"
+        )
+    if len(items) > 6:
+        lines.append(f"其余 {len(items) - 6} 类已合并")
+    return "\n".join(lines)
+
+
+def build_digest_card(
+    items: list[DigestItem],
+    *,
+    window_label: str,
+    now_str: str,
+) -> dict:
+    """有内容才发送的非紧急巡检摘要。"""
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {
+                    "tag": "plain_text",
+                    "content": f"📋 巡检摘要 · {window_label} · 聚合 {len(items)} 类事件",
+                },
+                "template": _GREY,
+            },
             "elements": [
-                {"tag": "div", "text": {"tag": "lark_md", "content": body}},
-                {"tag": "hr"},
-                {"tag": "div", "text": {"tag": "lark_md", "content": summary}},
                 {
                     "tag": "div",
-                    "text": {"tag": "lark_md", "content": _event_block(open_events, resolved_24h)},
+                    "text": {"tag": "lark_md", "content": _digest_body(items)},
                 },
-                {"tag": "note", "elements": [{"tag": "plain_text", "content": footer}]},
+                {
+                    "tag": "note",
+                    "elements": [
+                        {"tag": "plain_text", "content": f"🤖 WatchMend · 分时摘要 · {now_str}"}
+                    ],
+                },
             ],
         },
     }

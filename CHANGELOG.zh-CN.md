@@ -10,6 +10,18 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [Unreleased]
 
+### 新增
+- 可选的分时通知策略：硬告警仍实时发送，非紧急事件合并进 09:00 日报和
+  18:00 摘要。
+- 独立的 LiteLLM 兼容上游状态编辑器，支持 `shadow`、`enrich`、`gate`；
+  major/critical 事件永不静默，模型失败必回退确定性卡片，分析结果全部留审计。
+- 可选的 Loki 新错误指纹扫描与 Restic 备份时效检查。
+- 无外部通知副作用的 `shadow` 模式，用于并行迁移验收。
+
+### 变更
+- Loki 错误尖峰改为只统计明确的错误级别日志，不再宽泛匹配
+  `error|exception|traceback` 子串，并排除 WatchMend 自身日志。
+
 ## [0.15.1] - 2026-06-18
 
 ### 变更

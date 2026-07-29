@@ -17,6 +17,7 @@ class Kind(StrEnum):
     VENDOR_INCIDENT = "vendor_incident"  # 外部状态页变更
     HEARTBEAT = "heartbeat"  # 每日心跳
     REPORT = "report"  # 每日体检日报
+    DIGEST = "digest"  # 非紧急事件分时摘要
     DIAGNOSIS = "diagnosis"  # LLM 诊断结果
     SUMMARY = "summary"  # 日报 AI 总结
 

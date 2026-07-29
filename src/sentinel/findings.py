@@ -8,12 +8,14 @@ RULE_NAMES = {
     "service_down": "服务异常",
     "latency_degraded": "延迟退化",
     "log_error_spike": "错误日志激增",
+    "log_error_new": "应用报错",
     "disk_usage": "磁盘水位",
     "disk_forecast": "磁盘填满预测",
     "mem_pressure": "内存压力",
     "middleware_down": "中间件异常",
     "container_restart": "容器重启",
     "backup_stale": "备份缺失",
+    "restic_backup_stale": "离线备份失联",
     "cert_expiry": "证书临期",
     "scan_failed_prometheus": "Prometheus 巡检失败",
     "scan_failed_loki": "Loki 巡检失败",
@@ -29,7 +31,8 @@ RULE_NAMES = {
 PROBE_RULES = frozenset({"service_down", "latency_degraded"})
 METRICS_RULES = frozenset({"disk_usage", "mem_pressure", "container_restart", "middleware_down"})
 LOG_RULES = frozenset({"log_error_spike"})
-HYGIENE_RULES = frozenset({"backup_stale", "disk_forecast", "cert_expiry"})
+ERROR_RULES = frozenset({"log_error_new"})
+HYGIENE_RULES = frozenset({"backup_stale", "restic_backup_stale", "disk_forecast", "cert_expiry"})
 # Docker 巡检规则集 → docker_tick 成功评估时并入 scope。
 # scan_failed_docker 不在其中:由 tick 层按连续失败计数单独并入。
 DOCKER_RULES = frozenset(
@@ -70,3 +73,20 @@ class EventRecord:
     cooldown_until: int
     resolved_ts: int | None
     diagnosis_tools_json: str | None = None
+    notified: bool = True
+
+
+@dataclass
+class DigestItem:
+    """等待进入分时巡检摘要的一条聚合记录。"""
+
+    id: int
+    first_ts: int
+    last_ts: int
+    rule: str
+    subject: str
+    severity: str
+    state: str
+    detail: str
+    payload_json: str
+    occurrences: int

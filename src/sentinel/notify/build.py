@@ -9,9 +9,10 @@ data 携带现有 feishu builder 所需的原始入参(domain 对象 + now_str/n
 from __future__ import annotations
 
 from sentinel.events import EventType, TransitionEvent
-from sentinel.findings import RULE_NAMES, EventRecord, Finding
+from sentinel.findings import RULE_NAMES, DigestItem, EventRecord, Finding
 from sentinel.models import Indicator, ServiceDayStats, Snapshot
 from sentinel.notify.message import Kind, Notification, Severity
+from sentinel.status_editor import StatusAnalysis
 
 _GREY_TYPES = {EventType.BASELINE, EventType.FETCH_FAILED}
 _RESOLVED_TYPES = {EventType.INCIDENT_RESOLVED, EventType.COMPONENT_RECOVERED}
@@ -71,6 +72,8 @@ def vendor_incident_notification(
     *,
     now_ts: int,
     now_str: str,
+    analysis: StatusAnalysis | None = None,
+    editor_model: str = "",
 ) -> Notification:
     lines = []
     for ev in events:
@@ -78,11 +81,24 @@ def vendor_incident_notification(
         if ev.detail:
             line += f"\n{ev.detail}"
         lines.append(line)
+    title = f"{provider_display} 状态变更"
+    detail = "\n\n".join(lines)
+    severity = _vendor_severity(events)
+    if analysis is not None:
+        title = f"{provider_display} · {analysis.headline}"
+        detail = "\n".join(
+            [
+                analysis.summary,
+                f"影响：{analysis.impact_summary}",
+                f"建议：{analysis.recommended_action}",
+            ]
+        )
+        severity = Severity(analysis.severity)
     return Notification(
         kind=Kind.VENDOR_INCIDENT,
-        severity=_vendor_severity(events),
-        title=f"{provider_display} 状态变更",
-        detail="\n\n".join(lines),
+        severity=severity,
+        title=title,
+        detail=detail,
         subject=provider_display,
         link=status_url or None,
         ts=now_ts,
@@ -91,6 +107,8 @@ def vendor_incident_notification(
             "events": events,
             "status_url": status_url,
             "now_str": now_str,
+            "analysis": analysis,
+            "editor_model": editor_model,
         },
     )
 
@@ -149,6 +167,7 @@ def report_notification(
     now_ts: int = 0,
     open_events: list[EventRecord] | None = None,
     resolved_24h: int = 0,
+    digest_items: list[DigestItem] | None = None,
 ) -> Notification:
     open_events = open_events or []
     ordered = sorted(stats, key=lambda s: (s.uptime_pct, -(s.p95_ms or 0)))
@@ -181,6 +200,37 @@ def report_notification(
             "now_str": now_str,
             "open_events": open_events,
             "resolved_24h": resolved_24h,
+            "digest_items": digest_items or [],
+        },
+    )
+
+
+def digest_notification(
+    items: list[DigestItem],
+    *,
+    window_label: str,
+    now_ts: int,
+    now_str: str,
+) -> Notification:
+    lines = []
+    for item in items[:6]:
+        state = "（已恢复）" if item.state == "resolved" else ""
+        lines.append(
+            f"{RULE_NAMES.get(item.rule, item.rule)} · {item.subject}{state}"
+            f" · 观察 {item.occurrences} 轮"
+        )
+    if len(items) > 6:
+        lines.append(f"其余 {len(items) - 6} 类已合并")
+    return Notification(
+        kind=Kind.DIGEST,
+        severity=Severity.INFO,
+        title=f"巡检摘要 · {window_label}",
+        detail="\n".join(lines),
+        ts=now_ts,
+        data={
+            "items": items,
+            "window_label": window_label,
+            "now_str": now_str,
         },
     )
 
