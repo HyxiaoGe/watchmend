@@ -1346,6 +1346,50 @@ def test_build_events_list_filters_and_subjects(tmp_path, monkeypatch):
     store.close()
 
 
+def test_build_events_list_groups_error_fingerprints_by_container(tmp_path, monkeypatch):
+    settings = _settings(monkeypatch)
+    store = Store(str(tmp_path / "s.db"))
+    for index, signature in enumerate(("timeout while reading", "broken pipe")):
+        store.insert_event(
+            ts=NOW_TS - 100 - index,
+            rule="log_error_new",
+            subject=f"dozzle · {signature}",
+            severity="warning",
+            status="resolved",
+            detail=f"{signature}\n\n近 10 分钟内出现 1 次",
+            payload_json=json.dumps({"container": "dozzle", "signature": signature}),
+            diagnosis_status="skipped",
+            cooldown_until=0,
+            resolved_ts=NOW_TS - 50,
+        )
+    store.insert_event(
+        ts=NOW_TS - 200,
+        rule="service_down",
+        subject="api",
+        severity="critical",
+        status="open",
+        detail="d",
+        payload_json="{}",
+        diagnosis_status="skipped",
+        cooldown_until=0,
+    )
+
+    base = view.build_events_list(store, settings, now=NOW)
+    assert [s["name"] for s in base["subjects"]] == ["api", "dozzle"]
+    assert all(item["label"] == "dozzle" for item in base["events"]["items"][:2])
+    assert base["events"]["items"][0]["detail_preview"] == "timeout while reading"
+
+    filtered = view.build_events_list(store, settings, now=NOW, subject="dozzle")
+    assert filtered["events"]["total"] == 2
+    assert {item["subject"] for item in filtered["events"]["items"]} == {
+        "dozzle · timeout while reading",
+        "dozzle · broken pipe",
+    }
+    detail = view.build_event_detail(store, settings, filtered["events"]["items"][0]["id"])
+    assert detail["event"]["display_subject"] == "dozzle"
+    store.close()
+
+
 def test_build_events_list_label_and_page_clamp(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
@@ -1544,18 +1588,32 @@ def test_upstream_deps_rejects_non_http_urls(tmp_path, monkeypatch):
 
 
 async def test_build_hygiene_shape_and_banner(tmp_path, monkeypatch):
-    settings = _settings(monkeypatch)
+    settings = _settings(
+        monkeypatch,
+        SENTINEL_PROMETHEUS_URL="http://prometheus:9090",
+        SENTINEL_LOKI_URL="http://loki:3100",
+        SENTINEL_EDITOR_MODE="gate",
+        SENTINEL_EDITOR_BASE_URL="http://litellm:4000",
+        SENTINEL_EDITOR_MODEL="gemini/gemini-2.5-flash",
+    )
     store = Store(str(tmp_path / "s.db"))
     store.set_meta("daily_report_last_date", "2026-06-16")
     data = await view.build_hygiene(store, settings, now=NOW)
     assert set(data) >= {"banner", "local", "upstream", "posture", "host_self"}
     assert len(data["local"]) == 3
-    assert data["banner"]["layers_total"] == 4
+    assert data["banner"]["layers_total"] == 5
+    assert data["banner"]["layers_enabled"] == 3
+    assert data["banner"]["layers_disabled"] == 2
     assert data["banner"]["last_report_date"] == "2026-06-16"
     assert data["banner"]["upstream_any_data"] is False  # 无 snapshot
     # 默认姿态:无 docker → off,渠道默认飞书
     assert data["posture"]["docker"]["mode"] == "off"
     assert data["posture"]["channels"] == ["飞书"]
+    assert data["posture"]["editor"] == {
+        "enabled": True,
+        "mode": "gate",
+        "model": "gemini/gemini-2.5-flash",
+    }
     store.close()
 
 

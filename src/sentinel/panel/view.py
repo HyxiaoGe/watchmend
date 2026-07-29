@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, datetime, timedelta, timezone
 
 from sentinel.config import Settings
@@ -23,6 +24,7 @@ _SOCKET_PROXY_IMAGE = "tecnativa/docker-socket-proxy"
 _LATENCY_EVENT_RULES = frozenset({"latency_degraded", "service_down"})
 _SAMPLE_WINDOW_SECONDS = 2 * _DAY_SECONDS  # 逐次延迟图窗口(近 48h)
 _SAMPLE_CAP = 240  # 逐次图下采样上限(防 DOM 膨胀)
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def _svg_line(values: list[float | None], *, w: float, h: float, pad_frac: float = 0.08) -> dict:
@@ -349,6 +351,7 @@ def _confidence_pct(level: str | None) -> int | None:
 
 
 def _event_view(e: EventRecord, tz: timezone, *, diag_active: bool = True) -> dict:
+    detail_preview = _ANSI_ESCAPE_RE.sub("", e.detail).split("\n", 1)[0].strip()
     return {
         "id": e.id,
         "ts_str": _when(e.ts, tz),
@@ -360,10 +363,27 @@ def _event_view(e: EventRecord, tz: timezone, *, diag_active: bool = True) -> di
         "diagnosis_status": e.diagnosis_status,
         "has_evidence": e.diagnosis_status == "done" and bool(e.diagnosis_tools_json),
         "summary": _summary_of(e),
+        "detail_preview": detail_preview[:240],
         "confidence": _confidence_of(e),  # §8.3 事件流卡第二行置信度色(总览不引用)
         "tool_count": _tool_count_of(e),  # §8.3 第三行取证步数
         "resolved_str": _when(e.resolved_ts, tz) if e.resolved_ts else None,
     }
+
+
+def _event_filter_subject(e: EventRecord) -> str:
+    """错误指纹仍以完整 subject 做冷却去重，但事件页按容器聚合筛选。"""
+    if e.rule != "log_error_new":
+        return e.subject
+    try:
+        payload = json.loads(e.payload_json)
+    except (json.JSONDecodeError, TypeError):
+        payload = {}
+    if isinstance(payload, dict):
+        container = payload.get("container")
+        if isinstance(container, str) and container.strip():
+            return container.strip()
+    prefix, separator, _ = e.subject.partition(" · ")
+    return prefix.strip() if separator and prefix.strip() else e.subject
 
 
 def _docker_mode(settings: Settings) -> str:
@@ -1005,10 +1025,10 @@ def build_events_list(
     # linkability 与服务页同窗:链接携带 win=wd,故按 wd 算「可点 ⟹ /service 渲染 200」
     wd = window_days if window_days is not None else settings.sentinel_panel_default_window
     real_services = _real_service_names(store, now_ts=now_ts, tz=tz, window_days=wd)
-    subjects = sorted({e.subject for e in feed})
+    subjects = sorted({_event_filter_subject(e) for e in feed})
 
     def keep(e: EventRecord) -> bool:
-        if subject and e.subject != subject:
+        if subject and e.subject != subject and _event_filter_subject(e) != subject:
             return False
         if severity and e.severity != severity:
             return False
@@ -1027,7 +1047,9 @@ def build_events_list(
     items: list[dict] = []
     for e in filtered[start : start + size]:
         v = _event_view(e, tz, diag_active=diag_active)
-        v["label"] = labels.get(e.subject, e.subject)  # 展示名;无映射回退 subject
+        filter_subject = _event_filter_subject(e)
+        v["filter_subject"] = filter_subject
+        v["label"] = labels.get(filter_subject, filter_subject)  # 错误指纹按容器展示
         v["service_linkable"] = e.subject in real_services  # 仅真实探针服务名可点回详情
         items.append(v)
     return {
@@ -1089,6 +1111,7 @@ def build_event_detail(
     diag_active = posture["enabled"] and not posture["pending_restart"]
     ev = _event_view(e, tz, diag_active=diag_active)
     ev["detail"] = e.detail
+    ev["display_subject"] = _event_filter_subject(e)
     now_ts = int(datetime.now(tz).timestamp())
     # linkability 与服务页同窗(链接携带 win=wd):可点 ⟹ 该窗口下 /service 渲染 200,不产生死链
     wd = window_days if window_days is not None else settings.sentinel_panel_default_window
@@ -1324,12 +1347,19 @@ async def build_hygiene(
         "loki": bool(settings.sentinel_loki_url),
         "docker": docker_mode != "off",
         "llm": llm["enabled"],
+        "editor": settings.editor_enabled,
+    }
+    editor = {
+        "enabled": settings.editor_enabled,
+        "mode": settings.sentinel_editor_mode,
+        "model": settings.sentinel_editor_model or None,
     }
     posture = {
         "monitored_containers": await _monitored_containers(docker, settings),
         "open_count": len(open_events),
         "resolved_24h": store.count_resolved_since(now_ts - _DAY_SECONDS),
         "llm": llm,
+        "editor": editor,
         "docker": {"mode": docker_mode, "read_only": True},
         "layers": layers,
         "channels": _channels(settings),
@@ -1352,7 +1382,9 @@ async def build_hygiene(
         "local_total": len(local),
         "worst_upstream": worst_up,
         "upstream_any_data": any(u["has_data"] for u in upstream),  # 区分"全绿"vs"暂无数据"
-        "layers_online": sum(1 for v in layers.values() if v),
+        "layers_online": sum(1 for v in layers.values() if v),  # 兼容旧消费方
+        "layers_enabled": sum(1 for v in layers.values() if v),
+        "layers_disabled": sum(1 for v in layers.values() if not v),
         "layers_total": len(layers),
         "last_report_date": store.get_meta("daily_report_last_date"),
     }

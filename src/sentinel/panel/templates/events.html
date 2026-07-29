@@ -43,6 +43,8 @@
   </div>
   {% if e.summary %}
   <div class="diag">{% if lang != diag_lang %}<div class="diag-lang">{{ t('ev.diag_lang', lang=diag_lang) }}</div>{% endif %}<div class="lbl">🧠 {{ t('ev.summary') }}</div><div class="body">{{ e.summary }}</div></div>
+  {% elif e.rule == 'log_error_new' and e.detail_preview %}
+  <div class="diag"><div class="body">{{ e.detail_preview }}</div></div>
   {% endif %}
   <div class="evmeta">
     {% if e.confidence %}<span class="conf {{ e.confidence }}">{{ t('evl.conf', level=t('conf.' ~ e.confidence)) }}</span>{% endif %}
