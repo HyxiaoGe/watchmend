@@ -22,6 +22,19 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 ### Changed
 - Loki spike detection now counts explicit error-level records instead of broad
   `error|exception|traceback` substring matches and excludes WatchMend itself.
+- Service lists now keep current state as the primary sort key and use the most
+  recent incident as the secondary key, so recently recovered services remain
+  visible instead of falling back into an alphabetical all-green list.
+- Overview, service, event, hygiene, and detail pages now share the same
+  in-place live refresh contract. The header also shows a second-by-second age
+  for the latest service probe.
+
+### Fixed
+- New error fingerprints are grouped and filtered by container in the event
+  feed, with ANSI escapes stripped from concise previews; event details prefer
+  diagnoses already persisted in the database.
+- The hygiene page now distinguishes enabled layers from those disabled by
+  policy and shows the status editor's actual runtime posture.
 
 ## [0.15.1] - 2026-06-18
 

@@ -4,23 +4,40 @@
 
 [中文](README.md) · MIT License · Python 3.12+ · single container · SQLite
 
-WatchMend is a lightweight monitoring sentinel for personal servers, homelabs and
-small teams. **Deterministic rules decide when to alert; an LLM (optional) only
-explains and de-noises the result.** Alerts arrive as rich Feishu (Lark) cards with automated
-root-cause diagnosis attached. Everything degrades gracefully by configuration —
-the minimal footprint is Docker plus a single Feishu webhook.
+WatchMend is an AI-assisted operations sentinel for personal servers, homelabs,
+and small teams. It turns HTTP probes, Docker, Prometheus, Loki, and vendor status
+pages into an **incident lifecycle with triggering, investigation, recovery, and
+cooldowns**, then delivers only what deserves attention in real time or scheduled
+digests.
+
+- **Deterministic rules decide when to alert.** An LLM never gets to suppress a
+  major or critical incident.
+- **The optional LLM is read-only.** It investigates root causes, explains status
+  changes, and de-noises non-urgent messages; it never executes a repair command.
+- **The evidence panel is auditable.** Live service health, incident timelines,
+  tool calls, and raw evidence remain inspectable.
+- **Notifications are not platform-locked.** Feishu/Lark gets native rich cards,
+  with Telegram, ntfy, and generic webhooks also supported.
+
+Every layer can be enabled independently and fails safe when unconfigured. The
+minimum footprint is Docker plus any one notification channel.
 
 ```
-┌──────────────────────── watchmend container (256MB) ───────────────────────┐
-│  Vendor status pages (Anthropic/OpenAI/GitHub/Cloudflare/GCP) ─┐           │
-│  HTTP probes (your service list) ──────────────────────────────┤           │
-│  Metric rules (PromQL: disk/mem/swap/restarts/OOM/middleware) ─┼─► rule    │
-│  Log rules (LogQL: error spikes vs 7-day baseline) ────────────┤   engine  │
-│  Daily hygiene (backup freshness/disk forecast/cert expiry) ───┘     │     │
-│                                                                      ▼     │
-│  LLM diagnosis (optional): pending events → tool loop ────► Feishu cards   │
-│  All tools read-only: prom_query / loki_logs / docker ps·logs·inspect      │
-└──────────────────────────────────────────────────────────────────────────────┘
+HTTP / Docker / Prometheus / Loki / vendor status pages
+                         │
+                         ▼
+      deterministic rules → incident engine (cooldown / recovery / baselines)
+                         │
+             ┌───────────┴───────────┐
+             ▼                       ▼
+   hard alerts in real time        non-urgent 09:00 / 18:00 digests
+             │                       │
+             └───────────┬───────────┘
+                         ▼
+       optional read-only LLM investigation + live evidence panel
+                         │
+                         ▼
+       Feishu/Lark cards / Telegram / ntfy / webhook
 ```
 
 ## 5-minute demo
@@ -189,17 +206,30 @@ Security boundaries (design stance, not afterthought patches):
 - Tool output is declared untrusted data, guarding against log-injection steering
 - Suggested commands are for humans only and are never executed automatically
 
-## Evidence Panel (read-only)
+## Operations panel (read-only evidence)
 
-WatchMend ships a **localhost-only read-only SSR panel** that turns its four disciplines (deterministic verdicts / assessment ≠ recovery / send-then-commit / read-only never-execute) into visible evidence:
+WatchMend ships a read-only SSR panel that listens on localhost by default and
+turns its four disciplines (deterministic verdicts / assessment ≠ recovery /
+send-then-commit / read-only never-execute) into visible operational evidence:
 
+- **Live service overview**: current health, availability, latency trends, and recent incidents; recently troubled services stay prominent and probe age updates continuously.
 - **State-machine timeline**: currently open anomalies (triggered → investigating → diagnosed) plus recoveries in the last 24h; `scan_failed_*` is explicitly marked as a data-source failure, not a green "recovered" card.
 - **Diagnosis evidence chain**: for each diagnosed event you can expand the **read-only tools the LLM actually called and their raw output snippets** (`docker_inspect`/`docker_logs`/`prom_query`/`loki_logs`) — hard proof of the read-only, push-diagnosis loop.
-- **Security posture**: socket mode and read-only flag, redacted env-var counts, enabled layers, notification channels; suggested commands are always labelled "never auto-executed".
+- **Hygiene and security posture**: backups, disk, certificates, read-only socket state, credential-redaction counts, enabled layers, and notification channels in one place.
 
 Access: the container binds the panel to `127.0.0.1:8765` on the host (same port as the orchestration API); open `http://127.0.0.1:8765/`.
 
-**Security note**: the panel routes (`/`, `/event/*`) themselves are **read-only**, but the **same `127.0.0.1:8765` port also hosts the orchestration WRITE API** (`POST /events/{id}/diagnosis`, `POST /report/summary`), which is authenticated only when `SENTINEL_DIAG_TOKEN` is set — it defaults to empty, i.e. **no auth**. The whole thing assumes localhost/intranet reachability only. Raw log snippets are stored in the localhost-only SQLite (same data already sent to your LLM endpoint, truncated to 4096 chars each). **To expose it publicly**: either put a reverse proxy with authentication in front of the entire 8765 upstream, or only allow `/` and `/event/*` through the proxy (blocking the write API), **and set `SENTINEL_DIAG_TOKEN`**; or set `SENTINEL_PANEL_ENABLED=false` to disable the panel entirely.
+**Security note**: all panel GET routes (overview, services, events, hygiene,
+settings, and changelog) are **read-only**, but the **same `127.0.0.1:8765`
+port also hosts the orchestration WRITE API** (`POST /events/{id}/diagnosis`,
+`POST /report/summary`). Those endpoints are authenticated only when
+`SENTINEL_DIAG_TOKEN` is set; it defaults to empty, i.e. **no auth**. The whole
+service therefore assumes localhost/intranet reachability. Raw log snippets are
+stored in the localhost-only SQLite (the same data already sent to the LLM
+endpoint, truncated to 4096 characters each). **To expose it publicly**, protect
+the entire 8765 upstream with an authenticated reverse proxy, or allow only the
+panel GET routes while blocking the write API, **and set
+`SENTINEL_DIAG_TOKEN`**. Alternatively, set `SENTINEL_PANEL_ENABLED=false`.
 
 ## Design philosophy
 
@@ -241,9 +271,10 @@ stack with mature alerting rules you may not need this. WatchMend serves the
 "one server, a dozen containers, want monitoring that works out of the box and
 diagnoses I can actually read" scenario.
 
-**Will the LLM mess with my server?** See the security boundaries above:
-read-only everything, socket off by default, suggested commands never executed.
-The deterministic layers don't depend on the LLM at all.
+**Will the LLM mess with my server?** See the security boundaries above: every
+tool is read-only, Docker is reachable only through a socket proxy that denies
+POST by default, and suggested commands are never executed. The deterministic
+layers do not depend on the LLM at all.
 
 ## Development
 
