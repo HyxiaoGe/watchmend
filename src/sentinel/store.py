@@ -214,6 +214,18 @@ class Store:
         row = self._conn.execute("SELECT MAX(ts) FROM probe_samples").fetchone()
         return row[0] if row and row[0] is not None else None
 
+    def get_latest_failed_probe_ts_by_service(self, since_ts: int) -> dict[str, int]:
+        """返回窗口内每个服务最近一次失败探针时间。
+
+        面板排序只需要每服务一个时间戳，直接在 SQLite 聚合，避免每次刷新把整个
+        30/90 天逐次样本窗口搬进 Python。
+        """
+        rows = self._conn.execute(
+            "SELECT service, MAX(ts) FROM probe_samples WHERE ts >= ? AND ok = 0 GROUP BY service",
+            (since_ts,),
+        ).fetchall()
+        return {service: ts for service, ts in rows}
+
     def prune_probe_samples(self, before_ts: int) -> int:
         cur = self._conn.execute("DELETE FROM probe_samples WHERE ts < ?", (before_ts,))
         self._conn.commit()
