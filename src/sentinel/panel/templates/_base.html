@@ -98,6 +98,9 @@
   .tools { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .navrow { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:8px 0 10px; }
   .navrow .sub { color:var(--mut); font-size:11px; }
+  .live-age { display:inline-flex; align-items:center; gap:5px; }
+  .live-age i { width:6px; height:6px; border-radius:50%; background:var(--st-ok);
+    box-shadow:0 0 0 2px color-mix(in srgb, var(--st-ok) 20%, transparent); }
   /* 版本 chip = <a href="#wm-changelog"> 触发零-JS :target 居中模态(窗口/卡片) */
   .ver { display:inline-flex; align-items:center; gap:5px; font-size:11px; padding:3px 9px; border:1px solid var(--line); border-radius:7px; color:var(--mut); background:var(--panel); cursor:pointer; user-select:none; }
   .ver:hover { border-color:var(--vio); color:var(--txt); background:var(--viobg); }  /* 明显可点 */
@@ -387,7 +390,7 @@
     <a href="{{ tab_url('/events') }}" class="{{ 'tab-on' if active_tab == 'events' else '' }}" title="{{ t('tab.events') }}">{{ ico['events']|safe }}<span>{{ t('tab.events') }}</span></a>
     <a href="{{ tab_url('/hygiene') }}" class="{{ 'tab-on' if active_tab == 'hygiene' else '' }}" title="{{ t('tab.hygiene') }}">{{ ico['hygiene']|safe }}<span>{{ t('tab.hygiene') }}</span></a>
   </nav>
-  <span class="sub mono">{% set sep = joiner(' · ') %}{% if refresh_seconds %}{{ sep() }}<span title="{{ t('hdr.refreshed', ts=now_str) }} · {{ refresh_seconds }}s">↻ {{ now_str[11:16] }}</span>{% endif %}{% if posture and posture.llm.enabled %}{{ sep() }}{{ t('llm.ai') }}{% if posture.llm.pending_restart %} · {{ t('llm.pending_restart') }}{% else %} ✓{% endif %}{% endif %}{% if active_tab == 'events' %}{{ sep() }}<a href="{{ qurl(ev_page=1) }}">{{ t('nav.latest') }}</a>{% endif %}</span>
+  <span class="sub mono">{% set sep = joiner(' · ') %}{% if latest_probe_ts is defined %}{{ sep() }}<span class="live-age" data-probe-ts="{{ latest_probe_ts|default(0, true) }}" title="{{ t('hdr.probe_age') }}"><i></i><span class="live-age-value">—</span></span>{% endif %}{% if refresh_seconds %}{{ sep() }}<span title="{{ t('hdr.refreshed', ts=now_str) }} · {{ refresh_seconds }}s">↻ {{ now_str[11:16] }}</span>{% endif %}{% if posture and posture.llm.enabled %}{{ sep() }}{{ t('llm.ai') }}{% if posture.llm.pending_restart %} · {{ t('llm.pending_restart') }}{% else %} ✓{% endif %}{% endif %}{% if active_tab == 'events' %}{{ sep() }}<a href="{{ qurl(ev_page=1) }}">{{ t('nav.latest') }}</a>{% endif %}</span>
 </div>
 {% if nav %}
 {# 版本 chip 点击弹出的更新日志模态:零-JS,纯 :target + CSS。position:fixed 故脱离布局流,
@@ -431,19 +434,31 @@
 {% endif %}
 {% endif %}
 {# 可替换区:JS 局部刷新只换这块的 innerHTML;头部/导航/更新日志模态在区外故不受影响
-   (保滚动、保打开的模态)。data-refresh 仅在自动刷新页输出,详情页无此属性 → 脚本不轮询。 #}
+   (保滚动、保打开的模态)。data-refresh 仅在运行态页面输出。 #}
 <main id="wm-live"{% if refresh_seconds %} data-refresh="{{ refresh_seconds }}"{% endif %}>
 {% block body %}{% endblock %}
 </main>
 <script>
 /* 渐进增强(见 CONTRIBUTING.md「面板 JavaScript 原则」):仅内联、零依赖。关 JS 时退回
    <noscript> 的整页 meta 刷新。本脚本定时抓本页自身 HTML,只替换 #wm-live + 同步 <title>
-   与状态行 → 无闪烁、保滚动、保打开的更新日志模态。详情页无 data-refresh 故自动不轮询。 */
+   与状态行 → 无闪烁、保滚动、保打开的更新日志模态。 */
 (function () {
   var live = document.getElementById("wm-live");
   if (!live) return;
+  function updateProbeAge() {
+    var el = document.querySelector("[data-probe-ts]"),
+        value = el && el.querySelector(".live-age-value"),
+        ts = el && parseInt(el.getAttribute("data-probe-ts") || "0", 10);
+    if (!value) return;
+    if (!ts) { value.textContent = "—"; return; }
+    var age = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+    value.textContent = age < 60 ? age + "s" : age < 3600 ? Math.floor(age / 60) + "m"
+      : Math.floor(age / 3600) + "h";
+  }
+  updateProbeAge();
+  window.setInterval(updateProbeAge, 1000);
   var sec = parseInt(live.getAttribute("data-refresh") || "0", 10);
-  if (!sec || sec < 1) return;                 // 详情页 / 未配置 → 不轮询
+  if (!sec || sec < 1) return;                 // 未配置或浏览器关闭刷新 → 不轮询
   var ms = sec * 1000, inflight = null, timer = null;
   function schedule(delay) {                    // 单一定时器:重排前先清旧句柄,杜绝多链叠加
     if (timer) { window.clearTimeout(timer); }

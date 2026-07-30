@@ -495,10 +495,22 @@ def _service_health_bars(
     win_start_ts = int(
         datetime(start_date.year, start_date.month, start_date.day, tzinfo=tz).timestamp()
     )
+    events = store.get_events_since(win_start_ts)
     ev_idx: dict[tuple[str, str], set[str]] = {}
-    for e in store.get_events_since(win_start_ts):
+    # 排序的“最近异常”同时覆盖：
+    # 1. 单次失败探针（即使尚未达到连续失败告警阈值）；
+    # 2. 与服务同 subject 的真实巡检事件（含已恢复与 point 事件）。
+    # hygiene / scan_failed_* 是 WatchMend 自身巡检姿态，不应改变业务服务顺序。
+    last_issue_ts = store.get_latest_failed_probe_ts_by_service(win_start_ts)
+    for e in events:
         d = datetime.fromtimestamp(e.ts, tz).date().isoformat()
         ev_idx.setdefault((d, e.subject), set()).add(e.rule)
+        if (
+            e.subject in services
+            and e.rule not in HYGIENE_RULES
+            and not e.rule.startswith("scan_failed_")
+        ):
+            last_issue_ts[e.subject] = max(last_issue_ts.get(e.subject, 0), e.ts)
     daily_idx = {(r.service, r.date): r for r in daily}
     bars: list[dict] = []
     for svc in services:
@@ -536,14 +548,17 @@ def _service_health_bars(
                 "label": (service_labels or {}).get(svc, svc),  # 显示名;无映射回退 name
                 "uptime_pct": round(st.uptime_pct, 1) if (st and st.total) else None,
                 "p95_ms": st.p95_ms if st else None,
+                "last_issue_ts": last_issue_ts.get(svc),
                 "days": days,
             }
         )
-    # 现态最坏优先（今日格状态），同权重内按服务名；保证 /services 列表先露出问题服务。
+    # 现态最坏优先（今日格状态）；同状态按最近异常倒序，从未异常的服务最后；
+    # 最后按服务名保证稳定顺序。总览 roster 与 /services 共用这份排序。
     # days 在 window_days<=0 的误配下会为空(range(0))；空则按 nodata 收尾，绝不 IndexError 崩整页。
     bars.sort(
         key=lambda b: (
             _STATE_RANK.get(b["days"][-1]["state"] if b["days"] else "nodata", 5),
+            -(b["last_issue_ts"] or 0),
             b["service"],
         )
     )

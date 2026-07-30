@@ -538,9 +538,9 @@ async def test_build_overview_engine_unknown_when_never_probed(tmp_path, monkeyp
     store.close()
 
 
-async def test_health_bars_sorted_worst_first(tmp_path, monkeypatch):
-    # 健康柱条按"今日现态最坏优先"排序，同状态内按服务名；
-    # 服务名故意与期望顺序逆排，证明排序键是状态而非字母序（issue #11）。
+async def test_health_bars_sorted_by_state_then_recent_issue(tmp_path, monkeypatch):
+    # 健康柱条先按今日现态最坏优先；同状态内按最近异常时间倒序，
+    # 从未异常的服务放最后，最后才以服务名保证稳定排序。
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
 
@@ -570,16 +570,48 @@ async def test_health_bars_sorted_worst_first(tmp_path, monkeypatch):
 
     store.add_probe_samples(
         _samples("aaa", 2, 0)  # 100% → ok（字母最前）
-        + _samples("bbb", 2, 0)  # 100% → ok（同状态，名次后）
+        + _samples("bbb", 2, 0)  # 100% → ok（最近有失败样本）
+        + _samples("ccc", 2, 0)  # 100% → ok（从未异常）
         + _samples("mmm", 4, 1)  # 80% → partial
         + _samples("zzz", 1, 2)  # 33% → down（字母最后）
     )
+    # aaa 两天前发生过已恢复事故；bbb 昨天有一次失败探针，虽然未达到事故告警阈值，
+    # 仍属于比 aaa 更新的异常证据，排序时应排在 aaa 前面。
+    old_event_ts = NOW_TS - 2 * 86400
+    store.insert_event(
+        ts=old_event_ts,
+        rule="service_down",
+        subject="aaa",
+        severity="critical",
+        status="resolved",
+        detail="两天前异常",
+        payload_json="{}",
+        diagnosis_status="done",
+        cooldown_until=0,
+        resolved_ts=old_event_ts + 300,
+    )
+    recent_fail_ts = NOW_TS - 86400
+    store.add_probe_samples(
+        [
+            ProbeSample(
+                ts=recent_fail_ts,
+                service="bbb",
+                ok=False,
+                status_code=502,
+                latency_ms=None,
+            )
+        ]
+    )
     svcs = view.build_services_list(store, settings, now=NOW, window_days=30)["services"]
     order = [b["service"] for b in svcs]
-    # down → partial → ok(aaa) → ok(bbb)：状态主序、同状态内字母次序
-    assert order == ["zzz", "mmm", "aaa", "bbb"]
+    # down → partial → ok(最近异常 bbb → 较早异常 aaa → 从未异常 ccc)
+    assert order == ["zzz", "mmm", "bbb", "aaa", "ccc"]
     assert svcs[0]["days"][-1]["state"] == "down"
     assert svcs[1]["days"][-1]["state"] == "partial"
+    by_name = {s["service"]: s for s in svcs}
+    assert by_name["bbb"]["last_issue_ts"] == recent_fail_ts
+    assert by_name["aaa"]["last_issue_ts"] == old_event_ts
+    assert by_name["ccc"]["last_issue_ts"] is None
     store.close()
 
 
