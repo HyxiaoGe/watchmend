@@ -40,6 +40,19 @@ HTTP / Docker / Prometheus / Loki / vendor status pages
        Feishu/Lark cards / Telegram / ntfy / webhook
 ```
 
+## Screenshots
+
+> Both screenshots use synthetic demo data. No real server names, logs, or
+> incidents are included.
+
+![WatchMend live service overview](docs/images/watchmend-overview.png)
+
+<p align="center"><sub>Live health, open incidents, recent trends, and service availability ordered by risk</sub></p>
+
+![WatchMend read-only diagnosis evidence](docs/images/watchmend-diagnosis.png)
+
+<p align="center"><sub>LLM root cause, confidence, read-only tool evidence, and suggested commands that are never auto-executed</sub></p>
+
 ## 5-minute demo
 
 Ships its own prometheus / loki / cadvisor / node-exporter plus a sample service —
