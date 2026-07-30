@@ -65,6 +65,17 @@ def build_card(
                 ],
             }
         )
+    elements.append(
+        {
+            "tag": "note",
+            "elements": [
+                {
+                    "tag": "plain_text",
+                    "content": f"🤖 WatchMend · 上游状态 · {now_str}",
+                }
+            ],
+        }
+    )
 
     return {
         "msg_type": "interactive",
@@ -154,7 +165,8 @@ def build_status_editor_card(
                 {
                     "tag": "plain_text",
                     "content": (
-                        f"🤖 AI 辅助分析 · 置信度 {analysis.confidence:.0%} · {model} · {now_str}"
+                        "🤖 WatchMend · AI 辅助分析 · "
+                        f"置信度 {analysis.confidence:.0%} · {model} · {now_str}"
                     ),
                 }
             ],
@@ -518,7 +530,10 @@ def build_diagnosis_card(event: EventRecord, diagnosis: dict, *, now_str: str) -
         {
             "tag": "note",
             "elements": [
-                {"tag": "plain_text", "content": f"🤖 sentinel-diag · 会话 diag-evt-{event.id}"}
+                {
+                    "tag": "plain_text",
+                    "content": f"🤖 WatchMend · 诊断会话 diag-evt-{event.id} · {now_str}",
+                }
             ],
         }
     )

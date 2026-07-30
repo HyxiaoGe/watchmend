@@ -10,6 +10,13 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+### Added
+- Reusable SVG and PNG WatchMend logo assets for notification-channel branding.
+
+### Changed
+- All Feishu cards now identify WatchMend consistently, including deterministic
+  upstream status cards, AI-assisted status cards, and diagnosis-session footers.
+
 ## [0.16.0] - 2026-07-30
 
 ### Added
