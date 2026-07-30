@@ -10,6 +10,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "zh": {
         "hdr.title": "WatchMend",
         "hdr.refreshed": "刷新于 {ts}",
+        "hdr.probe_age": "距最近一次服务探针采样",
         "nav.lang": "语言",
         "nav.theme": "主题",
         "nav.window": "窗口",
@@ -213,6 +214,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "en": {
         "hdr.title": "WatchMend",
         "hdr.refreshed": "Refreshed {ts}",
+        "hdr.probe_age": "Time since the latest service probe",
         "nav.lang": "Language",
         "nav.theme": "Theme",
         "nav.window": "Window",

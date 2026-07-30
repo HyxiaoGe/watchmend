@@ -152,6 +152,7 @@ def register_panel_routes(app: FastAPI) -> None:
         )
         # 浏览器刷新偏好(query/wm_refresh cookie)覆盖服务端默认,render 前生效(spec /settings)
         overview["refresh_seconds"] = _resolve_refresh(request, settings)
+        overview["latest_probe_ts"] = state.store.get_latest_probe_ts()
 
         t = i18n.make_translator(lang)
 
@@ -255,7 +256,10 @@ def register_panel_routes(app: FastAPI) -> None:
             surl=surl,
             active_tab="events",
             diag_lang=settings.sentinel_llm_lang,
-        )  # 详情页不传 refresh_seconds → 不自动刷新(spec §3)
+            refresh_seconds=_resolve_refresh(request, settings),
+            latest_probe_ts=state.store.get_latest_probe_ts(),
+            now_str=datetime.now(_tz(settings)).strftime("%Y-%m-%d %H:%M"),
+        )
         resp = HTMLResponse(html, status_code=status)
         prefs.apply_pref_cookies(
             resp,
@@ -278,6 +282,7 @@ def register_panel_routes(app: FastAPI) -> None:
             service_labels=getattr(state, "service_labels", None),
         )
         data["refresh_seconds"] = _resolve_refresh(request, settings)  # 浏览器偏好覆盖,render 前
+        data["latest_probe_ts"] = state.store.get_latest_probe_ts()
         qurl, tab_url = _nav_helpers("/services", lang=lang, theme=theme, window_days=window_days)
 
         def surl(name: str) -> str:
@@ -362,7 +367,10 @@ def register_panel_routes(app: FastAPI) -> None:
             services_url="/services?" + prefs_qs,
             active_tab="services",
             diag_lang=settings.sentinel_llm_lang,
-        )  # 详情页不传 refresh_seconds → 不自动刷新(spec §3)
+            refresh_seconds=_resolve_refresh(request, settings),
+            latest_probe_ts=state.store.get_latest_probe_ts(),
+            now_str=datetime.now(_tz(settings)).strftime("%Y-%m-%d %H:%M"),
+        )
         resp = HTMLResponse(html, status_code=status)
         _write_pref_cookies(resp, request, lang, theme, window_days)
         return resp
@@ -394,6 +402,7 @@ def register_panel_routes(app: FastAPI) -> None:
             diag_registered=getattr(state, "diag_job_registered", None),
         )
         data["refresh_seconds"] = _resolve_refresh(request, settings)  # 浏览器偏好覆盖,render 前
+        data["latest_probe_ts"] = state.store.get_latest_probe_ts()
         qurl, tab_url = _nav_helpers(
             "/events",
             lang=lang,
@@ -453,6 +462,7 @@ def register_panel_routes(app: FastAPI) -> None:
             diag_registered=getattr(state, "diag_job_registered", None),
         )
         data["refresh_seconds"] = _resolve_refresh(request, settings)  # 浏览器偏好覆盖,render 前
+        data["latest_probe_ts"] = state.store.get_latest_probe_ts()
         qurl, tab_url = _nav_helpers("/hygiene", lang=lang, theme=theme, window_days=window_days)
 
         def eurl(event_id: int) -> str:

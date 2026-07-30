@@ -299,7 +299,7 @@ async def test_event_detail_i18n_and_theme(tmp_path, monkeypatch):
     assert r.status_code == 200
     assert 'data-theme="light"' in r.text and '<html lang="en"' in r.text
     assert "Container down" in r.text  # rule_label en
-    assert "http-equiv" not in r.text  # 详情页不自动刷新
+    assert '<meta http-equiv="refresh" content="30">' in r.text  # 详情页同步刷新运行态数据
     store.close()
 
 
@@ -1069,7 +1069,7 @@ async def test_service_detail_renders(tmp_path, monkeypatch):
     assert "/services?" in r.text
     assert 'class="lat-chart"' in r.text  # 延迟时序大图
     assert 'class="tab-on" title="服务"' in r.text  # 「服务」标签高亮
-    assert '<meta http-equiv="refresh"' not in r.text  # 详情页不自动刷新
+    assert '<meta http-equiv="refresh" content="30">' in r.text  # 详情页同步刷新运行态数据
     store.close()
 
 
@@ -1860,6 +1860,8 @@ async def test_overview_smooth_refresh_contract(tmp_path, monkeypatch):
     assert '<noscript><meta http-equiv="refresh" content="30">' in html  # 降级兜底
     assert html.count('http-equiv="refresh"') == 1  # 唯一 meta = noscript 那个
     assert "new DOMParser()" in html  # 内联轮询脚本存在
+    assert 'data-probe-ts="0"' in html  # 无样本也明确输出探针年龄占位
+    assert "updateProbeAge" in html  # 秒级更新“距最近采样”,避免指标看起来静止
     assert "<script src" not in html  # 绝不引外部 JS
     # 单一定时器防多链叠加:重排前必 clearTimeout(回退到无句柄多 setTimeout 版会失守)。
     assert "clearTimeout" in html
@@ -1877,9 +1879,10 @@ async def test_refresh_seconds_flows_to_page(tmp_path, monkeypatch):
     store.close()
 
 
-async def test_detail_page_has_live_region_but_no_autorefresh(tmp_path, monkeypatch):
-    # 详情页:有 #wm-live 容器(脚本对所有页存在),但不带 data-refresh 属性、也无 meta-refresh
-    # → 脚本读到空间隔即不轮询(维持详情页不自动刷新)。
+async def test_detail_pages_refresh_live_data(tmp_path, monkeypatch):
+    # 事件和服务详情同样展示运行态指标，必须跟列表页使用一致的局部刷新契约。
+    from sentinel.models import ProbeSample
+
     settings = _settings(monkeypatch)
     store = Store(str(tmp_path / "s.db"))
     eid = store.insert_event(
@@ -1893,11 +1896,23 @@ async def test_detail_page_has_live_region_but_no_autorefresh(tmp_path, monkeypa
         diagnosis_status="skipped",
         cooldown_until=0,
     )
+    store.add_probe_samples(
+        [
+            ProbeSample(
+                ts=1700000001,
+                service="api",
+                ok=True,
+                status_code=200,
+                latency_ms=12.0,
+            )
+        ]
+    )
     app = _build_app(store, settings)
-    html = (await _get(app, f"/event/{eid}")).text
-    assert 'id="wm-live"' in html  # 容器在
-    assert 'data-refresh="' not in html  # 但无刷新属性(getAttribute("data-refresh") 不含 ="）
-    assert "http-equiv" not in html  # 详情页无任何 meta-refresh
+    for path in (f"/event/{eid}", "/service/api"):
+        html = (await _get(app, path)).text
+        assert 'id="wm-live" data-refresh="30"' in html
+        assert '<noscript><meta http-equiv="refresh" content="30">' in html
+        assert 'data-probe-ts="1700000001"' in html
     store.close()
 
 
