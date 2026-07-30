@@ -42,6 +42,8 @@ def test_diagnosis_card_structure():
     assert "docker stats --no-stream" in body
     assert "medium" in body
     assert "#7" in body  # 事件号可追溯
+    assert "WatchMend" in body
+    assert "sentinel-diag" not in body
 
 
 @pytest.mark.parametrize(

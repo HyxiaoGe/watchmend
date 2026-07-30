@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">WatchMend</title>
+  <rect x="76" y="76" width="360" height="360" rx="78" fill="#0F766E"/>
+  <path d="M140 170l47 172 58-134 52 134 64-172"
+        fill="none" stroke="#ECFEFF" stroke-width="34"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M134 263h66l24-39 36 90 31-66h88"
+        fill="none" stroke="#0F172A" stroke-width="22"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="374" cy="138" r="30" fill="#22C55E" stroke="#F8FAFC" stroke-width="12"/>
+</svg>

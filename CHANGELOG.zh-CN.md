@@ -10,6 +10,13 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [Unreleased]
 
+### 新增
+- 新增可复用的 SVG 与 PNG WatchMend Logo 资源，用于通知渠道品牌统一。
+
+### 变更
+- 所有飞书卡片统一展示 WatchMend 身份，覆盖确定性上游状态卡、AI 辅助状态卡与诊断
+  会话页脚。
+
 ## [0.16.0] - 2026-07-30
 
 ### 新增

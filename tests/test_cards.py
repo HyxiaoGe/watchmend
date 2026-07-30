@@ -6,6 +6,7 @@ from sentinel.feishu.cards import (
     build_event_card,
     build_heartbeat_card,
     build_recovery_card,
+    build_status_editor_card,
 )
 from sentinel.findings import EventRecord, Finding
 from sentinel.models import (
@@ -15,6 +16,7 @@ from sentinel.models import (
     ServiceDayStats,
     Snapshot,
 )
+from sentinel.status_editor import StatusAnalysis
 
 
 def _ev(etype, impact=None):
@@ -38,10 +40,35 @@ def test_card_is_v1_interactive_with_header_and_action():
     assert card["msg_type"] == "interactive"
     body = card["card"]
     assert "config" in body and "header" in body and "elements" in body
-    # 末尾是 action 按钮指向状态页
-    action = body["elements"][-1]
+    action = next(element for element in body["elements"] if element["tag"] == "action")
     assert action["tag"] == "action"
     assert action["actions"][0]["url"] == "https://status.openai.com"
+    assert "WatchMend" in str(body["elements"])
+
+
+def test_status_editor_card_has_watchmend_brand():
+    analysis = StatusAnalysis(
+        decision="notify",
+        severity="warning",
+        headline="上游状态发生变化",
+        summary="Cloudflare 正在调查异常。",
+        impact_summary="可能影响边缘请求。",
+        affected_services=["fusion"],
+        evidence=["官方状态页已确认"],
+        recommended_action="继续观察。",
+        confidence=0.9,
+    )
+    card = build_status_editor_card(
+        "Cloudflare",
+        analysis,
+        [_ev(EventType.INCIDENT_OPENED, Indicator.MINOR)],
+        "https://status.cloudflare.com",
+        now_str="2026-07-30 10:00:00",
+        model="gemini/gemini-2.5-flash",
+    )
+
+    footer = card["card"]["elements"][-1]["elements"][0]["content"]
+    assert footer.startswith("🤖 WatchMend · AI 辅助分析")
 
 
 def test_header_color_red_for_major():
