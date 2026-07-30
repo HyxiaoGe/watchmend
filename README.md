@@ -33,6 +33,18 @@ HTTP / Docker / Prometheus / Loki / 上游状态页
       飞书富卡片 / Telegram / ntfy / webhook
 ```
 
+## 产品截图
+
+> 以下均为合成演示数据，不包含真实服务器名称、日志或事故信息。
+
+![WatchMend 实时服务总览](docs/images/watchmend-overview.png)
+
+<p align="center"><sub>实时健康度、开放事件、近期趋势与按风险排序的服务可用率</sub></p>
+
+![WatchMend 只读诊断证据链](docs/images/watchmend-diagnosis.png)
+
+<p align="center"><sub>LLM 根因结论、置信度、只读工具调用证据与永不自动执行的建议命令</sub></p>
+
 ## 5 分钟 demo
 
 自带 prometheus / loki / cadvisor / node-exporter 和一个示例服务,零外部依赖:
