@@ -506,10 +506,27 @@ def build_codex_turn_card(
     thread_id: str,
     turn_id: str,
     now_str: str,
+    category: str = "turn_complete",
 ) -> dict:
-    """Codex 主回合完成卡；蓝色仅表示信息，不暗示任务或测试成功。"""
+    """Codex 主回合状态卡；外部内容一律按 plain_text 渲染。"""
     thread_short = thread_id[:12]
     turn_short = turn_id[:12]
+    titles = {
+        "turn_complete": "Codex 回合完成",
+        "approval_required": "Codex 等待审批",
+        "input_required": "Codex 等待输入",
+        "execution_failed": "Codex 执行受阻",
+        "long_turn_complete": "Codex 长任务完成",
+    }
+    templates = {
+        "turn_complete": _BLUE,
+        "approval_required": _ORANGE,
+        "input_required": _ORANGE,
+        "execution_failed": _RED,
+        "long_turn_complete": _GREEN,
+    }
+    title = titles.get(category, titles["turn_complete"])
+    template = templates.get(category, _BLUE)
     return {
         "msg_type": "interactive",
         "card": {
@@ -517,9 +534,9 @@ def build_codex_turn_card(
             "header": {
                 "title": {
                     "tag": "plain_text",
-                    "content": f"🤖 Codex 回合完成 · {project}",
+                    "content": f"🤖 {title} · {project}",
                 },
-                "template": _BLUE,
+                "template": template,
             },
             "elements": [
                 _codex_plain_div("任务", task_summary),

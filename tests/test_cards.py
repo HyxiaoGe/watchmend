@@ -66,6 +66,21 @@ def test_codex_turn_card_is_blue_and_uses_plain_text_for_external_content():
     assert "thr_123456" in str(card)
 
 
+def test_codex_attention_card_uses_category_title_and_color():
+    card = build_codex_turn_card(
+        project="watchmend",
+        cwd="/workspace/watchmend",
+        task_summary="部署到 dev",
+        result_summary="等待审批：执行部署命令",
+        thread_id="session_123",
+        turn_id="turn_456",
+        now_str="2026-08-09 12:00:00",
+        category="approval_required",
+    )
+    assert card["card"]["header"]["template"] == "orange"
+    assert "Codex 等待审批" in card["card"]["header"]["title"]["content"]
+
+
 def test_status_editor_card_has_watchmend_brand():
     analysis = StatusAnalysis(
         decision="notify",

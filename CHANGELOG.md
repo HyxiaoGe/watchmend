@@ -17,10 +17,15 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
   bounded idempotency without putting Codex messages into the monitoring alert state machine.
 - A local `watchmend-codex-notify` dispatcher that preserves the existing Codex
   `notify` callback while allowlisting, redacting, clipping, and retrying summaries.
+- A `watchmend-codex-hook` client and in-memory candidate queue. Approval/input waits,
+  blocked failures, and long-turn completion are delayed for five minutes and cancelled
+  when observable user activity resumes the task.
 
 ### Changed
 - All Feishu cards now identify WatchMend consistently, including deterministic
   upstream status cards, AI-assisted status cards, and diagnosis-session footers.
+- The recommended Codex integration now uses lifecycle Hooks instead of per-turn
+  `notify`; the original dispatcher and endpoint remain for compatibility.
 
 ## [0.16.0] - 2026-07-30
 

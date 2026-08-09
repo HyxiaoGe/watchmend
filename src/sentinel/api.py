@@ -12,6 +12,7 @@ from typing import Annotated, Literal
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from sentinel.codex_hooks import CodexHookEvent
 from sentinel.llm_driver import cap_tool_outputs
 from sentinel.notify.build import (
     codex_turn_notification,
@@ -186,3 +187,13 @@ def register_routes(app: FastAPI) -> None:
             delivered_count=delivered_count,
         )
         return {"ok": True, "delivered_count": delivered_count, "duplicate": False}
+
+    @app.post("/notifications/codex/hooks", status_code=202)
+    async def post_codex_hook(
+        body: CodexHookEvent,
+        request: Request,
+        x_watchmend_token: _CodexTokenHeader = None,
+    ) -> dict:
+        _check_codex_token(request, x_watchmend_token)
+        result = request.app.state.codex_hook_manager.ingest(body)
+        return {"ok": True, **result}

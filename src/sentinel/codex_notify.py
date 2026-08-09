@@ -6,6 +6,7 @@ WatchMend 网络故障阻断现有 Computer Use ``turn-ended`` 回调。
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -14,7 +15,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -30,6 +31,14 @@ _ID_MAX = 128
 _CWD_MAX = 1024
 _PROJECT_MAX = 160
 _RETRYABLE_HTTP = {408, 425, 429}
+_HOOK_EVENTS = {
+    "UserPromptSubmit",
+    "PermissionRequest",
+    "PostToolUse",
+    "Stop",
+    "SessionEnd",
+}
+_HOOK_STDIN_MAX = 262_144
 
 
 class ConfigError(ValueError):
@@ -88,6 +97,67 @@ def normalize_codex_event(event: dict) -> dict | None:
         "task_summary": task,
         "result_summary": result,
     }
+
+
+def _optional_safe_text(value: object, limit: int) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return _safe_text(value, limit)
+
+
+def normalize_codex_hook_event(event: dict) -> dict | None:
+    """把 Codex Hook stdin 收窄为服务端状态机协议，不发送工具原始输入或输出。"""
+    name = str(event.get("hook_event_name") or "")
+    if name not in _HOOK_EVENTS:
+        return None
+    session_id = _clip(str(event.get("session_id") or ""), _ID_MAX)
+    turn_id = _clip(str(event.get("turn_id") or ""), _ID_MAX) or None
+    cwd = _clip(str(event.get("cwd") or ""), _CWD_MAX)
+    if not session_id or not cwd or (name != "SessionEnd" and not turn_id):
+        return None
+    project = _clip(Path(cwd).name or cwd, _PROJECT_MAX)
+    payload: dict[str, object] = {
+        "event_name": name,
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "project": project,
+        "cwd": cwd,
+    }
+    tool_input = event.get("tool_input")
+    tool_name = _clip(str(event.get("tool_name") or ""), 256) or None
+    tool_fingerprint = None
+    if tool_input is not None:
+        canonical = json.dumps(
+            tool_input, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        tool_fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    suffix = name
+    if name == "UserPromptSubmit":
+        payload["task_summary"] = _safe_text(event.get("prompt"), _TASK_MAX)
+    elif name == "PermissionRequest":
+        description = tool_input.get("description") if isinstance(tool_input, dict) else None
+        summary = _optional_safe_text(description, _RESULT_MAX)
+        payload["result_summary"] = (
+            f"等待审批：{summary}" if summary else f"等待审批：{tool_name or '工具调用'}"
+        )
+        payload["tool_name"] = tool_name
+        payload["tool_fingerprint"] = tool_fingerprint
+        suffix = f"{name}:{tool_fingerprint or tool_name or 'tool'}"
+    elif name == "PostToolUse":
+        tool_use_id = _clip(str(event.get("tool_use_id") or ""), 256) or None
+        payload["tool_name"] = tool_name
+        payload["tool_use_id"] = tool_use_id
+        payload["tool_fingerprint"] = tool_fingerprint
+        discriminator = str(tool_use_id or tool_fingerprint or tool_name or "tool")
+        suffix = f"{name}:{hashlib.sha256(discriminator.encode('utf-8')).hexdigest()}"
+    elif name == "Stop":
+        payload["result_summary"] = _safe_text(event.get("last_assistant_message"), _RESULT_MAX)
+        payload["stop_hook_active"] = bool(event.get("stop_hook_active"))
+    elif name == "SessionEnd":
+        suffix = name
+    payload["event_id"] = f"{session_id}:{turn_id or 'session'}:{suffix}"
+    return payload
 
 
 def load_config(path: str | Path) -> ClientConfig:
@@ -181,6 +251,24 @@ def send_to_watchmend(
     return False
 
 
+def send_hook_to_watchmend(
+    payload: dict,
+    config: ClientConfig,
+    *,
+    opener: Callable = urlopen,
+) -> bool:
+    """Hook 处于 Codex 生命周期热路径：固定短超时、零重试，快速 fail-open。"""
+    base = config.url.rstrip("/")
+    if base.endswith("/notifications/codex"):
+        url = f"{base}/hooks"
+    else:
+        url = f"{base}/notifications/codex/hooks"
+    hook_config = replace(
+        config, url=url, timeout_seconds=min(config.timeout_seconds, 1.5), retries=0
+    )
+    return send_to_watchmend(payload, hook_config, opener=opener)
+
+
 def _parse_args(argv: list[str]) -> tuple[Path | None, list[str], str | None]:
     if not argv:
         return None, [], None
@@ -216,6 +304,31 @@ def main(argv: list[str] | None = None) -> int:
                 logger.warning("WatchMend Codex 通知投递失败")
     except (ConfigError, ValueError, TypeError):
         logger.warning("WatchMend Codex 通知已跳过：事件或私有配置无效")
+    return 0
+
+
+def hook_main(argv: list[str] | None = None) -> int:
+    """Codex command Hook 入口；任何错误都返回中性 JSON，不干预代理循环。"""
+    args = list(sys.argv[1:] if argv is None else argv)
+    config_path: Path | None = None
+    if "--config" in args:
+        index = args.index("--config")
+        if index + 1 < len(args):
+            config_path = Path(args[index + 1])
+    try:
+        raw = sys.stdin.read(_HOOK_STDIN_MAX + 1)
+        if len(raw) > _HOOK_STDIN_MAX:
+            raise ValueError("Hook 事件过大")
+        event = json.loads(raw)
+        payload = normalize_codex_hook_event(event) if isinstance(event, dict) else None
+        if config_path is not None and payload is not None:
+            config = load_config(config_path)
+            if not send_hook_to_watchmend(payload, config):
+                logger.warning("WatchMend Codex Hook 投递失败")
+    except (ConfigError, ValueError, TypeError, OSError):
+        logger.warning("WatchMend Codex Hook 已跳过：事件或私有配置无效")
+    # Stop Hook 的 stdout 必须是 JSON；空对象不改变任何 Codex 决策。
+    print("{}")
     return 0
 
 

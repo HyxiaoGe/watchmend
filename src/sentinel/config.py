@@ -81,6 +81,10 @@ class Settings(BaseSettings):
     # Codex 通知入口独立鉴权；空=入口关闭（不能退化成匿名写入）。
     sentinel_codex_ingest_token: str = ""
     sentinel_codex_receipt_retention_days: int = Field(default=30, ge=1)
+    # Hook 通知先进入内存候选；宽限期内的用户输入/审批后执行会取消，避免逐回合骚扰。
+    sentinel_codex_hook_grace_seconds: int = Field(default=300, ge=1, le=3600)
+    sentinel_codex_long_turn_seconds: int = Field(default=180, ge=1, le=86400)
+    sentinel_codex_hook_poll_seconds: int = Field(default=1, ge=1, le=60)
 
     # LLM 直连(OpenAI-compatible):base_url 和 model 同时非空才启用,
     # 留空=LLM 诊断/总结层整体关闭,确定性巡检与告警不受影响。

@@ -7,6 +7,7 @@ import pytest
 from fastapi import FastAPI
 
 from sentinel.api import register_routes
+from sentinel.codex_hooks import CodexHookNotificationManager
 from sentinel.notify.message import Kind
 from sentinel.store import Store
 
@@ -34,6 +35,13 @@ def env(tmp_path):
         sentinel_codex_ingest_token="",
         sentinel_codex_receipt_retention_days=30,
         sentinel_heartbeat_utc_offset=8,
+    )
+    app.state.codex_hook_manager = CodexHookNotificationManager(
+        store=store,
+        broadcaster=bc,
+        grace_seconds=300,
+        long_turn_seconds=180,
+        utc_offset=8,
     )
     register_routes(app)
     yield app, store, bc
@@ -239,3 +247,28 @@ async def test_codex_notification_all_channels_failed_is_retryable(env):
         )
     assert r.status_code == 503
     assert r.json()["detail"] == "all notification channels failed"
+
+
+async def test_codex_hook_endpoint_enqueues_without_immediate_broadcast(env):
+    app, _, bc = env
+    app.state.settings.sentinel_codex_ingest_token = "codex-secret"
+    body = {
+        "event_id": "session-1:turn-1:PermissionRequest:a",
+        "event_name": "PermissionRequest",
+        "session_id": "session-1",
+        "turn_id": "turn-1",
+        "project": "watchmend",
+        "cwd": "/workspace/watchmend",
+        "result_summary": "等待审批：部署到 dev",
+        "tool_name": "Bash",
+        "tool_fingerprint": "a" * 64,
+    }
+    async with _client(app) as c:
+        r = await c.post(
+            "/notifications/codex/hooks",
+            json=body,
+            headers={"X-WatchMend-Token": "codex-secret"},
+        )
+    assert r.status_code == 202
+    assert r.json() == {"ok": True, "action": "queued", "category": "approval_required"}
+    assert bc.sent == []

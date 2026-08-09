@@ -245,16 +245,26 @@ def codex_turn_notification(
     turn_id: str,
     now_ts: int,
     now_str: str,
+    category: str = "turn_complete",
 ) -> Notification:
-    """Codex 主回合结束通知。
-
-    agent-turn-complete 只证明回合已经结束，不能证明代码、测试或部署成功；因此固定使用
-    INFO 语义和“回合完成”标题，具体结果只展示 Codex 最终摘要。
-    """
+    """Codex 主回合状态通知；category 决定关注原因、标题和展示严重度。"""
+    titles = {
+        "turn_complete": "Codex 回合完成",
+        "approval_required": "Codex 等待审批",
+        "input_required": "Codex 等待输入",
+        "execution_failed": "Codex 执行受阻",
+        "long_turn_complete": "Codex 长任务完成",
+    }
+    title = titles.get(category, titles["turn_complete"])
+    severity = (
+        Severity.WARNING
+        if category in {"approval_required", "input_required", "execution_failed"}
+        else Severity.INFO
+    )
     return Notification(
         kind=Kind.CODEX_TURN,
-        severity=Severity.INFO,
-        title=f"Codex 回合完成 · {project}",
+        severity=severity,
+        title=f"{title} · {project}",
         detail=result_summary,
         fields=[("目录", cwd), ("任务", task_summary)],
         subject=project,
@@ -267,6 +277,7 @@ def codex_turn_notification(
             "thread_id": thread_id,
             "turn_id": turn_id,
             "now_str": now_str,
+            "category": category,
         },
     )
 

@@ -64,6 +64,7 @@ def render_card(n: Notification) -> dict:
             thread_id=d["thread_id"],
             turn_id=d["turn_id"],
             now_str=d["now_str"],
+            category=d.get("category", "turn_complete"),
         )
     if n.kind == Kind.DIAGNOSIS:
         return build_diagnosis_card(d["event"], d["diagnosis"], now_str=d["now_str"])

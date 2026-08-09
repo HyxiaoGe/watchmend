@@ -77,7 +77,7 @@ make up                                   # 或 docker compose up -d --build
 | `SENTINEL_TELEGRAM_BOT_TOKEN` + `SENTINEL_TELEGRAM_CHAT_ID` | Telegram 推送(两者都填才启用) | 该渠道关闭 |
 | `SENTINEL_NTFY_URL`(可选 `SENTINEL_NTFY_TOKEN`) | ntfy 推送,完整 topic URL | 该渠道关闭 |
 | `SENTINEL_WEBHOOK_URL`(可选 `SENTINEL_WEBHOOK_TOKEN`) | 通用 webhook,结构化 JSON | 该渠道关闭 |
-| `SENTINEL_CODEX_INGEST_TOKEN` | Codex 回合完成通知入口 | 入口返回 404、保持关闭 |
+| `SENTINEL_CODEX_INGEST_TOKEN` | Codex 生命周期通知入口 | 入口返回 404、保持关闭 |
 | `services.yaml` | 内部服务 HTTP 探针 + 延迟基线(每项可选 `label` 设面板显示名) | 只监控外部状态页 |
 | `SENTINEL_PROMETHEUS_URL` | 磁盘/内存/容器重启等指标规则 | 指标层关闭 |
 | `SENTINEL_LOKI_URL` | 错误日志激增检测 | 日志层关闭 |
@@ -228,8 +228,9 @@ send-then-commit / 只读不执行”四项纪律变成一眼可见的运行证�
 
 **安全说明**：面板全部 GET 路由（总览、服务、事件、体检、设置和更新日志）本身是
 **只读**的；但**同一个 `127.0.0.1:8765` 端口还挂着写 API**，包括
-`POST /events/{id}/diagnosis`、`POST /report/summary` 和
-`POST /notifications/codex`。前两者在 `SENTINEL_DIAG_TOKEN` 非空时鉴权；
+`POST /events/{id}/diagnosis`、`POST /report/summary`、
+`POST /notifications/codex` 和 `POST /notifications/codex/hooks`。诊断与总结端点在
+`SENTINEL_DIAG_TOKEN` 非空时鉴权；
 Codex 入口使用独立的 `SENTINEL_CODEX_INGEST_TOKEN`，留空时直接返回 404、保持关闭。
 整体假设只在本机/内网可达。
 原始日志片段会落到 localhost-only 的 SQLite（与现有 LLM 调用同源数据，每段截断
@@ -250,7 +251,9 @@ Codex 入口使用独立的 `SENTINEL_CODEX_INGEST_TOKEN`，留空时直接返�
 
 ## 进阶
 
-- **Codex 回合完成通知**：见 [`docs/codex-notifications.md`](docs/codex-notifications.md)，可复用现有飞书/ntfy/通用 webhook 广播，并保留已有 Codex `notify` 回调。
+- **Codex 生命周期通知**：见 [`docs/codex-notifications.md`](docs/codex-notifications.md)，
+  仅在等待审批/输入、失败受阻或长任务完成时进入 5 分钟候选；期间用户有操作即取消，
+  并可复用现有飞书/ntfy/通用 webhook 广播。
 - **宿主机 agent 编排**(`host/`):不用容器内直连,改由你自己的 agent runner
   (任何 CLI)经 HTTP 编排 API 拉取 pending 事件做诊断,还可扩展白名单恢复脚本
   (denylist + 人工审批)。与容器内直连**二选一**。

@@ -16,10 +16,13 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
   通过事件键哈希回执实现有限期幂等，不把 Codex 通知写入监控告警状态机。
 - 新增本机 `watchmend-codex-notify` 分发器，在保留既有 Codex `notify` 回调的同时，
   对任务与结果摘要进行字段白名单、脱敏、截断和有限重试。
+- 新增 `watchmend-codex-hook` 与内存候选队列：仅等待审批/输入、失败受阻和长任务完成
+  进入通知候选，5 分钟内检测到用户输入、审批后执行或会话结束即取消。
 
 ### 变更
 - 所有飞书卡片统一展示 WatchMend 身份，覆盖确定性上游状态卡、AI 辅助状态卡与诊断
   会话页脚。
+- Codex 推荐接入从逐回合 `notify` 改为生命周期 Hooks；原分发器与端点仅保留兼容。
 
 ## [0.16.0] - 2026-07-30
 
