@@ -15,6 +15,7 @@ from fastapi import FastAPI
 
 from sentinel import __version__, discover
 from sentinel.api import register_routes
+from sentinel.codex_hooks import CodexHookNotificationManager
 from sentinel.config import Settings
 from sentinel.docker_client import DockerClient
 from sentinel.engine import apply_findings
@@ -612,6 +613,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.patrol_broadcaster = _broadcaster_for(
         settings, client, webhook=settings.patrol_webhook, secret=settings.patrol_sign_secret
     )
+    app.state.codex_hook_manager = CodexHookNotificationManager(
+        store=store,
+        broadcaster=app.state.patrol_broadcaster,
+        grace_seconds=settings.sentinel_codex_hook_grace_seconds,
+        long_turn_seconds=settings.sentinel_codex_long_turn_seconds,
+        receipt_retention_days=settings.sentinel_codex_receipt_retention_days,
+        utc_offset=settings.sentinel_heartbeat_utc_offset,
+    )
     # load_targets 在此与 build_jobs 各调一次(读同一 yaml,幂等),可接受
     _panel_targets = _load_targets_or_disable(settings.sentinel_services_file)
     app.state.services = [t.name for t in _panel_targets]
@@ -626,6 +635,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info(msg)
     logger.info("sentinel started, jobs=%s", [name for name, _, _ in jobs])
     tasks = [asyncio.create_task(_job_loop(name, interval, tick)) for name, interval, tick in jobs]
+    if settings.sentinel_codex_ingest_token:
+        tasks.append(
+            asyncio.create_task(
+                _job_loop(
+                    "codex_hooks",
+                    settings.sentinel_codex_hook_poll_seconds,
+                    app.state.codex_hook_manager.dispatch_due,
+                )
+            )
+        )
     try:
         yield
     finally:

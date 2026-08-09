@@ -87,6 +87,7 @@ Most data sources are optional — leave one empty and that layer turns off clea
 | `SENTINEL_TELEGRAM_BOT_TOKEN` + `SENTINEL_TELEGRAM_CHAT_ID` | Telegram push (both required to enable) | that channel off |
 | `SENTINEL_NTFY_URL` (optional `SENTINEL_NTFY_TOKEN`) | ntfy push, full topic URL | that channel off |
 | `SENTINEL_WEBHOOK_URL` (optional `SENTINEL_WEBHOOK_TOKEN`) | Generic webhook, structured JSON | that channel off |
+| `SENTINEL_CODEX_INGEST_TOKEN` | Codex turn-completion notification ingress | returns 404 and stays disabled |
 | `services.yaml` | HTTP probes + latency baselines (per-entry optional `label` sets panel display name) | vendor-status-only mode |
 | `SENTINEL_PROMETHEUS_URL` | disk/memory/restart metric rules | metrics layer off |
 | `SENTINEL_LOKI_URL` | error-log spike detection | log layer off |
@@ -139,7 +140,7 @@ curl http://127.0.0.1:8765/health
 
 > **LLM diagnosis** in this path is enabled via `.env` `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL` (DeepSeek `api.deepseek.com` / Moonshot CN `api.moonshot.cn` are the natural picks behind the GFW; OpenAI/Anthropic/Gemini direct-connect is unreachable there). The `llm.yaml` registry + `make llm-init` hot-reload flow is for the `make up` build path; this compose deliberately does not mount `llm.yaml`. See [`## LLM diagnosis (optional)`](#llm-diagnosis-optional).
 
-> **Access**: the port is bound to `127.0.0.1` only (zero public exposure). On the box itself open `http://127.0.0.1:8765` directly; for a remote box tunnel first — `ssh -L 8765:127.0.0.1:8765 you@your-server`, then open `http://127.0.0.1:8765` locally. Before exposing it (LAN bind / reverse proxy), set `SENTINEL_DIAG_TOKEN` — see [`## Evidence Panel (read-only)`](#evidence-panel-read-only).
+> **Access**: the port is bound to `127.0.0.1` only (zero public exposure). On the box itself open `http://127.0.0.1:8765` directly; for a remote box tunnel first — `ssh -L 8765:127.0.0.1:8765 you@your-server`, then open `http://127.0.0.1:8765` locally. Before exposing it (LAN bind / reverse proxy), configure the token for every enabled write API; the Codex ingress uses the separate `SENTINEL_CODEX_INGEST_TOKEN` and stays disabled while it is empty — see [`## Evidence Panel (read-only)`](#evidence-panel-read-only).
 
 ## LLM diagnosis (optional)
 
@@ -233,16 +234,17 @@ send-then-commit / read-only never-execute) into visible operational evidence:
 Access: the container binds the panel to `127.0.0.1:8765` on the host (same port as the orchestration API); open `http://127.0.0.1:8765/`.
 
 **Security note**: all panel GET routes (overview, services, events, hygiene,
-settings, and changelog) are **read-only**, but the **same `127.0.0.1:8765`
-port also hosts the orchestration WRITE API** (`POST /events/{id}/diagnosis`,
-`POST /report/summary`). Those endpoints are authenticated only when
-`SENTINEL_DIAG_TOKEN` is set; it defaults to empty, i.e. **no auth**. The whole
+settings, and changelog) are **read-only**, but the same `127.0.0.1:8765`
+port also hosts write APIs: `POST /events/{id}/diagnosis`,
+`POST /report/summary`, and `POST /notifications/codex`. The first two use
+`SENTINEL_DIAG_TOKEN` when configured. The Codex ingress uses the separate
+`SENTINEL_CODEX_INGEST_TOKEN` and returns 404 when that token is empty. The whole
 service therefore assumes localhost/intranet reachability. Raw log snippets are
 stored in the localhost-only SQLite (the same data already sent to the LLM
 endpoint, truncated to 4096 characters each). **To expose it publicly**, protect
 the entire 8765 upstream with an authenticated reverse proxy, or allow only the
-panel GET routes while blocking the write API, **and set
-`SENTINEL_DIAG_TOKEN`**. Alternatively, set `SENTINEL_PANEL_ENABLED=false`.
+panel GET routes while blocking all write APIs. If write APIs must be exposed,
+configure their respective tokens. Alternatively, set `SENTINEL_PANEL_ENABLED=false`.
 
 ## Design philosophy
 
@@ -258,6 +260,7 @@ panel GET routes while blocking the write API, **and set
 
 ## Advanced
 
+- **Codex lifecycle notifications**: see [`docs/codex-notifications.md`](docs/codex-notifications.md). Approval/input waits, blocked failures, and long-turn completions enter a 15-minute candidate window that is cancelled when observable user activity resumes, while reusing the existing Feishu/ntfy/generic-webhook broadcaster.
 - **Host-side agent orchestration** (`host/`): instead of the in-container
   driver, let your own agent runner (any CLI) pull pending events via the HTTP
   orchestration API, optionally extending into allowlisted recovery scripts

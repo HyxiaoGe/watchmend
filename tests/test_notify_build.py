@@ -4,6 +4,7 @@ from sentinel.findings import EventRecord, Finding
 from sentinel.models import Indicator, ServiceDayStats, Snapshot
 from sentinel.notify.build import (
     alert_notification,
+    codex_turn_notification,
     diagnosis_notification,
     heartbeat_notification,
     recovery_notification,
@@ -161,3 +162,22 @@ def test_summary_info_carries_text():
     n = summary_notification("一切平稳", date_str="2026-06-13", now_ts=10, now_str="x")
     assert n.kind is Kind.SUMMARY and n.severity is Severity.INFO
     assert n.detail == "一切平稳" and n.data["text"] == "一切平稳"
+
+
+def test_codex_turn_is_info_and_does_not_claim_task_success():
+    n = codex_turn_notification(
+        project="watchmend",
+        cwd="/workspace/watchmend",
+        task_summary="接入完成通知",
+        result_summary="测试结果见最终回复",
+        thread_id="thr_1234567890",
+        turn_id="turn_9876543210",
+        now_ts=1000,
+        now_str="2026-08-09 12:00:00",
+    )
+    assert n.kind is Kind.CODEX_TURN and n.severity is Severity.INFO
+    assert n.title == "Codex 回合完成 · watchmend"
+    assert "成功" not in n.title
+    assert n.subject == "watchmend"
+    assert ("目录", "/workspace/watchmend") in n.fields
+    assert n.data["thread_id"] == "thr_1234567890"

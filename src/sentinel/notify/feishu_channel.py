@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from sentinel.feishu.cards import (
     build_card,
+    build_codex_turn_card,
     build_daily_report_card,
     build_diagnosis_card,
     build_digest_card,
@@ -53,6 +54,17 @@ def render_card(n: Notification) -> dict:
             d["items"],
             window_label=d["window_label"],
             now_str=d["now_str"],
+        )
+    if n.kind == Kind.CODEX_TURN:
+        return build_codex_turn_card(
+            project=d["project"],
+            cwd=d["cwd"],
+            task_summary=d["task_summary"],
+            result_summary=d["result_summary"],
+            thread_id=d["thread_id"],
+            turn_id=d["turn_id"],
+            now_str=d["now_str"],
+            category=d.get("category", "turn_complete"),
         )
     if n.kind == Kind.DIAGNOSIS:
         return build_diagnosis_card(d["event"], d["diagnosis"], now_str=d["now_str"])

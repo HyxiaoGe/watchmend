@@ -10,12 +10,23 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-08-09
+
 ### 新增
 - 新增可复用的 SVG 与 PNG WatchMend Logo 资源，用于通知渠道品牌统一。
+- 新增受独立 Token 保护的 Codex 回合完成通知入口、原生飞书信息卡和多渠道广播；
+  通过事件键哈希回执实现有限期幂等，不把 Codex 通知写入监控告警状态机。
+- 新增本机 `watchmend-codex-notify` 分发器，在保留既有 Codex `notify` 回调的同时，
+  对任务与结果摘要进行字段白名单、脱敏、截断和有限重试。
+- 新增 `watchmend-codex-hook` 与内存候选队列：仅等待审批/输入、失败受阻和长任务完成
+  进入通知候选，15 分钟内检测到用户输入、审批后执行或会话结束即取消。
 
 ### 变更
 - 所有飞书卡片统一展示 WatchMend 身份，覆盖确定性上游状态卡、AI 辅助状态卡与诊断
   会话页脚。
+- Codex 推荐接入从逐回合 `notify` 改为生命周期 Hooks；原分发器与端点仅保留兼容。
+- Codex 飞书卡片的任务与结果正文改用安全 Markdown，保留列表、加粗、行内代码和链接，
+  同时转义飞书特殊标签以避免意外提醒。
 
 ## [0.16.0] - 2026-07-30
 
@@ -307,7 +318,8 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 ### 安全
 - docker 元数据与环境值的密钥泄漏遮蔽。
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.14.0...v0.15.0

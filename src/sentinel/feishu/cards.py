@@ -486,6 +486,93 @@ def build_digest_card(
     }
 
 
+# ---- Codex 回合通知 ----
+
+
+def _codex_safe_markdown(value: str) -> str:
+    """保留标准 Markdown，同时阻止飞书 ``<at>`` 等标签注入。"""
+    return value.replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _codex_markdown_div(label: str, value: str) -> dict:
+    return {
+        "tag": "div",
+        "text": {
+            "tag": "lark_md",
+            "content": f"**{label}**\n{_codex_safe_markdown(value)}",
+        },
+    }
+
+
+def _codex_plain_div(label: str, value: str) -> dict:
+    return {
+        "tag": "div",
+        "text": {"tag": "plain_text", "content": f"{label}\n{value}"},
+    }
+
+
+def build_codex_turn_card(
+    *,
+    project: str,
+    cwd: str,
+    task_summary: str,
+    result_summary: str,
+    thread_id: str,
+    turn_id: str,
+    now_str: str,
+    category: str = "turn_complete",
+) -> dict:
+    """Codex 主回合状态卡；正文支持安全 Markdown，元数据保持纯文本。"""
+    thread_short = thread_id[:12]
+    turn_short = turn_id[:12]
+    titles = {
+        "turn_complete": "Codex 回合完成",
+        "approval_required": "Codex 等待审批",
+        "input_required": "Codex 等待输入",
+        "execution_failed": "Codex 执行受阻",
+        "long_turn_complete": "Codex 长任务完成",
+    }
+    templates = {
+        "turn_complete": _BLUE,
+        "approval_required": _ORANGE,
+        "input_required": _ORANGE,
+        "execution_failed": _RED,
+        "long_turn_complete": _GREEN,
+    }
+    title = titles.get(category, titles["turn_complete"])
+    template = templates.get(category, _BLUE)
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {
+                    "tag": "plain_text",
+                    "content": f"🤖 {title} · {project}",
+                },
+                "template": template,
+            },
+            "elements": [
+                _codex_markdown_div("任务", task_summary),
+                _codex_markdown_div("结果摘要", result_summary),
+                _codex_plain_div("工作目录", cwd),
+                {
+                    "tag": "note",
+                    "elements": [
+                        {
+                            "tag": "plain_text",
+                            "content": (
+                                f"WatchMend · Codex任务 · thread {thread_short} · "
+                                f"turn {turn_short} · {now_str}"
+                            ),
+                        }
+                    ],
+                },
+            ],
+        },
+    }
+
+
 # ---- 诊断卡 / 日报 AI 总结卡(Phase 3) ----
 
 _DIAG_FIELD_MAX = 500  # 诊断字段来自模型输出,直接进卡片:钳制长度防超限报错/刷屏

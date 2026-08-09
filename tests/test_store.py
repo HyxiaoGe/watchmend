@@ -59,6 +59,17 @@ def test_meta_survives_reopen(tmp_path):
     assert Store(path).get_meta("k") == "v"
 
 
+def test_notification_receipt_roundtrip_and_prune(tmp_path):
+    store = Store(str(tmp_path / "s.db"))
+    assert store.get_notification_receipt("codex", "hash-1") is None
+    store.record_notification_receipt("codex", "hash-1", delivered_ts=1000, delivered_count=2)
+    assert store.get_notification_receipt("codex", "hash-1") == (1000, 2)
+    store.record_notification_receipt("codex", "hash-2", delivered_ts=5000, delivered_count=1)
+    assert store.prune_notification_receipts(before_ts=3000) == 1
+    assert store.get_notification_receipt("codex", "hash-1") is None
+    assert store.get_notification_receipt("codex", "hash-2") == (5000, 1)
+
+
 # ---- 内部探针表 ----
 
 

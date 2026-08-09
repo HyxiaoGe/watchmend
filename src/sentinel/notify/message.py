@@ -18,6 +18,7 @@ class Kind(StrEnum):
     HEARTBEAT = "heartbeat"  # 每日心跳
     REPORT = "report"  # 每日体检日报
     DIGEST = "digest"  # 非紧急事件分时摘要
+    CODEX_TURN = "codex_turn"  # Codex 主回合完成（不等同于任务成功）
     DIAGNOSIS = "diagnosis"  # LLM 诊断结果
     SUMMARY = "summary"  # 日报 AI 总结
 

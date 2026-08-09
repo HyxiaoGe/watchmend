@@ -23,7 +23,7 @@ services:
   sentinel:
     # 固定补丁版本(仓库策略:绝不用 :latest/:main,只用显式版本号)。
     # 发新版后记得同步 bump 这里(见 RELEASING.md);想换更新版先去 releases 页看最新 tag。
-    image: ghcr.io/hyxiaoge/watchmend:0.16.0
+    image: ghcr.io/hyxiaoge/watchmend:0.17.0
     container_name: watchmend
     restart: unless-stopped
     mem_limit: 256m
@@ -38,9 +38,9 @@ services:
       # 刻意不挂 ./llm.yaml:无 make 预置占位时直接挂会被 docker 创成同名空目录。
       # 镜像版的 LLM 诊断走 .env 的 LLM_BASE_URL/LLM_API_KEY/LLM_MODEL(详见上方注释)。
     ports:
-      # 仅绑宿主机 127.0.0.1:面板与编排写 API 共用此端口,默认零公网暴露。
+      # 仅绑宿主机 127.0.0.1:面板与写 API 共用此端口,默认零公网暴露。
       # 本机直接开 http://127.0.0.1:8765;远程走 SSH 隧道:ssh -L 8765:127.0.0.1:8765 you@your-server
-      # 要对外暴露:务必先在 .env 设 SENTINEL_DIAG_TOKEN(否则写 API 无鉴权)。
+      # 要对外暴露:务必为所有启用的写 API 配好各自 token；Codex 入口 token 为空即关闭。
       - "127.0.0.1:8765:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]

@@ -1,0 +1,62 @@
+{
+  "description": "WatchMend Codex 生命周期通知；15 分钟内用户有操作则取消候选。",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/watchmend/.venv/bin/watchmend-codex-hook --config /absolute/path/.config/watchmend/codex-notify.json",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/watchmend/.venv/bin/watchmend-codex-hook --config /absolute/path/.config/watchmend/codex-notify.json",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/watchmend/.venv/bin/watchmend-codex-hook --config /absolute/path/.config/watchmend/codex-notify.json",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/watchmend/.venv/bin/watchmend-codex-hook --config /absolute/path/.config/watchmend/codex-notify.json",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/watchmend/.venv/bin/watchmend-codex-hook --config /absolute/path/.config/watchmend/codex-notify.json",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

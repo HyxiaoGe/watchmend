@@ -235,6 +235,53 @@ def digest_notification(
     )
 
 
+def codex_turn_notification(
+    *,
+    project: str,
+    cwd: str,
+    task_summary: str,
+    result_summary: str,
+    thread_id: str,
+    turn_id: str,
+    now_ts: int,
+    now_str: str,
+    category: str = "turn_complete",
+) -> Notification:
+    """Codex 主回合状态通知；category 决定关注原因、标题和展示严重度。"""
+    titles = {
+        "turn_complete": "Codex 回合完成",
+        "approval_required": "Codex 等待审批",
+        "input_required": "Codex 等待输入",
+        "execution_failed": "Codex 执行受阻",
+        "long_turn_complete": "Codex 长任务完成",
+    }
+    title = titles.get(category, titles["turn_complete"])
+    severity = (
+        Severity.WARNING
+        if category in {"approval_required", "input_required", "execution_failed"}
+        else Severity.INFO
+    )
+    return Notification(
+        kind=Kind.CODEX_TURN,
+        severity=severity,
+        title=f"{title} · {project}",
+        detail=result_summary,
+        fields=[("目录", cwd), ("任务", task_summary)],
+        subject=project,
+        ts=now_ts,
+        data={
+            "project": project,
+            "cwd": cwd,
+            "task_summary": task_summary,
+            "result_summary": result_summary,
+            "thread_id": thread_id,
+            "turn_id": turn_id,
+            "now_str": now_str,
+            "category": category,
+        },
+    )
+
+
 def diagnosis_notification(
     event: EventRecord, diagnosis: dict, *, now_ts: int, now_str: str
 ) -> Notification:

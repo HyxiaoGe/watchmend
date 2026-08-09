@@ -1,6 +1,6 @@
 """设置页 view-model（纯函数，无 Request 依赖，便于单测）。
 build_config_inventory：按组列出 Settings 全字段（env 变量名为项标识），
-9 个密钥字段只产出"已配置/未配置"状态、绝不出值；非密钥值过 redact_text 兜底。"""
+所有密钥字段只产出"已配置/未配置"状态、绝不出值；非密钥值过 redact_text 兜底。"""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ _SECRETS: frozenset[str] = frozenset(
         "sentinel_ntfy_token",
         "sentinel_webhook_token",
         "sentinel_diag_token",
+        "sentinel_codex_ingest_token",
         "sentinel_editor_api_key",
     }
 )
@@ -156,7 +157,18 @@ _GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "sentinel_cert_min_days",
         ),
     ),
-    ("security", ("sentinel_db_path", "sentinel_diag_token")),
+    (
+        "security",
+        (
+            "sentinel_db_path",
+            "sentinel_diag_token",
+            "sentinel_codex_ingest_token",
+            "sentinel_codex_receipt_retention_days",
+            "sentinel_codex_hook_grace_seconds",
+            "sentinel_codex_long_turn_seconds",
+            "sentinel_codex_hook_poll_seconds",
+        ),
+    ),
 )
 
 # 字段友好名 + 一句话说明（中/英）。键=字段名（与 _GROUPS 对齐；test 守护全覆盖）。
@@ -530,6 +542,26 @@ _FIELD_META: dict[str, dict[str, tuple[str, str]]] = {
     "sentinel_diag_token": {
         "zh": ("写 API 鉴权 Token", "编排/诊断写端点的鉴权令牌；空=不鉴权"),
         "en": ("Write-API token", "Auth token for diag/orchestration write endpoints; empty=none"),
+    },
+    "sentinel_codex_ingest_token": {
+        "zh": ("Codex 通知 Token", "Codex 通知入口的独立鉴权令牌；空=入口关闭"),
+        "en": ("Codex ingest token", "Dedicated token for Codex notifications; empty=disabled"),
+    },
+    "sentinel_codex_receipt_retention_days": {
+        "zh": ("Codex 回执保留天数", "仅保留事件键哈希，用于重试幂等去重"),
+        "en": ("Codex receipt retention", "Days to retain hashed idempotency receipts"),
+    },
+    "sentinel_codex_hook_grace_seconds": {
+        "zh": ("Codex 通知宽限期", "候选通知等待用户操作后再发送的秒数"),
+        "en": ("Codex notification grace", "Seconds to wait for user activity before sending"),
+    },
+    "sentinel_codex_long_turn_seconds": {
+        "zh": ("Codex 长任务阈值", "达到此耗时的正常完成回合才进入候选通知"),
+        "en": ("Codex long-turn threshold", "Minimum runtime for normal completion candidates"),
+    },
+    "sentinel_codex_hook_poll_seconds": {
+        "zh": ("Codex 候选扫描周期", "检查到期候选通知的后台轮询秒数"),
+        "en": ("Codex pending poll interval", "Seconds between due-notification scans"),
     },
 }
 

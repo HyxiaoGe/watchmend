@@ -6,6 +6,7 @@ import respx
 from sentinel.events import EventType, TransitionEvent
 from sentinel.feishu.cards import (
     build_card,
+    build_codex_turn_card,
     build_daily_report_card,
     build_diagnosis_card,
     build_event_card,
@@ -18,6 +19,7 @@ from sentinel.findings import EventRecord, Finding
 from sentinel.models import Indicator, ServiceDayStats, Snapshot
 from sentinel.notify.build import (
     alert_notification,
+    codex_turn_notification,
     diagnosis_notification,
     heartbeat_notification,
     recovery_notification,
@@ -124,6 +126,20 @@ def test_diagnosis_renders_byte_identical_and_is_blue():
 def test_summary_renders_byte_identical():
     n = summary_notification("一切平稳", date_str="2026-06-13", now_ts=10, now_str="now")
     assert render_card(n) == build_summary_card("一切平稳", date_str="2026-06-13", now_str="now")
+
+
+def test_codex_turn_renders_byte_identical():
+    kwargs = {
+        "project": "watchmend",
+        "cwd": "/workspace/watchmend",
+        "task_summary": "接入通知",
+        "result_summary": "回合完成",
+        "thread_id": "thr_123",
+        "turn_id": "turn_456",
+        "now_str": "now",
+    }
+    n = codex_turn_notification(**kwargs, now_ts=10)
+    assert render_card(n) == build_codex_turn_card(**kwargs)
 
 
 @pytest.mark.asyncio

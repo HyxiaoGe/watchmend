@@ -10,12 +10,26 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-08-09
+
 ### Added
 - Reusable SVG and PNG WatchMend logo assets for notification-channel branding.
+- A dedicated-token-protected Codex turn-complete ingest endpoint, native Feishu
+  information card, and multi-channel broadcast path. Hashed event receipts provide
+  bounded idempotency without putting Codex messages into the monitoring alert state machine.
+- A local `watchmend-codex-notify` dispatcher that preserves the existing Codex
+  `notify` callback while allowlisting, redacting, clipping, and retrying summaries.
+- A `watchmend-codex-hook` client and in-memory candidate queue. Approval/input waits,
+  blocked failures, and long-turn completion are delayed for 15 minutes and cancelled
+  when observable user activity resumes the task.
 
 ### Changed
 - All Feishu cards now identify WatchMend consistently, including deterministic
   upstream status cards, AI-assisted status cards, and diagnosis-session footers.
+- The recommended Codex integration now uses lifecycle Hooks instead of per-turn
+  `notify`; the original dispatcher and endpoint remain for compatibility.
+- Codex Feishu cards now render task and result bodies as safe Markdown, preserving
+  lists, emphasis, inline code, and links while escaping Feishu-specific tags.
 
 ## [0.16.0] - 2026-07-30
 
@@ -383,7 +397,8 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 ### Security
 - Secret-leak redaction across docker metadata and environment values.
 
-[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/HyxiaoGe/watchmend/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/HyxiaoGe/watchmend/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/HyxiaoGe/watchmend/compare/v0.14.0...v0.15.0

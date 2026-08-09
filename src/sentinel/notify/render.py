@@ -15,6 +15,7 @@ _NTFY_SEVERITY_TAG = {
     Severity.INFO: "information_source",
 }
 _NTFY_KIND_TAG = {
+    Kind.CODEX_TURN: "computer",
     Kind.RECOVERY: "white_check_mark",
     Kind.REPORT: "clipboard",
     Kind.DIGEST: "memo",

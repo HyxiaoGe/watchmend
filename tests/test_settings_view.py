@@ -35,6 +35,7 @@ def test_inventory_secret_fields_show_status_not_value(monkeypatch):
     s = _settings(
         monkeypatch,
         SENTINEL_DIAG_TOKEN="supersecrettoken-abc123def456",
+        SENTINEL_CODEX_INGEST_TOKEN="codexsecret-abc123def456",
         SENTINEL_TELEGRAM_BOT_TOKEN="123456:AAbbCcDd-telegram-secret-xyz",
     )
     inv = settings_view.build_config_inventory(s, llm_config=None)
@@ -46,6 +47,9 @@ def test_inventory_secret_fields_show_status_not_value(monkeypatch):
     tg = rows["SENTINEL_TELEGRAM_BOT_TOKEN"]
     assert tg["configured"] is True
     assert "telegram-secret" not in (tg["value"] or "")
+    codex = rows["SENTINEL_CODEX_INGEST_TOKEN"]
+    assert codex["secret"] is True and codex["configured"] is True
+    assert "codexsecret" not in (codex["value"] or "")
 
 
 def test_inventory_unset_secret_shows_not_configured(monkeypatch):

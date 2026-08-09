@@ -2,6 +2,7 @@
 from sentinel.events import EventType, TransitionEvent
 from sentinel.feishu.cards import (
     build_card,
+    build_codex_turn_card,
     build_daily_report_card,
     build_event_card,
     build_heartbeat_card,
@@ -44,6 +45,49 @@ def test_card_is_v1_interactive_with_header_and_action():
     assert action["tag"] == "action"
     assert action["actions"][0]["url"] == "https://status.openai.com"
     assert "WatchMend" in str(body["elements"])
+
+
+def test_codex_turn_card_is_blue_and_renders_safe_markdown_content():
+    card = build_codex_turn_card(
+        project="watchmend",
+        cwd="/workspace/watchmend",
+        task_summary="修复 **通知格式**",
+        result_summary=(
+            "- `848` 项测试通过\n"
+            "- 查看 [Codex Hooks](https://learn.chatgpt.com/docs/hooks)\n"
+            "<at id=all></at>"
+        ),
+        thread_id="thr_1234567890",
+        turn_id="turn_9876543210",
+        now_str="2026-08-09 12:00:00",
+    )
+    assert card["card"]["header"]["template"] == "blue"
+    assert "Codex 回合完成" in card["card"]["header"]["title"]["content"]
+    divs = [e for e in card["card"]["elements"] if e.get("tag") == "div"]
+    assert [div["text"]["tag"] for div in divs] == ["lark_md", "lark_md", "plain_text"]
+    assert divs[0]["text"]["content"] == "**任务**\n修复 **通知格式**"
+    result = divs[1]["text"]["content"]
+    assert result.startswith("**结果摘要**\n- `848` 项测试通过")
+    assert "[Codex Hooks](https://learn.chatgpt.com/docs/hooks)" in result
+    assert "<at id=all>" not in result
+    assert "&lt;at id=all&gt;&lt;/at&gt;" in result
+    assert divs[2]["text"]["content"] == "工作目录\n/workspace/watchmend"
+    assert "thr_123456" in str(card)
+
+
+def test_codex_attention_card_uses_category_title_and_color():
+    card = build_codex_turn_card(
+        project="watchmend",
+        cwd="/workspace/watchmend",
+        task_summary="部署到 dev",
+        result_summary="等待审批：执行部署命令",
+        thread_id="session_123",
+        turn_id="turn_456",
+        now_str="2026-08-09 12:00:00",
+        category="approval_required",
+    )
+    assert card["card"]["header"]["template"] == "orange"
+    assert "Codex 等待审批" in card["card"]["header"]["title"]["content"]
 
 
 def test_status_editor_card_has_watchmend_brand():

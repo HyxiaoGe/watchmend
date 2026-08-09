@@ -94,6 +94,16 @@ class Store:
             "restart_count INTEGER NOT NULL, "
             "window_start_ts INTEGER NOT NULL)"
         )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS notification_receipts ("
+            "source TEXT NOT NULL, key_hash TEXT NOT NULL, "
+            "delivered_ts INTEGER NOT NULL, delivered_count INTEGER NOT NULL, "
+            "PRIMARY KEY (source, key_hash))"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notification_receipts_ts "
+            "ON notification_receipts (delivered_ts)"
+        )
         self._conn.commit()
 
     def get(self, provider: str) -> Snapshot | None:
@@ -124,6 +134,33 @@ class Store:
             (key, value),
         )
         self._conn.commit()
+
+    # ---- 外部通知幂等回执（只存事件键哈希，不存通知正文）----
+
+    def get_notification_receipt(self, source: str, key_hash: str) -> tuple[int, int] | None:
+        row = self._conn.execute(
+            "SELECT delivered_ts, delivered_count FROM notification_receipts "
+            "WHERE source = ? AND key_hash = ?",
+            (source, key_hash),
+        ).fetchone()
+        return (row[0], row[1]) if row else None
+
+    def record_notification_receipt(
+        self, source: str, key_hash: str, *, delivered_ts: int, delivered_count: int
+    ) -> None:
+        self._conn.execute(
+            "INSERT OR IGNORE INTO notification_receipts "
+            "(source, key_hash, delivered_ts, delivered_count) VALUES (?, ?, ?, ?)",
+            (source, key_hash, delivered_ts, delivered_count),
+        )
+        self._conn.commit()
+
+    def prune_notification_receipts(self, *, before_ts: int) -> int:
+        cur = self._conn.execute(
+            "DELETE FROM notification_receipts WHERE delivered_ts < ?", (before_ts,)
+        )
+        self._conn.commit()
+        return cur.rowcount
 
     # ---- LLM 告警编辑审计 ----
 
