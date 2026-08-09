@@ -1,5 +1,5 @@
 {
-  "description": "WatchMend Codex 生命周期通知；5 分钟内用户有操作则取消候选。",
+  "description": "WatchMend Codex 生命周期通知；15 分钟内用户有操作则取消候选。",
   "hooks": {
     "UserPromptSubmit": [
       {

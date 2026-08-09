@@ -489,8 +489,22 @@ def build_digest_card(
 # ---- Codex 回合通知 ----
 
 
+def _codex_safe_markdown(value: str) -> str:
+    """保留标准 Markdown，同时阻止飞书 ``<at>`` 等标签注入。"""
+    return value.replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _codex_markdown_div(label: str, value: str) -> dict:
+    return {
+        "tag": "div",
+        "text": {
+            "tag": "lark_md",
+            "content": f"**{label}**\n{_codex_safe_markdown(value)}",
+        },
+    }
+
+
 def _codex_plain_div(label: str, value: str) -> dict:
-    """Codex 文本来自用户提示和模型回复，使用 plain_text 防止卡片 Markdown 注入。"""
     return {
         "tag": "div",
         "text": {"tag": "plain_text", "content": f"{label}\n{value}"},
@@ -508,7 +522,7 @@ def build_codex_turn_card(
     now_str: str,
     category: str = "turn_complete",
 ) -> dict:
-    """Codex 主回合状态卡；外部内容一律按 plain_text 渲染。"""
+    """Codex 主回合状态卡；正文支持安全 Markdown，元数据保持纯文本。"""
     thread_short = thread_id[:12]
     turn_short = turn_id[:12]
     titles = {
@@ -539,8 +553,8 @@ def build_codex_turn_card(
                 "template": template,
             },
             "elements": [
-                _codex_plain_div("任务", task_summary),
-                _codex_plain_div("结果摘要", result_summary),
+                _codex_markdown_div("任务", task_summary),
+                _codex_markdown_div("结果摘要", result_summary),
                 _codex_plain_div("工作目录", cwd),
                 {
                     "tag": "note",

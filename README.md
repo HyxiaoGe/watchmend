@@ -252,7 +252,7 @@ Codex 入口使用独立的 `SENTINEL_CODEX_INGEST_TOKEN`，留空时直接返�
 ## 进阶
 
 - **Codex 生命周期通知**：见 [`docs/codex-notifications.md`](docs/codex-notifications.md)，
-  仅在等待审批/输入、失败受阻或长任务完成时进入 5 分钟候选；期间用户有操作即取消，
+  仅在等待审批/输入、失败受阻或长任务完成时进入 15 分钟候选；期间用户有操作即取消，
   并可复用现有飞书/ntfy/通用 webhook 广播。
 - **宿主机 agent 编排**(`host/`):不用容器内直连,改由你自己的 agent runner
   (任何 CLI)经 HTTP 编排 API 拉取 pending 事件做诊断,还可扩展白名单恢复脚本

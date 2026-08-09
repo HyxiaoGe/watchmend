@@ -47,12 +47,16 @@ def test_card_is_v1_interactive_with_header_and_action():
     assert "WatchMend" in str(body["elements"])
 
 
-def test_codex_turn_card_is_blue_and_uses_plain_text_for_external_content():
+def test_codex_turn_card_is_blue_and_renders_safe_markdown_content():
     card = build_codex_turn_card(
         project="watchmend",
         cwd="/workspace/watchmend",
-        task_summary="修复 **伪造标题**",
-        result_summary="回合结束，不代表测试一定成功",
+        task_summary="修复 **通知格式**",
+        result_summary=(
+            "- `848` 项测试通过\n"
+            "- 查看 [Codex Hooks](https://learn.chatgpt.com/docs/hooks)\n"
+            "<at id=all></at>"
+        ),
         thread_id="thr_1234567890",
         turn_id="turn_9876543210",
         now_str="2026-08-09 12:00:00",
@@ -60,9 +64,14 @@ def test_codex_turn_card_is_blue_and_uses_plain_text_for_external_content():
     assert card["card"]["header"]["template"] == "blue"
     assert "Codex 回合完成" in card["card"]["header"]["title"]["content"]
     divs = [e for e in card["card"]["elements"] if e.get("tag") == "div"]
-    assert divs
-    assert all(e["text"]["tag"] == "plain_text" for e in divs)
-    assert "修复 **伪造标题**" in str(divs)
+    assert [div["text"]["tag"] for div in divs] == ["lark_md", "lark_md", "plain_text"]
+    assert divs[0]["text"]["content"] == "**任务**\n修复 **通知格式**"
+    result = divs[1]["text"]["content"]
+    assert result.startswith("**结果摘要**\n- `848` 项测试通过")
+    assert "[Codex Hooks](https://learn.chatgpt.com/docs/hooks)" in result
+    assert "<at id=all>" not in result
+    assert "&lt;at id=all&gt;&lt;/at&gt;" in result
+    assert divs[2]["text"]["content"] == "工作目录\n/workspace/watchmend"
     assert "thr_123456" in str(card)
 
 

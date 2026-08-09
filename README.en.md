@@ -260,7 +260,7 @@ configure their respective tokens. Alternatively, set `SENTINEL_PANEL_ENABLED=fa
 
 ## Advanced
 
-- **Codex turn-completion notifications**: see [`docs/codex-notifications.md`](docs/codex-notifications.md) to reuse the existing Feishu/ntfy/generic-webhook broadcaster while preserving an existing Codex `notify` callback.
+- **Codex lifecycle notifications**: see [`docs/codex-notifications.md`](docs/codex-notifications.md). Approval/input waits, blocked failures, and long-turn completions enter a 15-minute candidate window that is cancelled when observable user activity resumes, while reusing the existing Feishu/ntfy/generic-webhook broadcaster.
 - **Host-side agent orchestration** (`host/`): instead of the in-container
   driver, let your own agent runner (any CLI) pull pending events via the HTTP
   orchestration API, optionally extending into allowlisted recovery scripts
