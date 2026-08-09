@@ -2,6 +2,7 @@
 from sentinel.events import EventType, TransitionEvent
 from sentinel.feishu.cards import (
     build_card,
+    build_codex_turn_card,
     build_daily_report_card,
     build_event_card,
     build_heartbeat_card,
@@ -44,6 +45,25 @@ def test_card_is_v1_interactive_with_header_and_action():
     assert action["tag"] == "action"
     assert action["actions"][0]["url"] == "https://status.openai.com"
     assert "WatchMend" in str(body["elements"])
+
+
+def test_codex_turn_card_is_blue_and_uses_plain_text_for_external_content():
+    card = build_codex_turn_card(
+        project="watchmend",
+        cwd="/workspace/watchmend",
+        task_summary="修复 **伪造标题**",
+        result_summary="回合结束，不代表测试一定成功",
+        thread_id="thr_1234567890",
+        turn_id="turn_9876543210",
+        now_str="2026-08-09 12:00:00",
+    )
+    assert card["card"]["header"]["template"] == "blue"
+    assert "Codex 回合完成" in card["card"]["header"]["title"]["content"]
+    divs = [e for e in card["card"]["elements"] if e.get("tag") == "div"]
+    assert divs
+    assert all(e["text"]["tag"] == "plain_text" for e in divs)
+    assert "修复 **伪造标题**" in str(divs)
+    assert "thr_123456" in str(card)
 
 
 def test_status_editor_card_has_watchmend_brand():

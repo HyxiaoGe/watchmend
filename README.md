@@ -77,6 +77,7 @@ make up                                   # 或 docker compose up -d --build
 | `SENTINEL_TELEGRAM_BOT_TOKEN` + `SENTINEL_TELEGRAM_CHAT_ID` | Telegram 推送(两者都填才启用) | 该渠道关闭 |
 | `SENTINEL_NTFY_URL`(可选 `SENTINEL_NTFY_TOKEN`) | ntfy 推送,完整 topic URL | 该渠道关闭 |
 | `SENTINEL_WEBHOOK_URL`(可选 `SENTINEL_WEBHOOK_TOKEN`) | 通用 webhook,结构化 JSON | 该渠道关闭 |
+| `SENTINEL_CODEX_INGEST_TOKEN` | Codex 回合完成通知入口 | 入口返回 404、保持关闭 |
 | `services.yaml` | 内部服务 HTTP 探针 + 延迟基线(每项可选 `label` 设面板显示名) | 只监控外部状态页 |
 | `SENTINEL_PROMETHEUS_URL` | 磁盘/内存/容器重启等指标规则 | 指标层关闭 |
 | `SENTINEL_LOKI_URL` | 错误日志激增检测 | 日志层关闭 |
@@ -145,7 +146,7 @@ curl http://127.0.0.1:8765/health
 ssh -L 8765:127.0.0.1:8765 you@your-server   # 然后本地浏览器开 http://127.0.0.1:8765
 ```
 
-> 面板与编排写 API 共用 `8765` 端口。**要对外暴露**(LAN 绑定 / 反向代理)**之前**,务必先设 `SENTINEL_DIAG_TOKEN`(`openssl rand -hex 16`),否则写 API 无鉴权——详见 [`## 证据台面板（只读）`](#证据台面板只读) 的安全说明。
+> 面板与写 API 共用 `8765` 端口。**要对外暴露**(LAN 绑定 / 反向代理)**之前**,务必为所有启用的写 API 配好对应 Token(`openssl rand -hex 16`)；Codex 通知入口使用独立的 `SENTINEL_CODEX_INGEST_TOKEN`，留空时保持关闭——详见 [`## 证据台面板（只读）`](#证据台面板只读) 的安全说明。
 
 > **注意一条**:渠道只校验非空、不校验可达,所以一个**语法合法但 token 写错**的 webhook 能通过启动门禁、容器照常运行,但日报/告警**投递会失败并每分钟重试刷日志**(如飞书 `code=19001 token invalid`)。起来后顺手核对一下渠道凭据。
 
@@ -226,12 +227,14 @@ send-then-commit / 只读不执行”四项纪律变成一眼可见的运行证�
 访问：容器默认把面板绑在宿主机 `127.0.0.1:8765`（与编排 API 同端口），浏览器开 `http://127.0.0.1:8765/` 即可。
 
 **安全说明**：面板全部 GET 路由（总览、服务、事件、体检、设置和更新日志）本身是
-**只读**的；但**同一个 `127.0.0.1:8765` 端口还挂着编排写 API**
-（`POST /events/{id}/diagnosis`、`POST /report/summary`），它们仅在
-`SENTINEL_DIAG_TOKEN` 非空时才鉴权——默认留空 = **无鉴权**。整体假设只在本机/内网可达。
+**只读**的；但**同一个 `127.0.0.1:8765` 端口还挂着写 API**，包括
+`POST /events/{id}/diagnosis`、`POST /report/summary` 和
+`POST /notifications/codex`。前两者在 `SENTINEL_DIAG_TOKEN` 非空时鉴权；
+Codex 入口使用独立的 `SENTINEL_CODEX_INGEST_TOKEN`，留空时直接返回 404、保持关闭。
+整体假设只在本机/内网可达。
 原始日志片段会落到 localhost-only 的 SQLite（与现有 LLM 调用同源数据，每段截断
 4096 字符）。**要对外暴露**：要么在前面加反向代理 + 鉴权保护整个 8765 上游，
-要么只放行面板 GET 路由并挡掉写 API，**同时设好 `SENTINEL_DIAG_TOKEN`**；
+要么只放行面板 GET 路由并挡掉写 API；若确需开放写 API，必须设好各自的 Token；
 或设 `SENTINEL_PANEL_ENABLED=false` 整体关闭面板。
 
 ## 设计哲学
@@ -247,6 +250,7 @@ send-then-commit / 只读不执行”四项纪律变成一眼可见的运行证�
 
 ## 进阶
 
+- **Codex 回合完成通知**：见 [`docs/codex-notifications.md`](docs/codex-notifications.md)，可复用现有飞书/ntfy/通用 webhook 广播，并保留已有 Codex `notify` 回调。
 - **宿主机 agent 编排**(`host/`):不用容器内直连,改由你自己的 agent runner
   (任何 CLI)经 HTTP 编排 API 拉取 pending 事件做诊断,还可扩展白名单恢复脚本
   (denylist + 人工审批)。与容器内直连**二选一**。

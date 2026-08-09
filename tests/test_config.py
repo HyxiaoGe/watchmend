@@ -16,6 +16,8 @@ def test_defaults(monkeypatch):
     assert s.sentinel_error_alert_enabled is False
     assert s.sentinel_restic_backup_max_age_hours == 0
     assert s.sentinel_notification_mode == "live"
+    assert s.sentinel_codex_ingest_token == ""
+    assert s.sentinel_codex_receipt_retention_days == 30
 
 
 def test_status_editor_enabled_when_mode_and_endpoint_are_complete(monkeypatch):

@@ -12,6 +12,10 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ### 新增
 - 新增可复用的 SVG 与 PNG WatchMend Logo 资源，用于通知渠道品牌统一。
+- 新增受独立 Token 保护的 Codex 回合完成通知入口、原生飞书信息卡和多渠道广播；
+  通过事件键哈希回执实现有限期幂等，不把 Codex 通知写入监控告警状态机。
+- 新增本机 `watchmend-codex-notify` 分发器，在保留既有 Codex `notify` 回调的同时，
+  对任务与结果摘要进行字段白名单、脱敏、截断和有限重试。
 
 ### 变更
 - 所有飞书卡片统一展示 WatchMend 身份，覆盖确定性上游状态卡、AI 辅助状态卡与诊断

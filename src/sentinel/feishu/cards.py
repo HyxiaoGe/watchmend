@@ -486,6 +486,62 @@ def build_digest_card(
     }
 
 
+# ---- Codex 回合通知 ----
+
+
+def _codex_plain_div(label: str, value: str) -> dict:
+    """Codex 文本来自用户提示和模型回复，使用 plain_text 防止卡片 Markdown 注入。"""
+    return {
+        "tag": "div",
+        "text": {"tag": "plain_text", "content": f"{label}\n{value}"},
+    }
+
+
+def build_codex_turn_card(
+    *,
+    project: str,
+    cwd: str,
+    task_summary: str,
+    result_summary: str,
+    thread_id: str,
+    turn_id: str,
+    now_str: str,
+) -> dict:
+    """Codex 主回合完成卡；蓝色仅表示信息，不暗示任务或测试成功。"""
+    thread_short = thread_id[:12]
+    turn_short = turn_id[:12]
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {
+                    "tag": "plain_text",
+                    "content": f"🤖 Codex 回合完成 · {project}",
+                },
+                "template": _BLUE,
+            },
+            "elements": [
+                _codex_plain_div("任务", task_summary),
+                _codex_plain_div("结果摘要", result_summary),
+                _codex_plain_div("工作目录", cwd),
+                {
+                    "tag": "note",
+                    "elements": [
+                        {
+                            "tag": "plain_text",
+                            "content": (
+                                f"WatchMend · Codex任务 · thread {thread_short} · "
+                                f"turn {turn_short} · {now_str}"
+                            ),
+                        }
+                    ],
+                },
+            ],
+        },
+    }
+
+
 # ---- 诊断卡 / 日报 AI 总结卡(Phase 3) ----
 
 _DIAG_FIELD_MAX = 500  # 诊断字段来自模型输出,直接进卡片:钳制长度防超限报错/刷屏

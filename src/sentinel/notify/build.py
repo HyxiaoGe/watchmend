@@ -235,6 +235,42 @@ def digest_notification(
     )
 
 
+def codex_turn_notification(
+    *,
+    project: str,
+    cwd: str,
+    task_summary: str,
+    result_summary: str,
+    thread_id: str,
+    turn_id: str,
+    now_ts: int,
+    now_str: str,
+) -> Notification:
+    """Codex 主回合结束通知。
+
+    agent-turn-complete 只证明回合已经结束，不能证明代码、测试或部署成功；因此固定使用
+    INFO 语义和“回合完成”标题，具体结果只展示 Codex 最终摘要。
+    """
+    return Notification(
+        kind=Kind.CODEX_TURN,
+        severity=Severity.INFO,
+        title=f"Codex 回合完成 · {project}",
+        detail=result_summary,
+        fields=[("目录", cwd), ("任务", task_summary)],
+        subject=project,
+        ts=now_ts,
+        data={
+            "project": project,
+            "cwd": cwd,
+            "task_summary": task_summary,
+            "result_summary": result_summary,
+            "thread_id": thread_id,
+            "turn_id": turn_id,
+            "now_str": now_str,
+        },
+    )
+
+
 def diagnosis_notification(
     event: EventRecord, diagnosis: dict, *, now_ts: int, now_str: str
 ) -> Notification:

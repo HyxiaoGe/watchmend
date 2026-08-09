@@ -1,0 +1,6 @@
+{
+  "url": "http://127.0.0.1:8765/notifications/codex",
+  "token": "replace-with-SENTINEL_CODEX_INGEST_TOKEN",
+  "timeout_seconds": 4,
+  "retries": 1
+}

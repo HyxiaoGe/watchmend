@@ -12,6 +12,11 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ### Added
 - Reusable SVG and PNG WatchMend logo assets for notification-channel branding.
+- A dedicated-token-protected Codex turn-complete ingest endpoint, native Feishu
+  information card, and multi-channel broadcast path. Hashed event receipts provide
+  bounded idempotency without putting Codex messages into the monitoring alert state machine.
+- A local `watchmend-codex-notify` dispatcher that preserves the existing Codex
+  `notify` callback while allowlisting, redacting, clipping, and retrying summaries.
 
 ### Changed
 - All Feishu cards now identify WatchMend consistently, including deterministic
