@@ -149,3 +149,10 @@ def test_main_always_forwards_existing_callback_when_private_config_is_missing(m
     code = main(["--config", str(missing), "--upstream", "/bin/upstream", "turn-ended", raw])
     assert code == 0
     assert forwarded == [(["/bin/upstream", "turn-ended"], raw)]
+
+
+def test_main_logs_upstream_nonzero_but_still_returns_zero(monkeypatch, caplog):
+    monkeypatch.setattr("sentinel.codex_notify.run_upstream", lambda *_a, **_kw: False)
+    raw = json.dumps(_event(type="approval-requested"), ensure_ascii=False)
+    assert main(["--upstream", "/bin/upstream", raw]) == 0
+    assert "既有 notify 回调返回失败" in caplog.text

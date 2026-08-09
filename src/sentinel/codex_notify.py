@@ -221,7 +221,8 @@ def main(argv: list[str] | None = None) -> int:
             logger.warning("WatchMend Codex 通知已跳过：事件或私有配置无效")
         finally:
             try:
-                upstream_future.result()
+                if not upstream_future.result():
+                    logger.warning("Codex 既有 notify 回调返回失败")
             except Exception:  # 防御第三方 runner/测试替身异常，主进程仍 fail-open
                 logger.warning("Codex 既有 notify 回调异常")
     return 0
