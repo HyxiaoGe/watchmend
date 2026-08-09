@@ -1,5 +1,4 @@
 import json
-import subprocess
 from pathlib import Path
 from urllib.error import HTTPError
 
@@ -78,11 +77,13 @@ def test_run_upstream_appends_original_event_without_shell():
 
     def runner(command, **kwargs):
         calls.append((command, kwargs))
-        return subprocess.CompletedProcess(command, 0)
+        return object()
 
     assert run_upstream(["/bin/upstream", "turn-ended"], '{"type":"x"}', runner=runner)
     assert calls[0][0] == ["/bin/upstream", "turn-ended", '{"type":"x"}']
     assert calls[0][1]["shell"] is False
+    assert calls[0][1]["start_new_session"] is True
+    assert "timeout" not in calls[0][1]
 
 
 class _Response:
@@ -151,8 +152,8 @@ def test_main_always_forwards_existing_callback_when_private_config_is_missing(m
     assert forwarded == [(["/bin/upstream", "turn-ended"], raw)]
 
 
-def test_main_logs_upstream_nonzero_but_still_returns_zero(monkeypatch, caplog):
+def test_main_logs_upstream_start_failure_but_still_returns_zero(monkeypatch, caplog):
     monkeypatch.setattr("sentinel.codex_notify.run_upstream", lambda *_a, **_kw: False)
     raw = json.dumps(_event(type="approval-requested"), ensure_ascii=False)
     assert main(["--upstream", "/bin/upstream", raw]) == 0
-    assert "既有 notify 回调返回失败" in caplog.text
+    assert "既有 notify 回调启动失败" in caplog.text

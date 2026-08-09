@@ -14,7 +14,6 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -124,26 +123,24 @@ def run_upstream(
     command: list[str],
     raw_event: str,
     *,
-    timeout_seconds: float = 5.0,
-    runner: Callable = subprocess.run,
+    runner: Callable = subprocess.Popen,
 ) -> bool:
-    """原样转发 Codex 事件；不用 shell，避免事件文本被解释为命令。"""
+    """原样异步转发 Codex 事件；不用 shell，也不截断既有回调的执行时间。"""
     if not command:
         return True
     try:
-        result = runner(
+        runner(
             [*command, raw_event],
-            check=False,
-            timeout=timeout_seconds,
             shell=False,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError:
         logger.warning("Codex 既有 notify 回调执行失败")
         return False
-    return result.returncode == 0
+    return True
 
 
 def _is_retryable_http(code: int) -> bool:
@@ -207,24 +204,18 @@ def main(argv: list[str] | None = None) -> int:
     if raw_event is None:
         return 0
 
-    # 既有回调与网络发送并行；任何一支失败都不影响另一支，也不改变 Codex 退出结果。
-    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="codex-notify-upstream") as pool:
-        upstream_future = pool.submit(run_upstream, upstream, raw_event)
-        try:
-            event = json.loads(raw_event)
-            payload = normalize_codex_event(event) if isinstance(event, dict) else None
-            if config_path is not None and payload is not None:
-                config = load_config(config_path)
-                if not send_to_watchmend(payload, config):
-                    logger.warning("WatchMend Codex 通知投递失败")
-        except (ConfigError, ValueError, TypeError):
-            logger.warning("WatchMend Codex 通知已跳过：事件或私有配置无效")
-        finally:
-            try:
-                if not upstream_future.result():
-                    logger.warning("Codex 既有 notify 回调返回失败")
-            except Exception:  # 防御第三方 runner/测试替身异常，主进程仍 fail-open
-                logger.warning("Codex 既有 notify 回调异常")
+    # 既有回调先独立启动，随后发送网络请求；任一支失败都不影响另一支和 Codex 结果。
+    if not run_upstream(upstream, raw_event):
+        logger.warning("Codex 既有 notify 回调启动失败")
+    try:
+        event = json.loads(raw_event)
+        payload = normalize_codex_event(event) if isinstance(event, dict) else None
+        if config_path is not None and payload is not None:
+            config = load_config(config_path)
+            if not send_to_watchmend(payload, config):
+                logger.warning("WatchMend Codex 通知投递失败")
+    except (ConfigError, ValueError, TypeError):
+        logger.warning("WatchMend Codex 通知已跳过：事件或私有配置无效")
     return 0
 
 
