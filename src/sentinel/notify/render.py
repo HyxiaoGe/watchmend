@@ -21,6 +21,7 @@ _NTFY_KIND_TAG = {
     Kind.DIGEST: "memo",
     Kind.HEARTBEAT: "heartbeat",
     Kind.DIAGNOSIS: "brain",
+    Kind.CODEX_RESET: "arrows_counterclockwise",
     Kind.SUMMARY: "memo",
 }
 

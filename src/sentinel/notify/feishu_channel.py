@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from sentinel.codex_reset.notify import build_codex_reset_card
 from sentinel.feishu.cards import (
     build_card,
     build_codex_turn_card,
@@ -65,6 +66,13 @@ def render_card(n: Notification) -> dict:
             turn_id=d["turn_id"],
             now_str=d["now_str"],
             category=d.get("category", "turn_complete"),
+        )
+    if n.kind == Kind.CODEX_RESET:
+        return build_codex_reset_card(
+            d["event"],
+            d["stage"],
+            now_str=d["now_str"],
+            utc_offset=d["utc_offset"],
         )
     if n.kind == Kind.DIAGNOSIS:
         return build_diagnosis_card(d["event"], d["diagnosis"], now_str=d["now_str"])

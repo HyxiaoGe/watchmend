@@ -77,6 +77,26 @@ _GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     (
+        "codex_reset",
+        (
+            "sentinel_codex_reset_enabled",
+            "sentinel_codex_reset_poll_seconds",
+            "sentinel_codex_reset_delay_grace_seconds",
+            "sentinel_codex_reset_notify_max_age_hours",
+            "sentinel_codex_reset_freshness_seconds",
+            "sentinel_codex_reset_lease_seconds",
+            "sentinel_codex_reset_retry_base_seconds",
+            "sentinel_codex_reset_retry_max_seconds",
+            "sentinel_codex_reset_delivery_max_attempts",
+            "sentinel_codex_reset_html_poll_seconds",
+            "sentinel_codex_reset_radar_current_url",
+            "sentinel_codex_reset_rss_url",
+            "sentinel_codex_reset_feed_url",
+            "sentinel_codex_reset_timeline_url",
+            "sentinel_codex_reset_html_url",
+        ),
+    ),
+    (
         "channels",
         (
             "sentinel_notification_mode",
@@ -304,6 +324,67 @@ _FIELD_META: dict[str, dict[str, tuple[str, str]]] = {
     "sentinel_scan_fail_threshold": {
         "zh": ("数据源判障阈值", "数据源连续失败几次才发巡检失败卡"),
         "en": ("Scan fail threshold", "Consecutive data-source failures before a scan-fail card"),
+    },
+    # —— codex_reset：Codex reset 公开信号监控 ——
+    "sentinel_codex_reset_enabled": {
+        "zh": ("Reset 监控开关", "启用公开信号预告与落地确认 Job"),
+        "en": ("Reset monitor", "Enable the public reset forecast/confirmation job"),
+    },
+    "sentinel_codex_reset_poll_seconds": {
+        "zh": ("Reset 轮询周期", "结构化公开来源轮询间隔（秒）"),
+        "en": ("Reset poll interval", "Structured public-source poll interval (seconds)"),
+    },
+    "sentinel_codex_reset_delay_grace_seconds": {
+        "zh": ("Reset 延迟宽限", "预计窗口结束后等待多久标记 delayed（秒）"),
+        "en": ("Reset delay grace", "Grace after the expected window before delayed (sec)"),
+    },
+    "sentinel_codex_reset_notify_max_age_hours": {
+        "zh": ("Reset 补发时限", "首次发现超过此小时数的旧事件不通知"),
+        "en": ("Reset notification max age", "Do not notify older first-seen events (hours)"),
+    },
+    "sentinel_codex_reset_freshness_seconds": {
+        "zh": ("Reset 来源新鲜度", "健康检查允许的来源内容最大年龄（秒）"),
+        "en": ("Reset source freshness", "Maximum source-content age for health (seconds)"),
+    },
+    "sentinel_codex_reset_lease_seconds": {
+        "zh": ("Reset 单实例租约", "SQLite Job 租约有效期（秒）"),
+        "en": ("Reset singleton lease", "SQLite job lease duration (seconds)"),
+    },
+    "sentinel_codex_reset_retry_base_seconds": {
+        "zh": ("Reset 重试基数", "通知指数退避的起始秒数"),
+        "en": ("Reset retry base", "Initial notification backoff (seconds)"),
+    },
+    "sentinel_codex_reset_retry_max_seconds": {
+        "zh": ("Reset 重试上限", "通知重试最大间隔（秒）"),
+        "en": ("Reset retry cap", "Maximum notification retry interval (seconds)"),
+    },
+    "sentinel_codex_reset_delivery_max_attempts": {
+        "zh": ("Reset 投递次数", "单阶段通知最大尝试次数"),
+        "en": ("Reset delivery attempts", "Maximum attempts per stage notification"),
+    },
+    "sentinel_codex_reset_html_poll_seconds": {
+        "zh": ("Reset HTML 降级周期", "HTML 交叉验证最小间隔（秒）"),
+        "en": ("Reset HTML fallback interval", "Minimum HTML cross-check interval (seconds)"),
+    },
+    "sentinel_codex_reset_radar_current_url": {
+        "zh": ("Reset 雷达 JSON", "当前窗口雷达结构化接口"),
+        "en": ("Reset radar JSON", "Structured current-window radar endpoint"),
+    },
+    "sentinel_codex_reset_rss_url": {
+        "zh": ("Reset 雷达 RSS", "Codex reset 雷达 RSS 地址"),
+        "en": ("Reset radar RSS", "Codex reset radar RSS URL"),
+    },
+    "sentinel_codex_reset_feed_url": {
+        "zh": ("Reset 事件 Feed", "Codex reset 结构化事件 feed"),
+        "en": ("Reset event feed", "Structured Codex reset event feed"),
+    },
+    "sentinel_codex_reset_timeline_url": {
+        "zh": ("Reset 时间线", "Codex reset 结构化时间线接口"),
+        "en": ("Reset timeline", "Structured Codex reset timeline endpoint"),
+    },
+    "sentinel_codex_reset_html_url": {
+        "zh": ("Reset HTML 降级源", "仅用于交叉验证或结构化源降级"),
+        "en": ("Reset HTML fallback", "Used only for cross-checking or fallback"),
     },
     # —— channels：通知渠道 ——
     "sentinel_notification_mode": {

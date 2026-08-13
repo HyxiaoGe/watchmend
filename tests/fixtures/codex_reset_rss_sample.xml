@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Codex 雷达</title>
+    <lastBuildDate>Fri, 10 Jul 2026 05:30:53 GMT</lastBuildDate>
+    <item>
+      <title>官方窗口开启：ChatGPT Work / Codex 24小时内两次硬重置</title>
+      <guid isPermaLink="false">codex-speed-window-2026-07-10-codex-open</guid>
+      <pubDate>Fri, 10 Jul 2026 05:30:53 GMT</pubDate>
+      <description><![CDATA[Tibo 明确宣布未来24小时内将进行两次 rate-limit reset。
+机制：直接额度硬重置。
+来源：https://x.com/thsottiaux/status/2075452680760443190]]></description>
+    </item>
+    <item>
+      <title>速蹬窗口关闭：Codex 可靠性事故补偿重置</title>
+      <guid isPermaLink="false">codex-speed-window-2026-06-04-codex-close</guid>
+      <pubDate>Thu, 04 Jun 2026 00:25:58 GMT</pubDate>
+      <description><![CDATA[额度重置已完成。
+来源：https://x.com/thsottiaux/status/2062329981548802523]]></description>
+    </item>
+  </channel>
+</rss>

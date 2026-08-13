@@ -78,6 +78,7 @@ make up                                   # 或 docker compose up -d --build
 | `SENTINEL_NTFY_URL`(可选 `SENTINEL_NTFY_TOKEN`) | ntfy 推送,完整 topic URL | 该渠道关闭 |
 | `SENTINEL_WEBHOOK_URL`(可选 `SENTINEL_WEBHOOK_TOKEN`) | 通用 webhook,结构化 JSON | 该渠道关闭 |
 | `SENTINEL_CODEX_INGEST_TOKEN` | Codex 生命周期通知入口 | 入口返回 404、保持关闭 |
+| `SENTINEL_CODEX_RESET_ENABLED` | Codex reset 疑似预告、明确预告、延迟与落地确认 | 默认关闭 |
 | `services.yaml` | 内部服务 HTTP 探针 + 延迟基线(每项可选 `label` 设面板显示名) | 只监控外部状态页 |
 | `SENTINEL_PROMETHEUS_URL` | 磁盘/内存/容器重启等指标规则 | 指标层关闭 |
 | `SENTINEL_LOKI_URL` | 错误日志激增检测 | 日志层关闭 |
@@ -254,6 +255,9 @@ Codex 入口使用独立的 `SENTINEL_CODEX_INGEST_TOKEN`，留空时直接返�
 - **Codex 生命周期通知**：见 [`docs/codex-notifications.md`](docs/codex-notifications.md)，
   仅在等待审批/输入、失败受阻或长任务完成时进入 15 分钟候选；期间用户有操作即取消，
   并可复用现有飞书/ntfy/通用 webhook 广播。
+- **Codex reset 监控**：见 [`docs/codex-reset-monitor.md`](docs/codex-reset-monitor.md)，
+  独立 Job 轮询公开 JSON/RSS，按 `hint → announced → delayed/confirmed` 单调升级，
+  同一事件逐阶段去重并复用现有广播与飞书签名。
 - **宿主机 agent 编排**(`host/`):不用容器内直连,改由你自己的 agent runner
   (任何 CLI)经 HTTP 编排 API 拉取 pending 事件做诊断,还可扩展白名单恢复脚本
   (denylist + 人工审批)。与容器内直连**二选一**。

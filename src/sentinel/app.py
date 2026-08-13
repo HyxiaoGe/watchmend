@@ -11,11 +11,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from sentinel import __version__, discover
 from sentinel.api import register_routes
 from sentinel.codex_hooks import CodexHookNotificationManager
+from sentinel.codex_reset.engine import ResetMonitor
 from sentinel.config import Settings
 from sentinel.docker_client import DockerClient
 from sentinel.engine import apply_findings
@@ -197,6 +198,7 @@ def build_jobs(
     client: httpx.AsyncClient,
     store: Store,
     docker: DockerClient | None = None,
+    reset_monitor: ResetMonitor | None = None,
 ) -> list[tuple[str, float, Tick]]:
     """组装全部 Job:(名称, 周期秒, tick)。lifespan 据此为每个 Job 起独立任务。"""
     adapters = build_adapters(settings.providers_list)
@@ -585,6 +587,13 @@ def build_jobs(
     # 更新检查默认开;显式关或 URL 置空则不注册(照 diagnosis 条件注册范式)
     if settings.sentinel_update_check_enabled and settings.sentinel_update_check_url:
         jobs.append(("update_check", settings.sentinel_update_check_interval, update_tick))
+    if settings.sentinel_codex_reset_enabled:
+        reset_monitor = reset_monitor or ResetMonitor(
+            settings=settings,
+            client=client,
+            broadcaster=patrol_broadcaster,
+        )
+        jobs.append(("codex_reset", settings.sentinel_codex_reset_poll_seconds, reset_monitor.tick))
     return jobs
 
 
@@ -596,10 +605,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # docker_endpoint 空 → 不启用容器扫描层(挂 socket 等于宿主机级权限,默认关)。
     # lifespan 持有并负责关闭 DockerClient;LLMDriver/docker_tick 只借用不拥有。
     docker = DockerClient(settings.docker_endpoint) if settings.docker_endpoint else None
+    reset_monitor = (
+        ResetMonitor(
+            settings=settings,
+            client=client,
+            broadcaster=_broadcaster_for(
+                settings,
+                client,
+                webhook=settings.patrol_webhook,
+                secret=settings.patrol_sign_secret,
+            ),
+        )
+        if settings.sentinel_codex_reset_enabled
+        else None
+    )
     try:
-        jobs = build_jobs(settings, client, store, docker)
+        jobs = build_jobs(settings, client, store, docker, reset_monitor=reset_monitor)
     except Exception:
         # 启动期组装失败(如 services.yaml 缺失):收尾资源后让进程带着清晰报错退出
+        if reset_monitor is not None:
+            reset_monitor.close()
         await client.aclose()
         store.close()
         if docker is not None:
@@ -613,6 +638,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.patrol_broadcaster = _broadcaster_for(
         settings, client, webhook=settings.patrol_webhook, secret=settings.patrol_sign_secret
     )
+    app.state.reset_monitor = reset_monitor
     app.state.codex_hook_manager = CodexHookNotificationManager(
         store=store,
         broadcaster=app.state.patrol_broadcaster,
@@ -653,6 +679,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         for task in tasks:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        if reset_monitor is not None:
+            reset_monitor.close()
         await client.aclose()
         store.close()
         if docker is not None:
@@ -666,5 +694,9 @@ register_panel_routes(app)
 
 
 @app.get("/health")
-def health() -> dict:
-    return {"status": "ok"}
+def health(request: Request = None) -> dict:
+    payload: dict = {"status": "ok"}
+    monitor = getattr(request.app.state, "reset_monitor", None) if request is not None else None
+    if monitor is not None:
+        payload["codex_reset"] = monitor.health()
+    return payload

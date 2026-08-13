@@ -86,6 +86,23 @@ class Settings(BaseSettings):
     sentinel_codex_long_turn_seconds: int = Field(default=180, ge=1, le=86400)
     sentinel_codex_hook_poll_seconds: int = Field(default=1, ge=1, le=60)
 
+    # Codex 共享额度 reset：独立领域 Job，默认关闭；部署时显式启用。
+    sentinel_codex_reset_enabled: bool = False
+    sentinel_codex_reset_poll_seconds: int = Field(default=60, ge=30, le=3600)
+    sentinel_codex_reset_delay_grace_seconds: int = Field(default=600, ge=0, le=86400)
+    sentinel_codex_reset_notify_max_age_hours: int = Field(default=24, ge=1, le=168)
+    sentinel_codex_reset_freshness_seconds: int = Field(default=7200, ge=60, le=86400)
+    sentinel_codex_reset_lease_seconds: int = Field(default=180, ge=60, le=3600)
+    sentinel_codex_reset_retry_base_seconds: int = Field(default=10, ge=1, le=3600)
+    sentinel_codex_reset_retry_max_seconds: int = Field(default=900, ge=1, le=86400)
+    sentinel_codex_reset_delivery_max_attempts: int = Field(default=8, ge=1, le=100)
+    sentinel_codex_reset_html_poll_seconds: int = Field(default=3600, ge=300, le=86400)
+    sentinel_codex_reset_radar_current_url: str = "https://codex-reset-radar.pages.dev/current.json"
+    sentinel_codex_reset_rss_url: str = "https://codexradar.com/feed.xml"
+    sentinel_codex_reset_feed_url: str = "https://codex-reset.com/api/feed"
+    sentinel_codex_reset_timeline_url: str = "https://codex-reset.com/api/timeline"
+    sentinel_codex_reset_html_url: str = "https://codexreset.org/"
+
     # LLM 直连(OpenAI-compatible):base_url 和 model 同时非空才启用,
     # 留空=LLM 诊断/总结层整体关闭,确定性巡检与告警不受影响。
     # 兼容 openai/deepseek/ollama/vllm 等任何同协议端点。

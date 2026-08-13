@@ -1,0 +1,19 @@
+{
+  "schema_version": "2.0",
+  "service": "codex-reset-radar",
+  "type": "public_summary",
+  "monitored_at": "2026-07-22T06:57:20.626603+08:00",
+  "timezone": "Asia/Shanghai",
+  "window_open": true,
+  "status": "open",
+  "window": {
+    "open": true,
+    "status": "open",
+    "message": "速蹬窗口开启",
+    "title": "1000 万用户里程碑重置",
+    "scope": "Codex 用户",
+    "opened_at": "2026-08-13T09:01:37+08:00",
+    "closed_at": null,
+    "source_url": "https://x.com/thsottiaux/status/2087706104814023111"
+  }
+}
