@@ -35,6 +35,11 @@ def test_four_stage_cards_are_clear_and_use_distinct_colors():
         assert card["msg_type"] == "interactive"
         assert card["card"]["header"]["template"] == color
         assert "Codex 重置" in card["card"]["header"]["title"]["content"]
+        body = card["card"]["elements"][0]["text"]["content"]
+        assert "确认依据" in body
+        assert "2 条 / 2 个来源族" in body
+        assert "usedPercent" not in body
+        assert "额度百分比" not in body
 
 
 def test_reset_notification_reuses_feishu_channel_renderer():

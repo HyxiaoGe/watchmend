@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from sentinel.codex_reset.models import ResetEvidence, ResetStage, ResetType
 from sentinel.codex_reset.store import ResetStore
 
@@ -43,6 +45,24 @@ def test_stage_upgrade_hint_announced_delayed_confirmed(tmp_path):
         "x:1", ResetStage.CONFIRMED, store.evidence_for("x:1"), now_ts=1350
     )
     assert advanced and event.stage is ResetStage.CONFIRMED
+    store.close()
+
+def test_local_confirmation_preserves_official_announcement_url(tmp_path):
+    store = ResetStore(str(tmp_path / "s.db"))
+    announced = _evidence(ResetStage.ANNOUNCED, item="announcement")
+    store.put_evidence("x:1", announced, now_ts=1000)
+    store.upsert_event("x:1", ResetStage.ANNOUNCED, [announced], now_ts=1000)
+    local = replace(
+        _evidence(ResetStage.CONFIRMED, family="local", item="weekly", observed=1250),
+        url="",
+        local_reference=True,
+    )
+    store.put_evidence("x:1", local, now_ts=1250)
+    event, advanced = store.upsert_event(
+        "x:1", ResetStage.CONFIRMED, store.evidence_for("x:1"), now_ts=1250
+    )
+    assert advanced and event.stage is ResetStage.CONFIRMED
+    assert event.primary_url == announced.url
     store.close()
 
 

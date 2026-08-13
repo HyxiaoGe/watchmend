@@ -286,7 +286,7 @@ class ResetStore:
             stage = target if advanced else current.stage
             self._conn.execute(
                 "UPDATE codex_reset_events SET stage = ?, reset_type = COALESCE(?, reset_type), "
-                "title = ?, summary = ?, primary_url = ?, "
+                "title = ?, summary = ?, primary_url = COALESCE(NULLIF(?, ''), primary_url), "
                 "announced_ts = COALESCE(announced_ts, ?), "
                 "expected_start_ts = COALESCE(expected_start_ts, ?), "
                 "expected_end_ts = COALESCE(expected_end_ts, ?), "

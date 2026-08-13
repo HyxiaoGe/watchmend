@@ -410,7 +410,7 @@ class PublicResetSource:
 
 
 def default_sources(settings) -> list[PublicResetSource]:
-    return [
+    sources = [
         PublicResetSource(
             name="radar_current",
             family="codexradar",
@@ -447,3 +447,19 @@ def default_sources(settings) -> list[PublicResetSource]:
             json_response=False,
         ),
     ]
+    if settings.sentinel_codex_reset_reference_enabled:
+        from sentinel.codex_reset.reference import ReferenceRateLimitSource
+
+        sources.append(
+            ReferenceRateLimitSource(
+                cli_path=settings.sentinel_codex_reset_reference_cli,
+                codex_home=settings.sentinel_codex_reset_reference_codex_home,
+                runtime_home=settings.sentinel_codex_reset_reference_runtime_home,
+                timeout_seconds=settings.sentinel_codex_reset_reference_timeout_seconds,
+                min_window_minutes=settings.sentinel_codex_reset_reference_min_window_minutes,
+                max_reset_age_seconds=(
+                    settings.sentinel_codex_reset_reference_max_reset_age_seconds
+                ),
+            )
+        )
+    return sources

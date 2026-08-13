@@ -97,6 +97,15 @@ class Settings(BaseSettings):
     sentinel_codex_reset_retry_max_seconds: int = Field(default=900, ge=1, le=86400)
     sentinel_codex_reset_delivery_max_attempts: int = Field(default=8, ge=1, le=100)
     sentinel_codex_reset_html_poll_seconds: int = Field(default=3600, ge=300, le=86400)
+    sentinel_codex_reset_reference_enabled: bool = False
+    sentinel_codex_reset_reference_cli: str = "/usr/local/bin/codex-reference"
+    sentinel_codex_reset_reference_codex_home: str = "/run/codex-reference"
+    sentinel_codex_reset_reference_runtime_home: str = "/tmp/watchmend-codex-reference"
+    sentinel_codex_reset_reference_timeout_seconds: int = Field(default=20, ge=5, le=60)
+    sentinel_codex_reset_reference_min_window_minutes: int = Field(default=10000, ge=60)
+    sentinel_codex_reset_reference_max_reset_age_seconds: int = Field(
+        default=21600, ge=60, le=86400
+    )
     sentinel_codex_reset_radar_current_url: str = "https://codex-reset-radar.pages.dev/current.json"
     sentinel_codex_reset_rss_url: str = "https://codexradar.com/feed.xml"
     sentinel_codex_reset_feed_url: str = "https://codex-reset.com/api/feed"

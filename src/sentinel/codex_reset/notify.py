@@ -56,7 +56,7 @@ def build_codex_reset_card(
     if stage is ResetStage.CONFIRMED:
         fields.append(f"**确认时间**：{_format_time(event.confirmed_ts, utc_offset)}")
     fields.append(
-        f"**公开证据**：{event.evidence_count} 条 / {len(event.source_families)} 个来源族"
+        f"**确认依据**：{event.evidence_count} 条 / {len(event.source_families)} 个来源族"
     )
     elements: list[dict] = [
         {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(fields)}},

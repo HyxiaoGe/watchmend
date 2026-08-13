@@ -88,6 +88,8 @@ class ResetMonitor:
         evidence.sort(key=lambda item: item.signal_stage is ResetStage.CONFIRMED)
         for item in (item for item in evidence if item.signal_stage is not ResetStage.CONFIRMED):
             canonical_id = self._canonical_target(item)
+            if canonical_id is None:
+                continue
             self._store.put_evidence(canonical_id, item, now_ts=now_ts)
             preliminary.add(canonical_id)
 
@@ -96,6 +98,8 @@ class ResetMonitor:
         confirmed: set[str] = set()
         for item in (item for item in evidence if item.signal_stage is ResetStage.CONFIRMED):
             canonical_id = self._canonical_target(item)
+            if canonical_id is None:
+                continue
             self._store.put_evidence(canonical_id, item, now_ts=now_ts)
             confirmed.add(canonical_id)
         for canonical_id in confirmed:
@@ -136,9 +140,12 @@ class ResetMonitor:
             fetched.append(result)
         return fetched
 
-    def _canonical_target(self, evidence: ResetEvidence) -> str:
+    def _canonical_target(self, evidence: ResetEvidence) -> str | None:
         if evidence.signal_stage is not ResetStage.CONFIRMED:
             return evidence.canonical_hint
+        if evidence.local_reference:
+            # 本机额度事实只能确认已存在的正式预告，绝不能单独制造 reset 事件。
+            return self._store.find_confirmation_target(evidence.observed_at)
         if self._store.get_event(evidence.canonical_hint) is not None:
             return evidence.canonical_hint
         evidence_target = self._store.find_confirmation_evidence_target(evidence.observed_at)

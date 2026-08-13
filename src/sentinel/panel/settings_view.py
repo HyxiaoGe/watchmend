@@ -89,6 +89,13 @@ _GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "sentinel_codex_reset_retry_max_seconds",
             "sentinel_codex_reset_delivery_max_attempts",
             "sentinel_codex_reset_html_poll_seconds",
+            "sentinel_codex_reset_reference_enabled",
+            "sentinel_codex_reset_reference_cli",
+            "sentinel_codex_reset_reference_codex_home",
+            "sentinel_codex_reset_reference_runtime_home",
+            "sentinel_codex_reset_reference_timeout_seconds",
+            "sentinel_codex_reset_reference_min_window_minutes",
+            "sentinel_codex_reset_reference_max_reset_age_seconds",
             "sentinel_codex_reset_radar_current_url",
             "sentinel_codex_reset_rss_url",
             "sentinel_codex_reset_feed_url",
@@ -365,6 +372,34 @@ _FIELD_META: dict[str, dict[str, tuple[str, str]]] = {
     "sentinel_codex_reset_html_poll_seconds": {
         "zh": ("Reset HTML 降级周期", "HTML 交叉验证最小间隔（秒）"),
         "en": ("Reset HTML fallback interval", "Minimum HTML cross-check interval (seconds)"),
+    },
+    "sentinel_codex_reset_reference_enabled": {
+        "zh": ("Reset 本机参考探针", "用现有 Codex 账号只读窗口确认已预告事件"),
+        "en": ("Reset local reference", "Confirm announced events from a local read-only account"),
+    },
+    "sentinel_codex_reset_reference_cli": {
+        "zh": ("Reset 参考 CLI", "容器内只读探针的 Codex CLI 路径"),
+        "en": ("Reset reference CLI", "Codex CLI path for the read-only probe"),
+    },
+    "sentinel_codex_reset_reference_codex_home": {
+        "zh": ("Reset 参考凭证目录", "仅含只读挂载 auth.json 的容器内目录"),
+        "en": ("Reset reference CODEX_HOME", "Directory containing read-only mounted auth.json"),
+    },
+    "sentinel_codex_reset_reference_runtime_home": {
+        "zh": ("Reset 参考运行目录", "探针无凭证临时 HOME"),
+        "en": ("Reset reference runtime home", "Credential-free temporary HOME for the probe"),
+    },
+    "sentinel_codex_reset_reference_timeout_seconds": {
+        "zh": ("Reset 参考超时", "单次只读额度检查超时（秒）"),
+        "en": ("Reset reference timeout", "Read-only rate-limit probe timeout (seconds)"),
+    },
+    "sentinel_codex_reset_reference_min_window_minutes": {
+        "zh": ("Reset 参考窗口下限", "仅把至少该分钟数的额度窗口视为七日窗口"),
+        "en": ("Reset reference minimum window", "Minimum duration treated as weekly (minutes)"),
+    },
+    "sentinel_codex_reset_reference_max_reset_age_seconds": {
+        "zh": ("Reset 参考确认时效", "窗口起点可用于确认的最大年龄（秒）"),
+        "en": ("Reset reference max age", "Maximum age of a confirming window start (seconds)"),
     },
     "sentinel_codex_reset_radar_current_url": {
         "zh": ("Reset 雷达 JSON", "当前窗口雷达结构化接口"),

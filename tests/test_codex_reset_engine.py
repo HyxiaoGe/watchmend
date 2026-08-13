@@ -233,7 +233,7 @@ async def test_public_confirmation_requires_two_families(tmp_path):
     await client.aclose()
 
 
-async def test_local_reference_can_confirm_without_second_public_family(tmp_path):
+async def test_local_reference_cannot_create_event_without_announcement(tmp_path):
     source = FakeSource(
         "local",
         "local",
@@ -256,7 +256,68 @@ async def test_local_reference_can_confirm_without_second_public_family(tmp_path
         owner="test",
     )
     await monitor.tick()
+    assert monitor.store.get_event("x:1") is None
+    assert broadcaster.sent == []
+    monitor.close()
+    await client.aclose()
+
+
+async def test_local_reference_confirms_matching_delayed_announcement(tmp_path):
+    now = [1000]
+    announcement = _evidence(ResetStage.ANNOUNCED, item="announcement", observed=1000)
+    public = FakeSource(
+        "public",
+        "public",
+        [
+            _fetched("public", "public", announcement),
+            _fetched("public", "public", announcement, content_ts=1200),
+            _fetched("public", "public", announcement, content_ts=1210),
+        ],
+    )
+    local = FakeSource(
+        "reference_account",
+        "local_reference",
+        [
+            _fetched("reference_account", "local_reference"),
+            _fetched("reference_account", "local_reference", content_ts=1200),
+            _fetched(
+                "reference_account",
+                "local_reference",
+                _evidence(
+                    ResetStage.CONFIRMED,
+                    family="local_reference",
+                    source="reference_account",
+                    item="weekly:1210",
+                    observed=1210,
+                    canonical="local-reference:1210",
+                    local_reference=True,
+                ),
+                content_ts=1210,
+            ),
+        ],
+    )
+    broadcaster = FakeBroadcaster()
+    client = httpx.AsyncClient()
+    monitor = ResetMonitor(
+        settings=_settings(tmp_path),
+        client=client,
+        broadcaster=broadcaster,
+        sources=[public, local],
+        clock=lambda: now[0],
+        owner="test",
+    )
+    await monitor.tick()
+    now[0] = 1200
+    await monitor.tick()
+    assert monitor.store.get_event("x:1").stage is ResetStage.DELAYED
+    now[0] = 1210
+    await monitor.tick()
     assert monitor.store.get_event("x:1").stage is ResetStage.CONFIRMED
+    assert [item.data["stage"] for item in broadcaster.sent] == [
+        ResetStage.ANNOUNCED,
+        ResetStage.DELAYED,
+        ResetStage.CONFIRMED,
+    ]
     monitor.close()
     await client.aclose()
 

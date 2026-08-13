@@ -16,9 +16,10 @@
 阶段只单调前进。`delayed` 不是终态，后续证据充分时仍升级 `confirmed`。首次启用不会补发
 超过 `SENTINEL_CODEX_RESET_NOTIFY_MAX_AGE_HOURS` 的旧事件。
 
-当前实现只接入公开来源，没有读取本机 Codex 凭证；代码保留了 `local_reference` 证据位，
-只有未来明确接入本机只读额度探针时才可置真。第三方 feed 中名为 `reference` 的观察结果不被
-视为本机参考账号证据。
+可选的 `local_reference` 探针通过 Codex 官方 app-server 的 `account/rateLimits/read` 只读读取
+额度窗口元数据。它只允许把已存在的 `announced`/`delayed` 事件升级为 `confirmed`，不能单独
+创建事件。认证文件只以单文件只读方式挂载，代码不复制、不解析、不记录其内容；卡片和数据库也
+不保存额度百分比。第三方 feed 中名为 `reference` 的观察结果不被视为本机参考账号证据。
 
 ## 数据源与合并
 
@@ -62,6 +63,24 @@ busy timeout 和带过期时间的租约；进程收到退出信号后由 WatchM
 SENTINEL_CODEX_RESET_ENABLED=true
 SENTINEL_CODEX_RESET_POLL_SECONDS=60
 ```
+
+如需启用本机参考账号确认，再设置：
+
+```dotenv
+SENTINEL_CODEX_RESET_REFERENCE_ENABLED=true
+SENTINEL_CODEX_RESET_REFERENCE_CLI=/usr/local/bin/codex-reference
+SENTINEL_CODEX_RESET_REFERENCE_CODEX_HOME=/run/codex-reference
+```
+
+部署时仅把宿主机现有 Codex CLI 和 `auth.json` 两个文件分别只读挂载到上述 CLI 路径和
+`/run/codex-reference/auth.json`。不要挂载整个 Codex 配置目录，也不要把宿主机实际路径写进
+仓库。探针使用最小环境启动 CLI，丢弃 stderr，协议错误只记录异常类型。只读挂载意味着凭证
+过期后探针不会绕过权限去刷新文件；此时公开来源仍正常工作，健康信息会标记该来源失败。
+
+官方 app-server 请求顺序为 `initialize`、`initialized`、`account/rateLimits/read`。探针仅选择
+不少于 `SENTINEL_CODEX_RESET_REFERENCE_MIN_WINDOW_MINUTES` 的窗口，并按
+`resetsAt - windowDurationMins × 60` 推导窗口起点；起点必须足够新且落入已有预告窗口容差才可
+确认。
 
 通知复用 `FEISHU_PATROL_WEBHOOK` / `FEISHU_PATROL_SIGN_SECRET`；巡检机器人留空时沿用 vendor
 机器人。也会随现有广播配置发送到 Telegram、ntfy 或通用 webhook。不要把 Webhook 或签名
