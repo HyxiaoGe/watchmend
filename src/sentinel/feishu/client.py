@@ -53,7 +53,8 @@ class FeishuClient:
             resp.raise_for_status()
             data = resp.json()
         except (httpx.HTTPError, ValueError) as err:
-            raise FeishuError(f"HTTP/解析失败: {err}") from err
+            # httpx 异常文本通常含完整请求 URL；飞书 Webhook token 位于 URL path，不能进日志。
+            raise FeishuError(f"HTTP/解析失败: {type(err).__name__}") from err
 
         code = data.get("code", data.get("StatusCode", -1))
         if code != 0:  # HTTP 200 ≠ 送达,必须查 body code

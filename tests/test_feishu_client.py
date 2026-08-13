@@ -52,6 +52,22 @@ async def test_nonzero_code_raises_even_on_http_200():
 
 
 @pytest.mark.asyncio
+async def test_http_error_does_not_expose_webhook_url():
+    webhook = "https://open.feishu.cn/open-apis/bot/v2/hook/webhook-secret-marker"
+    with respx.mock:
+        respx.post(webhook).mock(return_value=httpx.Response(503, text="unavailable"))
+        async with httpx.AsyncClient() as client:
+            fc = FeishuClient(client, webhook, secret="sign-secret-marker", min_interval=0)
+            with pytest.raises(FeishuError) as exc:
+                await fc.send({"msg_type": "interactive", "card": {}})
+
+    message = str(exc.value)
+    assert "HTTPStatusError" in message
+    assert "webhook-secret-marker" not in message
+    assert "sign-secret-marker" not in message
+
+
+@pytest.mark.asyncio
 async def test_no_sign_when_secret_absent():
     captured = {}
 
