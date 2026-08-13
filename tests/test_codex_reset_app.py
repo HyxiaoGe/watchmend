@@ -40,11 +40,11 @@ async def test_enabled_reset_job_is_independent_and_runs_every_60_seconds(tmp_pa
     await client.aclose()
 
 
-def test_health_exposes_reset_freshness_without_changing_global_status():
+async def test_health_exposes_reset_freshness_without_changing_global_status():
     request = SimpleNamespace(
         app=SimpleNamespace(state=SimpleNamespace(reset_monitor=FakeResetMonitor()))
     )
-    assert health(request) == {
+    assert await health(request) == {
         "status": "ok",
         "codex_reset": {
             "status": "degraded",

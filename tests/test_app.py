@@ -6,13 +6,13 @@ import httpx
 import respx
 
 
-def test_health_ok(monkeypatch):
+async def test_health_ok(monkeypatch):
     monkeypatch.setenv("FEISHU_VENDOR_WEBHOOK", "https://open.feishu.cn/hook/T")
     monkeypatch.setenv("SENTINEL_DB_PATH", "./data/test_app.db")
     # 不真正进入 lifespan 轮询:直接调用路由函数验证
     from sentinel.app import health
 
-    assert health() == {"status": "ok"}
+    assert await health() == {"status": "ok"}
 
 
 async def test_job_loop_survives_tick_crash():

@@ -694,7 +694,7 @@ register_panel_routes(app)
 
 
 @app.get("/health")
-def health(request: Request = None) -> dict:
+async def health(request: Request = None) -> dict:
     payload: dict = {"status": "ok"}
     monitor = getattr(request.app.state, "reset_monitor", None) if request is not None else None
     if monitor is not None:
