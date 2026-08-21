@@ -10,7 +10,13 @@ from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 
-from sentinel.codex_reset.models import FetchedSource, ResetEvidence, ResetStage, ResetType
+from sentinel.codex_reset.models import (
+    FetchedSource,
+    ResetEvidence,
+    ResetIntentCandidate,
+    ResetStage,
+    ResetType,
+)
 
 _OFFICIAL_HANDLES = {"thsottiaux", "openai", "sama", "romainhuet", "gdb"}
 _STATUS_ID = re.compile(r"/(?:i/web/)?status/(\d+)", re.IGNORECASE)
@@ -181,6 +187,7 @@ def parse_reset_feed(data: object) -> FetchedSource:
         raise ValueError("reset feed must be an object")
     parsed = parse_timeline(data, source_name="reset_feed", source_family="codexreset")
     by_item = {item.source_item_id: item for item in parsed.evidence}
+    intent_candidates: list[ResetIntentCandidate] = []
     tweets = data.get("tweets") if isinstance(data.get("tweets"), list) else []
     for tweet in tweets:
         if not isinstance(tweet, dict):
@@ -195,6 +202,17 @@ def parse_reset_feed(data: object) -> FetchedSource:
             verification.get("observed_at") or tweet.get("declared_at") or tweet.get("at")
         )
         contextual_id = str(tweet.get("contextual_reset_source_id") or "").strip()
+        if summary and item_id and observed_at is not None and is_official_url(url):
+            intent_candidates.append(
+                ResetIntentCandidate(
+                    source_name="reset_feed",
+                    source_family="codexreset",
+                    source_item_id=item_id,
+                    text=summary,
+                    url=url,
+                    observed_at=observed_at,
+                )
+            )
         if (
             item_id not in by_item
             and summary
@@ -252,6 +270,7 @@ def parse_reset_feed(data: object) -> FetchedSource:
         family="codexreset",
         content_ts=parse_timestamp(data.get("fetched_at")),
         evidence=list(by_item.values()),
+        intent_candidates=intent_candidates,
     )
 
 

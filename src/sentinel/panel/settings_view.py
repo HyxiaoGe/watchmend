@@ -89,6 +89,9 @@ _GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "sentinel_codex_reset_retry_max_seconds",
             "sentinel_codex_reset_delivery_max_attempts",
             "sentinel_codex_reset_html_poll_seconds",
+            "sentinel_codex_reset_semantic_enabled",
+            "sentinel_codex_reset_semantic_min_confidence",
+            "sentinel_codex_reset_semantic_timeout_seconds",
             "sentinel_codex_reset_reference_enabled",
             "sentinel_codex_reset_reference_cli",
             "sentinel_codex_reset_reference_codex_home",
@@ -372,6 +375,18 @@ _FIELD_META: dict[str, dict[str, tuple[str, str]]] = {
     "sentinel_codex_reset_html_poll_seconds": {
         "zh": ("Reset HTML 降级周期", "HTML 交叉验证最小间隔（秒）"),
         "en": ("Reset HTML fallback interval", "Minimum HTML cross-check interval (seconds)"),
+    },
+    "sentinel_codex_reset_semantic_enabled": {
+        "zh": ("Reset 模型补漏", "规则未命中的官方帖子使用模型识别疑似预告"),
+        "en": ("Reset semantic fallback", "Classify official posts missed by deterministic rules"),
+    },
+    "sentinel_codex_reset_semantic_min_confidence": {
+        "zh": ("Reset 模型置信阈值", "低于该置信度的模型结果不产生 hint"),
+        "en": ("Reset semantic confidence", "Ignore model results below this confidence"),
+    },
+    "sentinel_codex_reset_semantic_timeout_seconds": {
+        "zh": ("Reset 模型超时", "单次意图识别请求超时（秒）"),
+        "en": ("Reset semantic timeout", "Intent classification timeout (seconds)"),
     },
     "sentinel_codex_reset_reference_enabled": {
         "zh": ("Reset 本机参考探针", "用现有 Codex 账号只读窗口确认已预告事件"),

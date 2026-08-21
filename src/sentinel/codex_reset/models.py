@@ -26,6 +26,16 @@ class ResetType(StrEnum):
 
 
 @dataclass(frozen=True)
+class ResetIntentCandidate:
+    source_name: str
+    source_family: str
+    source_item_id: str
+    text: str
+    url: str
+    observed_at: int
+
+
+@dataclass(frozen=True)
 class ResetEvidence:
     source_name: str
     source_family: str
@@ -50,6 +60,7 @@ class FetchedSource:
     family: str
     content_ts: int | None
     evidence: list[ResetEvidence] = field(default_factory=list)
+    intent_candidates: list[ResetIntentCandidate] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

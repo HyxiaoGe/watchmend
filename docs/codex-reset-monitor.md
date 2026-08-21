@@ -55,6 +55,7 @@ Webhook、签名密钥和其他凭证仍只由现有环境变量加载。
 - `codex_reset_deliveries`：规范事件每个阶段的投递回执、次数与下次重试时间；
 - `codex_reset_source_health`：最近抓取成功、内容时间和连续失败次数；
 - `codex_reset_leases`：跨进程单实例租约。
+- `codex_reset_semantic_cache`：按来源条目和正文哈希缓存意图结果、失败次数与下次重试时间。
 
 抓取使用有限次数指数退避。通知采取持久化重试：任一广播渠道成功才把该阶段标记为已送达；
 全部失败时按 `RETRY_BASE × 2^(attempt-1)` 退避，受最大间隔和最大次数限制。SQLite 使用 WAL、
@@ -69,6 +70,16 @@ busy timeout 和带过期时间的租约；进程收到退出信号后由 WatchM
 SENTINEL_CODEX_RESET_ENABLED=true
 SENTINEL_CODEX_RESET_POLL_SECONDS=60
 ```
+
+可选的模型补漏复用现有状态编辑器端点：
+
+```dotenv
+SENTINEL_CODEX_RESET_SEMANTIC_ENABLED=true
+```
+
+只有规则未识别、时间仍新鲜且 URL 属于官方账号的帖子会请求模型。结构化输出只允许
+`ignore/hint/announced`，但第一版所有正向结果都按 `hint` 入库；明确预告窗口与落地确认仍只由
+确定性公开证据或本机只读额度事实升级。结果按正文哈希持久缓存，轮询不会重复消耗模型调用。
 
 如需启用本机参考账号确认，再设置：
 

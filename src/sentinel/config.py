@@ -97,6 +97,9 @@ class Settings(BaseSettings):
     sentinel_codex_reset_retry_max_seconds: int = Field(default=900, ge=1, le=86400)
     sentinel_codex_reset_delivery_max_attempts: int = Field(default=8, ge=1, le=100)
     sentinel_codex_reset_html_poll_seconds: int = Field(default=3600, ge=300, le=86400)
+    sentinel_codex_reset_semantic_enabled: bool = False
+    sentinel_codex_reset_semantic_min_confidence: float = Field(default=0.85, ge=0.5, le=1)
+    sentinel_codex_reset_semantic_timeout_seconds: float = Field(default=15, ge=1, le=60)
     sentinel_codex_reset_reference_enabled: bool = False
     sentinel_codex_reset_reference_cli: str = "/usr/local/bin/codex-reference"
     sentinel_codex_reset_reference_codex_home: str = "/run/codex-reference"

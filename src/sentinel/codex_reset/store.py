@@ -78,6 +78,14 @@ class ResetStore:
             "CREATE TABLE IF NOT EXISTS codex_reset_leases ("
             "name TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_ts INTEGER NOT NULL)"
         )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_reset_semantic_cache ("
+            "source_name TEXT NOT NULL, source_item_id TEXT NOT NULL, content_hash TEXT NOT NULL, "
+            "decision TEXT, reset_type TEXT, time_text TEXT, reason TEXT, confidence REAL, "
+            "attempts INTEGER NOT NULL DEFAULT 0, next_attempt_ts INTEGER NOT NULL DEFAULT 0, "
+            "last_error TEXT, updated_ts INTEGER NOT NULL, "
+            "PRIMARY KEY (source_name, source_item_id))"
+        )
         self._conn.commit()
 
     def acquire_lease(self, name: str, owner: str, *, now_ts: int, ttl_seconds: int) -> bool:
@@ -145,6 +153,116 @@ class ResetStore:
             (source_name,),
         ).fetchone()
         return row is None or now_ts - row[0] >= interval_seconds
+
+    def semantic_result(
+        self, source_name: str, source_item_id: str, content_hash: str
+    ) -> dict | None:
+        row = self._conn.execute(
+            "SELECT decision, reset_type, time_text, reason, confidence "
+            "FROM codex_reset_semantic_cache WHERE source_name = ? AND source_item_id = ? "
+            "AND content_hash = ? AND decision IS NOT NULL",
+            (source_name, source_item_id, content_hash),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "decision": row[0],
+            "reset_type": row[1],
+            "time_text": row[2] or "",
+            "reason": row[3] or "",
+            "confidence": float(row[4] or 0),
+        }
+
+    def semantic_due(
+        self,
+        source_name: str,
+        source_item_id: str,
+        content_hash: str,
+        *,
+        now_ts: int,
+    ) -> bool:
+        row = self._conn.execute(
+            "SELECT content_hash, decision, next_attempt_ts FROM codex_reset_semantic_cache "
+            "WHERE source_name = ? AND source_item_id = ?",
+            (source_name, source_item_id),
+        ).fetchone()
+        return bool(row is None or row[0] != content_hash or (row[1] is None and row[2] <= now_ts))
+
+    def record_semantic_success(
+        self,
+        source_name: str,
+        source_item_id: str,
+        content_hash: str,
+        *,
+        decision: str,
+        reset_type: str,
+        time_text: str,
+        reason: str,
+        confidence: float,
+        now_ts: int,
+    ) -> None:
+        self._conn.execute(
+            "INSERT INTO codex_reset_semantic_cache "
+            "(source_name, source_item_id, content_hash, decision, reset_type, time_text, "
+            "reason, confidence, attempts, next_attempt_ts, last_error, updated_ts) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, ?) "
+            "ON CONFLICT(source_name, source_item_id) DO UPDATE SET "
+            "content_hash = excluded.content_hash, decision = excluded.decision, "
+            "reset_type = excluded.reset_type, time_text = excluded.time_text, "
+            "reason = excluded.reason, confidence = excluded.confidence, attempts = 0, "
+            "next_attempt_ts = 0, last_error = NULL, updated_ts = excluded.updated_ts",
+            (
+                source_name,
+                source_item_id,
+                content_hash,
+                decision,
+                reset_type,
+                time_text[:160],
+                reason[:300],
+                confidence,
+                now_ts,
+            ),
+        )
+        self._conn.commit()
+
+    def record_semantic_failure(
+        self,
+        source_name: str,
+        source_item_id: str,
+        content_hash: str,
+        *,
+        now_ts: int,
+        error: str,
+        retry_base_seconds: int,
+        retry_max_seconds: int,
+    ) -> None:
+        row = self._conn.execute(
+            "SELECT content_hash, attempts FROM codex_reset_semantic_cache "
+            "WHERE source_name = ? AND source_item_id = ?",
+            (source_name, source_item_id),
+        ).fetchone()
+        attempts = (row[1] if row and row[0] == content_hash else 0) + 1
+        delay = min(retry_max_seconds, retry_base_seconds * (2 ** (attempts - 1)))
+        self._conn.execute(
+            "INSERT INTO codex_reset_semantic_cache "
+            "(source_name, source_item_id, content_hash, attempts, next_attempt_ts, "
+            "last_error, updated_ts) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(source_name, source_item_id) DO UPDATE SET "
+            "content_hash = excluded.content_hash, decision = NULL, reset_type = NULL, "
+            "time_text = NULL, reason = NULL, confidence = NULL, attempts = excluded.attempts, "
+            "next_attempt_ts = excluded.next_attempt_ts, last_error = excluded.last_error, "
+            "updated_ts = excluded.updated_ts",
+            (
+                source_name,
+                source_item_id,
+                content_hash,
+                attempts,
+                now_ts + delay,
+                error[:120],
+                now_ts,
+            ),
+        )
+        self._conn.commit()
 
     def put_evidence(self, canonical_id: str, evidence: ResetEvidence, *, now_ts: int) -> None:
         self._conn.execute(
@@ -433,11 +551,21 @@ class ResetStore:
             status = "degraded"
         else:
             status = "stale"
+        semantic_row = self._conn.execute(
+            "SELECT COUNT(*), MAX(updated_ts), "
+            "SUM(CASE WHEN decision IS NULL THEN 1 ELSE 0 END) "
+            "FROM codex_reset_semantic_cache"
+        ).fetchone()
         return {
             "status": status,
             "last_success_ts": max((row[2] or 0 for row in rows), default=0) or None,
             "fresh_source_families": len(fresh_families),
             "sources": sources,
+            "semantic": {
+                "cached_items": semantic_row[0],
+                "last_attempt_ts": semantic_row[1],
+                "pending_failures": semantic_row[2] or 0,
+            },
         }
 
     @staticmethod

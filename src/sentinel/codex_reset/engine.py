@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import socket
@@ -12,7 +13,8 @@ from datetime import datetime, timedelta, timezone
 from sentinel.codex_reset.http import ResetFetcher
 from sentinel.codex_reset.models import ResetEvidence, ResetStage, ResetType
 from sentinel.codex_reset.notify import codex_reset_notification
-from sentinel.codex_reset.sources import default_sources
+from sentinel.codex_reset.semantic import ResetIntentClassifier
+from sentinel.codex_reset.sources import canonical_from, default_sources, is_official_url
 from sentinel.codex_reset.store import ResetStore
 
 logger = logging.getLogger("sentinel.codex_reset")
@@ -27,6 +29,7 @@ class ResetMonitor:
         broadcaster,
         store: ResetStore | None = None,
         sources=None,
+        intent_classifier=None,
         clock=time.time,
         owner: str | None = None,
     ) -> None:
@@ -35,6 +38,20 @@ class ResetMonitor:
         self._store = store or ResetStore(settings.sentinel_db_path)
         self._sources = list(sources if sources is not None else default_sources(settings))
         self._fetcher = ResetFetcher(client)
+        self._intent_classifier = intent_classifier
+        if (
+            self._intent_classifier is None
+            and settings.sentinel_codex_reset_semantic_enabled
+            and bool(settings.sentinel_editor_base_url)
+            and bool(settings.sentinel_editor_model)
+        ):
+            self._intent_classifier = ResetIntentClassifier(
+                client,
+                base_url=settings.sentinel_editor_base_url,
+                api_key=settings.sentinel_editor_api_key,
+                model=settings.sentinel_editor_model,
+                timeout_seconds=settings.sentinel_codex_reset_semantic_timeout_seconds,
+            )
         self._clock = clock
         self._owner = owner or f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:12]}"
         self._lease_name = "codex-reset-monitor"
@@ -58,6 +75,7 @@ class ResetMonitor:
         fallback = next((source for source in self._sources if source.name == "reset_html"), None)
         fetched = await self._fetch_sources(primary, now_ts=now_ts)
         evidence = [item for result in fetched for item in result.evidence]
+        evidence.extend(await self._semantic_evidence(fetched, evidence, now_ts=now_ts))
         recent_confirmation = any(
             item.signal_stage is ResetStage.CONFIRMED
             and self._recent_enough(item.observed_at, now_ts)
@@ -139,6 +157,93 @@ class ResetMonitor:
             )
             fetched.append(result)
         return fetched
+
+    async def _semantic_evidence(
+        self, fetched: list, deterministic: list[ResetEvidence], *, now_ts: int
+    ) -> list[ResetEvidence]:
+        if self._intent_classifier is None:
+            return []
+        known = {(item.source_name, item.source_item_id) for item in deterministic}
+        candidates = {
+            (item.source_name, item.source_item_id): item
+            for result in fetched
+            for item in result.intent_candidates
+            if (item.source_name, item.source_item_id) not in known
+            and self._recent_enough(item.observed_at, now_ts)
+            and is_official_url(item.url)
+        }
+        evidence = []
+        for candidate in candidates.values():
+            content_hash = hashlib.sha256(candidate.text.encode("utf-8")).hexdigest()
+            result = self._store.semantic_result(
+                candidate.source_name, candidate.source_item_id, content_hash
+            )
+            if result is None and self._store.semantic_due(
+                candidate.source_name,
+                candidate.source_item_id,
+                content_hash,
+                now_ts=now_ts,
+            ):
+                try:
+                    classified = await self._intent_classifier.classify(candidate)
+                # 模型层是可选补漏；任何异常都必须与确定性轮询隔离。
+                except Exception as err:
+                    self._store.record_semantic_failure(
+                        candidate.source_name,
+                        candidate.source_item_id,
+                        content_hash,
+                        now_ts=now_ts,
+                        error=type(err).__name__,
+                        retry_base_seconds=self._settings.sentinel_codex_reset_retry_base_seconds,
+                        retry_max_seconds=self._settings.sentinel_codex_reset_retry_max_seconds,
+                    )
+                    logger.warning(
+                        "codex reset semantic classifier failed for %s: %s",
+                        candidate.source_item_id,
+                        type(err).__name__,
+                    )
+                    continue
+                self._store.record_semantic_success(
+                    candidate.source_name,
+                    candidate.source_item_id,
+                    content_hash,
+                    decision=classified.decision,
+                    reset_type=classified.reset_type,
+                    time_text=classified.time_text,
+                    reason=classified.reason,
+                    confidence=classified.confidence,
+                    now_ts=now_ts,
+                )
+                result = classified.model_dump()
+            if (
+                result is None
+                or result["decision"] == "ignore"
+                or result["confidence"]
+                < self._settings.sentinel_codex_reset_semantic_min_confidence
+            ):
+                continue
+            reset_type = (
+                ResetType(result["reset_type"])
+                if result["reset_type"] in {"direct", "banked"}
+                else None
+            )
+            # 模型仅补充疑似预告；明确窗口和落地确认仍由确定性证据升级。
+            evidence.append(
+                ResetEvidence(
+                    source_name=f"{candidate.source_name}_semantic",
+                    source_family=candidate.source_family,
+                    source_item_id=candidate.source_item_id,
+                    canonical_hint=canonical_from(candidate.url, candidate.source_item_id),
+                    signal_stage=ResetStage.HINT,
+                    title="模型识别到官方 Codex reset 意图",
+                    summary=candidate.text,
+                    url=candidate.url,
+                    observed_at=candidate.observed_at,
+                    reset_type=reset_type,
+                    official=True,
+                )
+            )
+        return evidence
 
     def _canonical_target(self, evidence: ResetEvidence) -> str | None:
         if evidence.signal_stage is not ResetStage.CONFIRMED:
@@ -237,10 +342,17 @@ class ResetMonitor:
             )
 
     def health(self) -> dict:
-        return self._store.health(
+        payload = self._store.health(
             now_ts=int(self._clock()),
             freshness_seconds=self._settings.sentinel_codex_reset_freshness_seconds,
         )
+        payload["semantic"].update(
+            {
+                "enabled": self._settings.sentinel_codex_reset_semantic_enabled,
+                "configured": self._intent_classifier is not None,
+            }
+        )
+        return payload
 
     def close(self) -> None:
         self._store.release_lease(self._lease_name, self._owner)
