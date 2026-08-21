@@ -67,6 +67,16 @@ def build_codex_reset_card(
             "text": {"tag": "lark_md", "content": f"**摘要**\n{event.summary[:1800]}"},
         },
     ]
+    if event.translated_summary:
+        elements.append(
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"**中文翻译**\n{event.translated_summary[:1800]}",
+                },
+            }
+        )
     if event.primary_url:
         elements.append(
             {

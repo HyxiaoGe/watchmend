@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 import socket
 import time
 import uuid
@@ -314,6 +315,7 @@ class ResetMonitor:
         local = datetime.fromtimestamp(now_ts, tz=timezone(timedelta(hours=offset)))
         for delivery in self._store.due_deliveries(now_ts=now_ts):
             event = self._store.enrich_event(delivery.event)
+            event = await self._translated_event(event, now_ts=now_ts)
             notification = codex_reset_notification(
                 event,
                 delivery.stage,
@@ -340,6 +342,48 @@ class ResetMonitor:
                 error="all notification channels failed",
                 terminal=terminal,
             )
+
+    async def _translated_event(self, event, *, now_ts: int):
+        if self._intent_classifier is None or not self._needs_translation(event.summary):
+            return event
+        content_hash = hashlib.sha256(event.summary.encode("utf-8")).hexdigest()
+        translated = self._store.translation_result(event.canonical_id, content_hash)
+        if translated is None and self._store.translation_due(
+            event.canonical_id, content_hash, now_ts=now_ts
+        ):
+            try:
+                translated = await self._intent_classifier.translate(event.summary)
+            # 翻译是展示增强；失败不能阻塞原始通知。
+            except Exception as err:
+                self._store.record_translation_failure(
+                    event.canonical_id,
+                    content_hash,
+                    now_ts=now_ts,
+                    error=type(err).__name__,
+                    retry_base_seconds=self._settings.sentinel_codex_reset_retry_base_seconds,
+                    retry_max_seconds=self._settings.sentinel_codex_reset_retry_max_seconds,
+                )
+                logger.warning(
+                    "codex reset summary translation failed for %s: %s",
+                    event.canonical_id,
+                    type(err).__name__,
+                )
+                return event
+            self._store.record_translation_success(
+                event.canonical_id,
+                content_hash,
+                translated,
+                now_ts=now_ts,
+            )
+        return replace(event, translated_summary=translated or "")
+
+    @staticmethod
+    def _needs_translation(text: str) -> bool:
+        compact = "".join(text.split())
+        if not compact:
+            return False
+        chinese = len(re.findall(r"[\u4e00-\u9fff]", compact))
+        return chinese < max(4, int(len(compact) * 0.15))
 
     def health(self) -> dict:
         payload = self._store.health(

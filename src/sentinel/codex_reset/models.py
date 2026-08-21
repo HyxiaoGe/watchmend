@@ -79,6 +79,7 @@ class ResetEvent:
     last_seen_ts: int
     evidence_count: int = 0
     source_families: tuple[str, ...] = ()
+    translated_summary: str = ""
 
 
 def can_advance(current: ResetStage | None, target: ResetStage) -> bool:

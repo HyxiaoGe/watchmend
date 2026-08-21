@@ -86,6 +86,13 @@ class ResetStore:
             "last_error TEXT, updated_ts INTEGER NOT NULL, "
             "PRIMARY KEY (source_name, source_item_id))"
         )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_reset_translation_cache ("
+            "canonical_id TEXT PRIMARY KEY, content_hash TEXT NOT NULL, "
+            "translated_text TEXT, attempts INTEGER NOT NULL DEFAULT 0, "
+            "next_attempt_ts INTEGER NOT NULL DEFAULT 0, last_error TEXT, "
+            "updated_ts INTEGER NOT NULL)"
+        )
         self._conn.commit()
 
     def acquire_lease(self, name: str, owner: str, *, now_ts: int, ttl_seconds: int) -> bool:
@@ -255,6 +262,77 @@ class ResetStore:
             (
                 source_name,
                 source_item_id,
+                content_hash,
+                attempts,
+                now_ts + delay,
+                error[:120],
+                now_ts,
+            ),
+        )
+        self._conn.commit()
+
+    def translation_result(self, canonical_id: str, content_hash: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT translated_text FROM codex_reset_translation_cache "
+            "WHERE canonical_id = ? AND content_hash = ? AND translated_text IS NOT NULL",
+            (canonical_id, content_hash),
+        ).fetchone()
+        return row[0] if row else None
+
+    def translation_due(self, canonical_id: str, content_hash: str, *, now_ts: int) -> bool:
+        row = self._conn.execute(
+            "SELECT content_hash, translated_text, next_attempt_ts "
+            "FROM codex_reset_translation_cache WHERE canonical_id = ?",
+            (canonical_id,),
+        ).fetchone()
+        return bool(row is None or row[0] != content_hash or (row[1] is None and row[2] <= now_ts))
+
+    def record_translation_success(
+        self,
+        canonical_id: str,
+        content_hash: str,
+        translated_text: str,
+        *,
+        now_ts: int,
+    ) -> None:
+        self._conn.execute(
+            "INSERT INTO codex_reset_translation_cache "
+            "(canonical_id, content_hash, translated_text, attempts, next_attempt_ts, "
+            "last_error, updated_ts) VALUES (?, ?, ?, 0, 0, NULL, ?) "
+            "ON CONFLICT(canonical_id) DO UPDATE SET content_hash = excluded.content_hash, "
+            "translated_text = excluded.translated_text, attempts = 0, next_attempt_ts = 0, "
+            "last_error = NULL, updated_ts = excluded.updated_ts",
+            (canonical_id, content_hash, translated_text[:2000], now_ts),
+        )
+        self._conn.commit()
+
+    def record_translation_failure(
+        self,
+        canonical_id: str,
+        content_hash: str,
+        *,
+        now_ts: int,
+        error: str,
+        retry_base_seconds: int,
+        retry_max_seconds: int,
+    ) -> None:
+        row = self._conn.execute(
+            "SELECT content_hash, attempts FROM codex_reset_translation_cache "
+            "WHERE canonical_id = ?",
+            (canonical_id,),
+        ).fetchone()
+        attempts = (row[1] if row and row[0] == content_hash else 0) + 1
+        delay = min(retry_max_seconds, retry_base_seconds * (2 ** (attempts - 1)))
+        self._conn.execute(
+            "INSERT INTO codex_reset_translation_cache "
+            "(canonical_id, content_hash, translated_text, attempts, next_attempt_ts, "
+            "last_error, updated_ts) VALUES (?, ?, NULL, ?, ?, ?, ?) "
+            "ON CONFLICT(canonical_id) DO UPDATE SET content_hash = excluded.content_hash, "
+            "translated_text = NULL, attempts = excluded.attempts, "
+            "next_attempt_ts = excluded.next_attempt_ts, last_error = excluded.last_error, "
+            "updated_ts = excluded.updated_ts",
+            (
+                canonical_id,
                 content_hash,
                 attempts,
                 now_ts + delay,
@@ -556,6 +634,11 @@ class ResetStore:
             "SUM(CASE WHEN decision IS NULL THEN 1 ELSE 0 END) "
             "FROM codex_reset_semantic_cache"
         ).fetchone()
+        translation_row = self._conn.execute(
+            "SELECT COUNT(*), MAX(updated_ts), "
+            "SUM(CASE WHEN translated_text IS NULL THEN 1 ELSE 0 END) "
+            "FROM codex_reset_translation_cache"
+        ).fetchone()
         return {
             "status": status,
             "last_success_ts": max((row[2] or 0 for row in rows), default=0) or None,
@@ -565,6 +648,11 @@ class ResetStore:
                 "cached_items": semantic_row[0],
                 "last_attempt_ts": semantic_row[1],
                 "pending_failures": semantic_row[2] or 0,
+                "translation": {
+                    "cached_items": translation_row[0],
+                    "last_attempt_ts": translation_row[1],
+                    "pending_failures": translation_row[2] or 0,
+                },
             },
         }
 
