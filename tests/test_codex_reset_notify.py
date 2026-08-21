@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from sentinel.codex_reset.models import ResetEvent, ResetStage, ResetType
 from sentinel.codex_reset.notify import build_codex_reset_card, codex_reset_notification
 from sentinel.notify.feishu_channel import render_card
@@ -40,6 +42,18 @@ def test_four_stage_cards_are_clear_and_use_distinct_colors():
         assert "2 条 / 2 个来源族" in body
         assert "usedPercent" not in body
         assert "额度百分比" not in body
+
+
+def test_banked_announcement_card_uses_official_approximate_time_wording():
+    event = replace(_event(ResetStage.ANNOUNCED), reset_type=ResetType.BANKED)
+    card = build_codex_reset_card(event, ResetStage.ANNOUNCED, now_str="now", utc_offset=8)
+    body = card["card"]["elements"][0]["text"]["content"]
+    assert "官方称当天内（以原帖表述为准）" in body
+    assert "预计截止" not in body
+    notification = codex_reset_notification(
+        event, ResetStage.ANNOUNCED, now_ts=1300, now_str="now", utc_offset=8
+    )
+    assert ("预计时间", "官方称当天内（以原帖表述为准）") in notification.fields
 
 
 def test_reset_notification_reuses_feishu_channel_renderer():

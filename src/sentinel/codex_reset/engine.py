@@ -10,7 +10,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from sentinel.codex_reset.http import ResetFetcher
-from sentinel.codex_reset.models import ResetEvidence, ResetStage
+from sentinel.codex_reset.models import ResetEvidence, ResetStage, ResetType
 from sentinel.codex_reset.notify import codex_reset_notification
 from sentinel.codex_reset.sources import default_sources
 from sentinel.codex_reset.store import ResetStore
@@ -169,6 +169,19 @@ class ResetMonitor:
 
     @staticmethod
     def _classify(evidence: list[ResetEvidence]) -> ResetStage | None:
+        announcements = [
+            item
+            for item in evidence
+            if item.signal_stage is ResetStage.ANNOUNCED
+            and item.official
+            and item.expected_end_ts is not None
+            and item.reset_type is not None
+            and item.url
+        ]
+        # Banked reset 是可靠公告型事件：只播报预告，不等待或推断额度落地。
+        if any(item.reset_type is ResetType.BANKED for item in announcements):
+            return ResetStage.ANNOUNCED
+
         confirmations = [
             item
             for item in evidence
@@ -177,14 +190,7 @@ class ResetMonitor:
         confirmed_families = {item.source_family for item in confirmations}
         if len(confirmed_families) >= 2 or any(item.local_reference for item in confirmations):
             return ResetStage.CONFIRMED
-        if any(
-            item.signal_stage is ResetStage.ANNOUNCED
-            and item.official
-            and item.expected_end_ts is not None
-            and item.reset_type is not None
-            and item.url
-            for item in evidence
-        ):
+        if announcements:
             return ResetStage.ANNOUNCED
         if any(
             item.signal_stage is ResetStage.HINT and item.official and item.url for item in evidence

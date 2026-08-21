@@ -28,6 +28,9 @@ _FUTURE_RESET = re.compile(
     re.IGNORECASE,
 )
 _DURATION = re.compile(r"(\d+)\s*(?:hours?|小时)", re.IGNORECASE)
+_DURING_DAY = re.compile(
+    r"during (?:the )?day|later today|by (?:the )?end of (?:the )?day|当天|今日", re.IGNORECASE
+)
 
 
 def parse_timestamp(value: object) -> int | None:
@@ -77,11 +80,17 @@ def infer_reset_type(value: object, text: str) -> ResetType | None:
     return None
 
 
+def is_official_banked_announcement(kind: object, summary: str, url: str) -> bool:
+    return bool(
+        infer_reset_type(kind, summary) is ResetType.BANKED
+        and is_official_url(url)
+        and _DURING_DAY.search(summary)
+    )
+
+
 def _timeline_evidence(
     event: dict, *, source_name: str, source_family: str
 ) -> ResetEvidence | None:
-    if event.get("type") != "reset" and event.get("group") != "reset":
-        return None
     item_id = str(event.get("id") or "").strip()
     url = str(event.get("url") or "").strip()
     summary = str(event.get("summary") or "").strip()
@@ -90,6 +99,12 @@ def _timeline_evidence(
         return None
     official = is_official_url(url)
     reset_type = infer_reset_type(event.get("reset_kind"), summary)
+    reset_event = event.get("type") == "reset" or event.get("group") == "reset"
+    banked_credit_announcement = (
+        event.get("type") == "credits" or event.get("group") == "credits"
+    ) and is_official_banked_announcement(event.get("reset_kind"), summary, url)
+    if not reset_event and not banked_credit_announcement:
+        return None
     window = event.get("official_window") if isinstance(event.get("official_window"), dict) else {}
     expected_start = parse_timestamp(window.get("start_at"))
     expected_end = parse_timestamp(window.get("end_at"))
@@ -100,12 +115,17 @@ def _timeline_evidence(
         "confirmed",
         "reset_observed",
     }
+    if banked_credit_announcement and expected_end is None:
+        expected_start = observed_at
+        expected_end = observed_at + 86400
     archived = (
         event.get("source") == "archive"
         and event.get("confidence") == "high"
         and reset_type is not None
     )
-    if completed and (official or archived or verified or observed):
+    if banked_credit_announcement and official:
+        stage = ResetStage.ANNOUNCED
+    elif completed and (official or archived or verified or observed):
         stage = ResetStage.CONFIRMED
     elif official and state == "announced" and expected_end is not None and reset_type is not None:
         stage = ResetStage.ANNOUNCED
@@ -175,6 +195,28 @@ def parse_reset_feed(data: object) -> FetchedSource:
             verification.get("observed_at") or tweet.get("declared_at") or tweet.get("at")
         )
         contextual_id = str(tweet.get("contextual_reset_source_id") or "").strip()
+        if (
+            item_id not in by_item
+            and summary
+            and item_id
+            and observed_at is not None
+            and is_official_banked_announcement(tweet.get("kind"), summary, url)
+        ):
+            by_item[item_id] = ResetEvidence(
+                source_name="reset_feed",
+                source_family="codexreset",
+                source_item_id=item_id,
+                canonical_hint=canonical_from(url, item_id),
+                signal_stage=ResetStage.ANNOUNCED,
+                title="Official Codex banked reset announcement",
+                summary=summary,
+                url=url,
+                observed_at=observed_at,
+                reset_type=ResetType.BANKED,
+                expected_start_ts=observed_at,
+                expected_end_ts=observed_at + 86400,
+                official=True,
+            )
         if contextual_id and item_id in by_item:
             by_item[item_id] = replace(
                 by_item[item_id],

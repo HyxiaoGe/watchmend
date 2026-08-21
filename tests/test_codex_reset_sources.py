@@ -29,6 +29,40 @@ def test_real_timeline_contract_classifies_hint_announced_and_confirmed():
     assert by_id["2086972802457063486"].signal_stage is ResetStage.CONFIRMED
 
 
+def test_official_banked_credit_during_day_is_reliable_announcement():
+    data = _json("codex_reset_banked_announcement_sample.json")
+    result = parse_timeline(data)
+    feed_announced = parse_reset_feed(data).evidence[0]
+    assert feed_announced.source_name == "reset_feed"
+    assert feed_announced.signal_stage is ResetStage.ANNOUNCED
+    tweet_only = _json("codex_reset_banked_announcement_sample.json")
+    tweet_only["events"] = []
+    tweet_announcement = parse_reset_feed(tweet_only).evidence[0]
+    assert tweet_announcement.source_item_id == "2090766694897619318"
+    assert tweet_announcement.signal_stage is ResetStage.ANNOUNCED
+    assert tweet_announcement.reset_type is ResetType.BANKED
+    assert len(result.evidence) == 1
+    announced = result.evidence[0]
+    assert announced.source_item_id == "2090766694897619318"
+    assert announced.signal_stage is ResetStage.ANNOUNCED
+    assert announced.reset_type is ResetType.BANKED
+    assert announced.official is True
+    assert announced.expected_start_ts == parse_timestamp("2026-08-21T11:43:19.000Z")
+    assert announced.expected_end_ts == announced.expected_start_ts + 86400
+
+
+def test_generic_credit_event_is_not_mistaken_for_banked_reset():
+    data = _json("codex_reset_banked_announcement_sample.json")
+    event = data["events"][0]
+    event["reset_kind"] = None
+    event["summary"] = "20M active users celebration credits during the day."
+    assert parse_timeline(data).evidence == []
+    data["events"] = []
+    data["tweets"][0]["kind"] = None
+    data["tweets"][0]["text"] = "20M active users celebration credits during the day."
+    assert parse_reset_feed(data).evidence == []
+
+
 def test_announced_requires_official_window_type_and_link():
     data = _json("codex_reset_timeline_sample.json")
     event = data["events"][0]

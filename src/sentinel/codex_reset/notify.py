@@ -50,7 +50,9 @@ def build_codex_reset_card(
         f"**阶段**：{_STAGE_LABEL[stage]}",
         f"**类型**：{_TYPE_LABEL.get(event.reset_type, '待确认')}",
     ]
-    if stage in {ResetStage.ANNOUNCED, ResetStage.DELAYED, ResetStage.CONFIRMED}:
+    if event.reset_type is ResetType.BANKED and stage is ResetStage.ANNOUNCED:
+        fields.append("**预计时间**：官方称当天内（以原帖表述为准）")
+    elif stage in {ResetStage.ANNOUNCED, ResetStage.DELAYED, ResetStage.CONFIRMED}:
         fields.append(f"**预计窗口**：{_format_time(event.expected_start_ts, utc_offset)}")
         fields.append(f"**预计截止**：{_format_time(event.expected_end_ts, utc_offset)}")
     if stage is ResetStage.CONFIRMED:
@@ -111,10 +113,15 @@ def codex_reset_notification(
     now_str: str,
     utc_offset: int,
 ) -> Notification:
+    expected_label = (
+        "官方称当天内（以原帖表述为准）"
+        if event.reset_type is ResetType.BANKED and stage is ResetStage.ANNOUNCED
+        else _format_time(event.expected_end_ts, utc_offset)
+    )
     fields = [
         ("阶段", _STAGE_LABEL[stage]),
         ("类型", _TYPE_LABEL.get(event.reset_type, "待确认")),
-        ("预计截止", _format_time(event.expected_end_ts, utc_offset)),
+        ("预计时间", expected_label),
         ("公开来源族", str(len(event.source_families))),
     ]
     return Notification(

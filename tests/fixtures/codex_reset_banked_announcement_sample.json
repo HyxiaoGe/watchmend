@@ -1,0 +1,35 @@
+{
+  "updated_at": "2026-08-21T14:27:22.741Z",
+  "fetched_at": "2026-08-21T14:27:03.000Z",
+  "events": [
+    {
+      "id": "2090766694897619318",
+      "date": "2026-08-21",
+      "type": "credits",
+      "group": "credits",
+      "summary": "20M active users milestone: announced one banked reset for every Codex and ChatGPT Work user, credited during the day for on-demand use.",
+      "url": "https://x.com/thsottiaux/status/2090766694897619318",
+      "announced_at": "2026-08-21T11:43:19.000Z",
+      "effective_at": null,
+      "official_window": null,
+      "preview": false,
+      "scope": "global",
+      "confidence": "high",
+      "source": "archive",
+      "source_label": "Verified archive",
+      "reset_kind": "banked",
+      "time_kind": "announcement / confirmation time"
+    }
+  ],
+  "tweets": [
+    {
+      "id": "2090766694897619318",
+      "url": "https://x.com/thsottiaux/status/2090766694897619318",
+      "text": "20M active users celebration: during the day we will credit every Codex and ChatGPT Work user with a BANKED reset for on-demand use.",
+      "at": "2026-08-21T11:43:19.000Z",
+      "declared_at": "2026-08-21T11:43:19.000Z",
+      "kind": "banked",
+      "is_reply": false
+    }
+  ]
+}

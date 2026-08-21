@@ -217,6 +217,7 @@ class ResetStore:
         row = self._conn.execute(
             "SELECT canonical_id FROM codex_reset_events "
             "WHERE stage IN ('announced', 'delayed') AND expected_end_ts IS NOT NULL "
+            "AND COALESCE(reset_type, '') != 'banked' "
             "AND COALESCE(expected_start_ts, announced_ts, expected_end_ts) <= ? "
             "AND expected_end_ts + ? >= ? ORDER BY expected_end_ts DESC LIMIT 1",
             (observed_at + tolerance_seconds, tolerance_seconds, observed_at),
@@ -320,6 +321,7 @@ class ResetStore:
     def mark_delayed(self, *, now_ts: int, grace_seconds: int) -> list[ResetEvent]:
         rows = self._conn.execute(
             f"SELECT {_EVENT_COLUMNS} FROM codex_reset_events WHERE stage = 'announced' "
+            "AND COALESCE(reset_type, '') != 'banked' "
             "AND expected_end_ts IS NOT NULL AND expected_end_ts + ? < ?",
             (grace_seconds, now_ts),
         ).fetchall()

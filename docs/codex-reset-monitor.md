@@ -13,8 +13,13 @@
 | `delayed` | 明确预告超过预计截止和宽限期，仍未满足确认门槛 | 延迟卡 |
 | `confirmed` | 至少两个独立公开来源族一致，或本机只读参考账号证据 | 落地确认卡 |
 
-阶段只单调前进。`delayed` 不是终态，后续证据充分时仍升级 `confirmed`。首次启用不会补发
-超过 `SENTINEL_CODEX_RESET_NOTIFY_MAX_AGE_HOURS` 的旧事件。
+`direct` 事件阶段只单调前进。`delayed` 不是终态，后续证据充分时仍升级 `confirmed`。
+首次启用不会补发超过 `SENTINEL_CODEX_RESET_NOTIFY_MAX_AGE_HOURS` 的旧事件。
+
+`banked` 是公告型事件：官方相关账号明确宣布 banked reset，且给出“当天内”等未来发放时间时，
+直接发送 `announced`。这类事件不要求额度窗口重启或本机账号观察到入账，也不会进入
+`delayed`/`confirmed`。卡片保留官方原帖措辞和链接，不把模糊的“当天内”伪装成某个时区的
+精确截止时间。普通 credits、庆祝帖或统计概率仍不会触发。
 
 可选的 `local_reference` 探针通过 Codex 官方 app-server 的 `account/rateLimits/read` 只读读取
 额度窗口元数据。它只允许把已存在的 `announced`/`delayed` 事件升级为 `confirmed`，不能单独
@@ -32,7 +37,8 @@
 5. `https://codexreset.org/`，仅在结构化来源不足或出现近期确认时做 HTML 降级/交叉验证，
    且默认最多每小时一次。
 
-解析器基于 2026-08-13 抓取的真实脱敏样本做契约测试。不同来源引用同一官方帖子时按 X
+解析器基于 2026-08-13 与 2026-08-21 抓取的真实脱敏样本做契约测试，其中包括官方
+`credits + banked reset + during the day` 公告。不同来源引用同一官方帖子时按 X
 status ID 归一；确认帖与预告帖 ID 不同时，优先使用上游 contextual ID，其次按预告窗口和
 相近确认时间合并。`codex-reset.com` 的 feed 与 timeline 视为同一来源族，不能互相凑足
 “两个独立来源”的确认门槛；`codexradar` 与 `codexreset.org` 分属另外的来源族。

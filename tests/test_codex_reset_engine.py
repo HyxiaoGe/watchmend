@@ -52,6 +52,7 @@ def _evidence(
     item: str = "1",
     observed: int = 1000,
     canonical: str = "x:1",
+    reset_type: ResetType = ResetType.DIRECT,
     local_reference: bool = False,
 ) -> ResetEvidence:
     announced = stage is ResetStage.ANNOUNCED
@@ -65,7 +66,7 @@ def _evidence(
         summary="official Codex reset signal",
         url=f"https://x.com/thsottiaux/status/{item}",
         observed_at=observed,
-        reset_type=ResetType.DIRECT,
+        reset_type=reset_type,
         expected_start_ts=observed if announced else None,
         expected_end_ts=observed + 50 if announced else None,
         official=True,
@@ -198,6 +199,69 @@ async def test_delayed_event_can_still_upgrade_to_confirmed(tmp_path):
         ResetStage.DELAYED,
         ResetStage.CONFIRMED,
     ]
+    monitor.close()
+    await client.aclose()
+
+
+async def test_banked_announcement_is_notification_only_without_delay_or_confirmation(tmp_path):
+    now = [1000]
+    announcement = _evidence(
+        ResetStage.ANNOUNCED,
+        item="banked",
+        observed=1000,
+        reset_type=ResetType.BANKED,
+    )
+    first_confirmation = _evidence(
+        ResetStage.CONFIRMED,
+        family="a",
+        item="done-a",
+        observed=1200,
+        reset_type=ResetType.BANKED,
+    )
+    second_confirmation = _evidence(
+        ResetStage.CONFIRMED,
+        family="b",
+        item="done-b",
+        observed=1200,
+        reset_type=ResetType.BANKED,
+    )
+    source_a = FakeSource(
+        "a",
+        "a",
+        [
+            _fetched("a", "a", announcement),
+            _fetched("a", "a", announcement, first_confirmation, content_ts=1200),
+        ],
+    )
+    source_b = FakeSource(
+        "b",
+        "b",
+        [
+            _fetched("b", "b"),
+            _fetched("b", "b", second_confirmation, content_ts=1200),
+        ],
+    )
+    broadcaster = FakeBroadcaster()
+    client = httpx.AsyncClient()
+    monitor = ResetMonitor(
+        settings=_settings(tmp_path),
+        client=client,
+        broadcaster=broadcaster,
+        sources=[source_a, source_b],
+        clock=lambda: now[0],
+        owner="test",
+    )
+
+    await monitor.tick()
+    now[0] = 1200
+    await monitor.tick()
+
+    event = monitor.store.get_event("x:1")
+    assert event is not None and event.stage is ResetStage.ANNOUNCED
+    assert event.reset_type is ResetType.BANKED
+    assert [item.data["stage"] for item in broadcaster.sent] == [ResetStage.ANNOUNCED]
+    assert monitor.store.delivery_status("x:1", ResetStage.DELAYED) is None
+    assert monitor.store.delivery_status("x:1", ResetStage.CONFIRMED) is None
     monitor.close()
     await client.aclose()
 
