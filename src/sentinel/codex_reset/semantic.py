@@ -17,7 +17,9 @@ _SYSTEM_PROMPT = """你是 Codex 共享额度重置帖子的意图分类器。
 3. announced：官方作者明确说将发生 reset/额度入账，并给出可识别的未来时间表达。
 4. 不得判断额度已经落地或 confirmed；过去完成、一般庆祝、产品发布均不能据此确认重置。
 5. reset_type 只能按原文判断；没有把握时必须为 unknown。
-6. reason 只简述原文证据，不得补造事实。
+6. time_text 保留原文中的时间短语，不得补造时间。
+7. reason 必须使用简体中文，只简述原文证据，不得补造事实；banked 类型写作
+   “储备重置（Banked reset）”。
 只返回符合 JSON Schema 的对象，不要输出 Markdown。
 """
 _TRANSLATION_PROMPT = """你是 WatchMend 的英文到简体中文翻译器。

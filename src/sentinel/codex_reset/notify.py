@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from sentinel.codex_reset.display import reset_type_label
 from sentinel.codex_reset.models import ResetEvent, ResetStage, ResetType
 from sentinel.notify.message import Kind, Notification, Severity
 
@@ -29,7 +30,6 @@ _STAGE_SEVERITY = {
     ResetStage.CONFIRMED: Severity.INFO,
     ResetStage.DELAYED: Severity.CRITICAL,
 }
-_TYPE_LABEL = {ResetType.DIRECT: "直接重置", ResetType.BANKED: "Banked reset"}
 
 
 def _format_time(timestamp: int | None, utc_offset: int) -> str:
@@ -48,7 +48,7 @@ def build_codex_reset_card(
 ) -> dict:
     fields = [
         f"**阶段**：{_STAGE_LABEL[stage]}",
-        f"**类型**：{_TYPE_LABEL.get(event.reset_type, '待确认')}",
+        f"**类型**：{reset_type_label(event.reset_type)}",
     ]
     if event.reset_type is ResetType.BANKED and stage is ResetStage.ANNOUNCED:
         fields.append("**预计时间**：官方称当天内（以原帖表述为准）")
@@ -130,7 +130,7 @@ def codex_reset_notification(
     )
     fields = [
         ("阶段", _STAGE_LABEL[stage]),
-        ("类型", _TYPE_LABEL.get(event.reset_type, "待确认")),
+        ("类型", reset_type_label(event.reset_type)),
         ("预计时间", expected_label),
         ("公开来源族", str(len(event.source_families))),
     ]
