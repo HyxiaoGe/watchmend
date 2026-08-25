@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Literal
 
 import httpx
@@ -13,12 +14,15 @@ _SYSTEM_PROMPT = """你是 Codex 共享额度重置帖子的意图分类器。
 
 分类规则：
 1. ignore：与 Codex/ChatGPT Work 额度重置或 banked reset 无关。
-2. hint：官方作者表达将赠送、重置、补充或调整额度的意图，但信息不完整。
+2. hint：官方作者明确提到将赠送、重置或补充可用额度，但时间或类型不完整。
 3. announced：官方作者明确说将发生 reset/额度入账，并给出可识别的未来时间表达。
 4. 不得判断额度已经落地或 confirmed；过去完成、一般庆祝、产品发布均不能据此确认重置。
-5. reset_type 只能按原文判断；没有把握时必须为 unknown。
-6. time_text 保留原文中的时间短语，不得补造时间。
-7. reason 必须使用简体中文，只简述原文证据，不得补造事实；banked 类型写作
+5. 恢复、缩短、延长或调整 5h/weekly limit、速率限制窗口、节流和套餐规则属于政策变化，
+   不是额度重置；除非原文另有明确 reset/credit 动作，否则必须为 ignore。
+6. limit、quota、usage、generous 等词单独出现不构成重置信号。
+7. reset_type 只能按原文判断；没有把握时必须为 unknown。
+8. time_text 保留原文中的时间短语，不得补造时间。
+9. reason 必须使用简体中文，只简述原文证据，不得补造事实；banked 类型写作
    “储备重置（Banked reset）”。
 只返回符合 JSON Schema 的对象，不要输出 Markdown。
 """
@@ -28,6 +32,20 @@ _TRANSLATION_PROMPT = """你是 WatchMend 的英文到简体中文翻译器。
 Codex、ChatGPT Work、banked reset 等产品术语可保留英文并自然翻译上下文。
 只返回符合 JSON Schema 的对象。
 """
+
+_RESET_WORD = re.compile(r"\breset(?:s|ting)?\b|重置", re.IGNORECASE)
+_CREDIT_ACTION = re.compile(
+    r"\b(?:credit(?:ed|ing|s)?|grant(?:ed|ing|s)?|replenish(?:ed|ing|es)?|top[ -]?up)\b"
+    r".{0,120}\b(?:codex|chatgpt|accounts?|usage|quota|limits?|credits?)\b"
+    r"|\b(?:codex|chatgpt|accounts?|usage|quota|limits?|credits?)\b.{0,120}"
+    r"\b(?:credit(?:ed|ing|s)?|grant(?:ed|ing|s)?|replenish(?:ed|ing|es)?|top[ -]?up)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def has_explicit_reset_action(text: str) -> bool:
+    """只让明确的 reset/额度入账动作进入可选模型补漏层。"""
+    return bool(_RESET_WORD.search(text) or _CREDIT_ACTION.search(text))
 
 
 class ResetIntentError(RuntimeError):

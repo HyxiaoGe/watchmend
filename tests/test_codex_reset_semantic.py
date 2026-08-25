@@ -9,6 +9,7 @@ from sentinel.codex_reset.semantic import (
     ResetIntent,
     ResetIntentClassifier,
     ResetIntentError,
+    has_explicit_reset_action,
 )
 from sentinel.codex_reset.sources import parse_reset_feed
 from sentinel.config import Settings
@@ -57,7 +58,7 @@ def _candidate(observed_at=1000):
         source_name="reset_feed",
         source_family="codexreset",
         source_item_id="2090000000000000000",
-        text="We have something good for Codex usage limits later today.",
+        text="We will reset Codex usage limits later today.",
         url="https://x.com/thsottiaux/status/2090000000000000000",
         observed_at=observed_at,
     )
@@ -160,6 +161,64 @@ async def test_positive_model_result_only_creates_hint_and_is_cached(tmp_path):
 
     monitor.close()
     await client.aclose()
+
+
+async def test_limit_policy_change_is_rejected_before_model(tmp_path):
+    candidate = ResetIntentCandidate(
+        source_name="reset_feed",
+        source_family="codexreset",
+        source_item_id="2092058556707344708",
+        text=(
+            "Tomorrow we will bring back the 5h limit for Plus accounts across "
+            "ChatGPT Work and Codex. I had mentioned this a while ago, but then "
+            "postponed it."
+        ),
+        url="https://x.com/thsottiaux/status/2092058556707344708",
+        observed_at=1000,
+    )
+    classifier = FakeClassifier(
+        [
+            ResetIntent(
+                decision="announced",
+                reset_type="unknown",
+                time_text="Tomorrow",
+                reason="错误地把限额政策调整识别为重置",
+                confidence=0.9,
+            )
+        ]
+    )
+    broadcaster = FakeBroadcaster()
+    client = httpx.AsyncClient()
+    monitor = ResetMonitor(
+        settings=_settings(tmp_path),
+        client=client,
+        broadcaster=broadcaster,
+        sources=[FakeSource(candidate)],
+        intent_classifier=classifier,
+        clock=lambda: 1000,
+        owner="semantic-policy-test",
+    )
+
+    await monitor.tick()
+
+    assert classifier.calls == 0
+    assert monitor.store.get_event("x:2092058556707344708") is None
+    assert broadcaster.sent == []
+
+    monitor.close()
+    await client.aclose()
+
+
+def test_explicit_reset_action_gate_accepts_real_reset_or_credit_actions():
+    assert not has_explicit_reset_action(
+        "Tomorrow we will bring back the 5h limit for Plus accounts across ChatGPT Work and Codex."
+    )
+    assert has_explicit_reset_action(
+        "During the day we will credit every Codex and ChatGPT Work user with a BANKED reset."
+    )
+    assert has_explicit_reset_action(
+        "Tomorrow we will do a full reset of usage for all paid subscriptions."
+    )
 
 
 async def test_classifier_failure_uses_persistent_backoff_without_hurting_source(tmp_path):

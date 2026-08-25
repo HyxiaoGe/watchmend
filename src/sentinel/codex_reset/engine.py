@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from sentinel.codex_reset.http import ResetFetcher
 from sentinel.codex_reset.models import ResetEvidence, ResetStage, ResetType
 from sentinel.codex_reset.notify import codex_reset_notification
-from sentinel.codex_reset.semantic import ResetIntentClassifier
+from sentinel.codex_reset.semantic import ResetIntentClassifier, has_explicit_reset_action
 from sentinel.codex_reset.sources import canonical_from, default_sources, is_official_url
 from sentinel.codex_reset.store import ResetStore
 
@@ -172,6 +172,7 @@ class ResetMonitor:
             if (item.source_name, item.source_item_id) not in known
             and self._recent_enough(item.observed_at, now_ts)
             and is_official_url(item.url)
+            and has_explicit_reset_action(item.text)
         }
         evidence = []
         for candidate in candidates.values():
