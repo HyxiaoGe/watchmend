@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from sentinel.codex_reset.confirmation import confirmation_basis
 from sentinel.codex_reset.models import (
     ResetEvent,
     ResetEvidence,
@@ -426,6 +427,7 @@ class ResetStore:
         """不同来源可能引用同一确认串中的父帖/回复；按落地时刻合并。"""
         row = self._conn.execute(
             "SELECT canonical_id FROM codex_reset_evidence WHERE signal_stage = 'confirmed' "
+            "AND local_reference = 0 "
             "AND ABS(observed_at - ?) <= ? ORDER BY ABS(observed_at - ?) LIMIT 1",
             (observed_at, tolerance_seconds, observed_at),
         ).fetchone()
@@ -437,6 +439,34 @@ class ResetStore:
             (canonical_id,),
         ).fetchone()
         return self._event_from_row(row) if row else None
+
+    def find_silent_confirmation_target(self, observed_at: int) -> str | None:
+        """只关联六小时内唯一的官方 direct 到账记录，歧义时不自动确认。"""
+        rows = self._conn.execute(
+            "SELECT DISTINCT canonical_id FROM codex_reset_evidence "
+            "WHERE signal_stage = 'confirmed' AND explicit_completed = 1 "
+            "AND local_reference = 0 AND official = 1 AND reset_type = 'direct' "
+            "AND ABS(observed_at - ?) <= 21600",
+            (observed_at,),
+        ).fetchall()
+        return rows[0][0] if len(rows) == 1 else None
+
+    def evidence_target(self, item: ResetEvidence) -> str | None:
+        row = self._conn.execute(
+            "SELECT canonical_id FROM codex_reset_evidence "
+            "WHERE source_name = ? AND source_item_id = ?",
+            (item.source_name, item.source_item_id),
+        ).fetchone()
+        return row[0] if row else None
+
+    def pending_references(self, *, now_ts: int, max_age_seconds: int) -> list[ResetEvidence]:
+        rows = self._conn.execute(
+            "SELECT DISTINCT canonical_id FROM codex_reset_evidence "
+            "WHERE local_reference = 1 AND canonical_id LIKE 'local-reference:%' "
+            "AND observed_at BETWEEN ? AND ?",
+            (now_ts - max_age_seconds, now_ts),
+        ).fetchall()
+        return [item for row in rows for item in self.evidence_for(row[0]) if item.local_reference]
 
     def upsert_event(
         self,
@@ -675,6 +705,8 @@ class ResetStore:
         )
 
     def enrich_event(self, event: ResetEvent) -> ResetEvent:
+        evidence = self.evidence_for(event.canonical_id)
+        confirmations = [e for e in evidence if e.signal_stage is ResetStage.CONFIRMED]
         rows = self._conn.execute(
             "SELECT DISTINCT source_family FROM codex_reset_evidence "
             "WHERE canonical_id = ? ORDER BY source_family",
@@ -689,6 +721,12 @@ class ResetStore:
                 **event.__dict__,
                 "evidence_count": count,
                 "source_families": tuple(row[0] for row in rows),
+                "had_preannouncement": any(
+                    e.signal_stage in {ResetStage.HINT, ResetStage.ANNOUNCED} for e in evidence
+                ),
+                "confirmation_basis": confirmation_basis(evidence),
+                "evidence_start_ts": min((e.observed_at for e in confirmations), default=None),
+                "evidence_end_ts": max((e.observed_at for e in confirmations), default=None),
             }
         )
 

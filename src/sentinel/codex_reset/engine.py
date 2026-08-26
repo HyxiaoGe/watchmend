@@ -11,6 +11,7 @@ import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
+from sentinel.codex_reset.confirmation import confirmation_basis
 from sentinel.codex_reset.http import ResetFetcher
 from sentinel.codex_reset.models import ResetEvidence, ResetStage, ResetType
 from sentinel.codex_reset.notify import codex_reset_notification
@@ -91,8 +92,14 @@ class ResetMonitor:
                 interval_seconds=self._settings.sentinel_codex_reset_html_poll_seconds,
             )
         ):
-            fetched.extend(await self._fetch_sources([fallback], now_ts=now_ts))
-            evidence = [item for result in fetched for item in result.evidence]
+            extra = await self._fetch_sources([fallback], now_ts=now_ts)
+            evidence.extend(item for result in extra for item in result.evidence)
+        evidence.extend(
+            self._store.pending_references(
+                now_ts=now_ts,
+                max_age_seconds=self._settings.sentinel_codex_reset_reference_max_reset_age_seconds,
+            )
+        )
         aliases = {
             f"x:{item.source_item_id}": item.canonical_hint
             for item in evidence
@@ -115,7 +122,11 @@ class ResetMonitor:
         for canonical_id in preliminary:
             self._advance_event(canonical_id, now_ts=now_ts)
         confirmed: set[str] = set()
-        for item in (item for item in evidence if item.signal_stage is ResetStage.CONFIRMED):
+        # 公开事实先落库，再关联参考窗口；无预告也可直接形成 confirmed。
+        for item in sorted(
+            (item for item in evidence if item.signal_stage is ResetStage.CONFIRMED),
+            key=lambda item: item.local_reference,
+        ):
             canonical_id = self._canonical_target(item)
             if canonical_id is None:
                 continue
@@ -251,8 +262,19 @@ class ResetMonitor:
         if evidence.signal_stage is not ResetStage.CONFIRMED:
             return evidence.canonical_hint
         if evidence.local_reference:
-            # 本机额度事实只能确认已存在的正式预告，绝不能单独制造 reset 事件。
-            return self._store.find_confirmation_target(evidence.observed_at)
+            previous = self._store.evidence_target(evidence)
+            if previous and self._store.get_event(previous) is not None:
+                return previous
+            return (
+                self._store.find_silent_confirmation_target(evidence.observed_at)
+                or self._store.find_confirmation_target(evidence.observed_at)
+                or evidence.canonical_hint
+            )
+        previous = self._store.evidence_target(evidence)
+        if previous:
+            return previous
+        if self._store.evidence_for(evidence.canonical_hint):
+            return evidence.canonical_hint
         if self._store.get_event(evidence.canonical_hint) is not None:
             return evidence.canonical_hint
         evidence_target = self._store.find_confirmation_evidence_target(evidence.observed_at)
@@ -289,13 +311,7 @@ class ResetMonitor:
         if any(item.reset_type is ResetType.BANKED for item in announcements):
             return ResetStage.ANNOUNCED
 
-        confirmations = [
-            item
-            for item in evidence
-            if item.signal_stage is ResetStage.CONFIRMED and item.explicit_completed
-        ]
-        confirmed_families = {item.source_family for item in confirmations}
-        if len(confirmed_families) >= 2 or any(item.local_reference for item in confirmations):
+        if confirmation_basis(evidence):
             return ResetStage.CONFIRMED
         if announcements:
             return ResetStage.ANNOUNCED
@@ -309,7 +325,7 @@ class ResetMonitor:
         if event_ts is None:
             return False
         max_age = self._settings.sentinel_codex_reset_notify_max_age_hours * 3600
-        return now_ts - event_ts <= max_age
+        return 0 <= now_ts - event_ts <= max_age
 
     async def _dispatch_due(self, now_ts: int) -> None:
         offset = self._settings.sentinel_heartbeat_utc_offset

@@ -80,6 +80,18 @@ class ResetEvent:
     evidence_count: int = 0
     source_families: tuple[str, ...] = ()
     translated_summary: str = ""
+    had_preannouncement: bool = False
+    confirmation_basis: str = ""
+    evidence_start_ts: int | None = None
+    evidence_end_ts: int | None = None
+
+    @property
+    def silent(self) -> bool:
+        return (
+            self.stage is ResetStage.CONFIRMED
+            and self.announced_ts is None
+            and not self.had_preannouncement
+        )
 
 
 def can_advance(current: ResetStage | None, target: ResetStage) -> bool:

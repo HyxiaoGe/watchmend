@@ -33,6 +33,12 @@ _FUTURE_RESET = re.compile(
     r"|(?:tomorrow|monday|next|soon|later|within|未来|明天|稍后|小时).{0,50}(?:reset|重置)",
     re.IGNORECASE,
 )
+_RESTORED = re.compile(
+    r"\b(?:weekly\s+)?(?:usage|quota|limits?)\s+(?:is\s+|are\s+)?"
+    r"(?:back\s+to|restored\s+to)\s+100%"
+    r"|\breset\s+(?:has\s+been\s+|was\s+)?propagated\s+to\s+accounts\b",
+    re.IGNORECASE,
+)
 _DURATION = re.compile(r"(\d+)\s*(?:hours?|小时)", re.IGNORECASE)
 _DURING_DAY = re.compile(
     r"during (?:the )?day|later today|by (?:the )?end of (?:the )?day|当天|今日", re.IGNORECASE
@@ -114,7 +120,16 @@ def _timeline_evidence(
     window = event.get("official_window") if isinstance(event.get("official_window"), dict) else {}
     expected_start = parse_timestamp(window.get("start_at"))
     expected_end = parse_timestamp(window.get("end_at"))
-    completed = bool(_COMPLETED.search(summary))
+    # 归档已恢复事实不是未来预告；announced 标签本身不表示到账。
+    completed = bool(
+        _COMPLETED.search(summary)
+        or (
+            event.get("preview") is False
+            and reset_type is ResetType.DIRECT
+            and _RESTORED.search(summary)
+            and not re.search(r"\b(?:will|would|should|not|never|tomorrow)\b", summary, re.I)
+        )
+    )
     state = str(event.get("announcement_state") or "").lower()
     verified = str(event.get("reset_verification_status") or "").lower() == "confirmed"
     observed = str(event.get("observation_result") or "").lower() in {

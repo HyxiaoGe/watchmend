@@ -165,12 +165,13 @@ def evidence_from_rate_limits(
     by_limit_id = result.get("rateLimitsByLimitId")
     groups = by_limit_id.items() if isinstance(by_limit_id, dict) else ()
     for limit_id, limits in groups:
-        if isinstance(limits, dict):
+        # 模型专属空窗口可能每次返回 now + 7d，不能证明共享额度重置。
+        if limit_id == "codex" and isinstance(limits, dict):
             _collect_windows(candidates, str(limit_id), limits, min_window_minutes)
 
     if not candidates:
         limits = result.get("rateLimits")
-        if isinstance(limits, dict):
+        if isinstance(limits, dict) and limits.get("limitId", "codex") == "codex":
             _collect_windows(candidates, "codex", limits, min_window_minutes)
     if not candidates:
         return None
@@ -186,7 +187,7 @@ def evidence_from_rate_limits(
         canonical_hint=f"local-reference:{reset_start_ts}",
         signal_stage=ResetStage.CONFIRMED,
         title="Codex reset 本机参考确认",
-        summary="本机参考账号只读额度窗口显示七日配额窗口已重新开始。",
+        summary="本机参考账号只读观察到共享 Codex 七日额度窗口起点。",
         url="",
         observed_at=reset_start_ts,
         explicit_completed=True,

@@ -1,0 +1,27 @@
+{
+  "_fixture_note": "2026-08-26 只读抓取 codex-reset.com/api/feed、api/timeline 的单事件字段子集；不是原始 X 响应。",
+  "fetched_at": "2026-08-26T02:52:53.000Z",
+  "updated_at": "2026-08-26T02:52:22.898Z",
+  "tweets": [],
+  "events": [
+    {
+      "id": "2092311059197808936",
+      "date": "2026-08-25",
+      "type": "reset",
+      "group": "reset",
+      "summary": "Quiet reset for all paid plans — weekly usage back to 100% from ~14:00 UTC. Tibo confirmed it only in replies (\"Ah yeah, forgot to say\") ahead of the Plus 5h-limit return.",
+      "url": "https://x.com/thsottiaux/status/2092311059197808936",
+      "announced_at": "2026-08-25T14:15:00.000Z",
+      "effective_at": null,
+      "official_window": null,
+      "preview": false,
+      "scope": "global",
+      "confidence": "high",
+      "source": "archive",
+      "source_label": "Verified archive",
+      "reset_kind": "hard",
+      "announcement_state": "announced",
+      "time_kind": "announcement / confirmation time"
+    }
+  ]
+}
