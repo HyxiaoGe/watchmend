@@ -171,7 +171,7 @@ async def test_ambiguous_public_events_do_not_claim_one_reference_window(tmp_pat
         source_item_id="other",
         canonical_hint="x:other",
         url="https://x.com/thsottiaux/status/other",
-        observed_at=first.observed_at + 7200,
+        observed_at=first.observed_at + 1200,
     )
     async with httpx.AsyncClient() as client:
         broadcaster = FakeBroadcaster()
@@ -214,6 +214,33 @@ async def test_silent_public_confirmation_with_reference_failure_waits_safely(tm
             ]
             == 1
         )
+        monitor.close()
+
+
+async def test_later_reply_does_not_block_clearly_matching_reset_window(tmp_path):
+    first = _public()
+    later = replace(
+        first,
+        source_name="reset_html",
+        source_family="codexreset_org",
+        source_item_id="2092316228497063958",
+        canonical_hint="x:2092316228497063958",
+        url="https://x.com/thsottiaux/status/2092316228497063958",
+        observed_at=1787682036,
+    )
+    broadcaster = FakeBroadcaster()
+    async with httpx.AsyncClient() as client:
+        monitor = ResetMonitor(
+            settings=_settings(tmp_path),
+            client=client,
+            broadcaster=broadcaster,
+            sources=[_source("reset_feed", [first]), _source("reference_account", [_reference()])],
+            clock=lambda: 1787713000,
+            owner="later-reply",
+        )
+        monitor.store.put_evidence(later.canonical_hint, later, now_ts=1787712000)
+        await monitor.tick()
+        assert [n.subject for n in broadcaster.sent] == [first.canonical_hint]
         monitor.close()
 
 

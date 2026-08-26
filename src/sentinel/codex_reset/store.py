@@ -441,15 +441,21 @@ class ResetStore:
         return self._event_from_row(row) if row else None
 
     def find_silent_confirmation_target(self, observed_at: int) -> str | None:
-        """只关联六小时内唯一的官方 direct 到账记录，歧义时不自动确认。"""
+        """关联唯一或明显最近的官方 direct 到账记录，歧义时不自动确认。"""
         rows = self._conn.execute(
-            "SELECT DISTINCT canonical_id FROM codex_reset_evidence "
+            "SELECT canonical_id, MIN(ABS(observed_at - ?)) AS distance "
+            "FROM codex_reset_evidence "
             "WHERE signal_stage = 'confirmed' AND explicit_completed = 1 "
             "AND local_reference = 0 AND official = 1 AND reset_type = 'direct' "
-            "AND ABS(observed_at - ?) <= 21600",
-            (observed_at,),
+            "AND ABS(observed_at - ?) <= 21600 "
+            "GROUP BY canonical_id ORDER BY distance, canonical_id",
+            (observed_at, observed_at),
         ).fetchall()
-        return rows[0][0] if len(rows) == 1 else None
+        if len(rows) == 1:
+            return rows[0][0]
+        if len(rows) > 1 and rows[0][1] <= 1800 and rows[1][1] - rows[0][1] >= 3600:
+            return rows[0][0]
+        return None
 
     def evidence_target(self, item: ResetEvidence) -> str | None:
         row = self._conn.execute(

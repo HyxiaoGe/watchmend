@@ -1,0 +1,5 @@
+# 仅用于依赖未变化的未发版修复，复用已运行验证的 Python 3.12 环境。
+ARG BASE_IMAGE=watchmend:codex-reset-14a82d7
+FROM ${BASE_IMAGE}
+COPY src ./src
+COPY src/sentinel /usr/local/lib/python3.12/site-packages/sentinel
