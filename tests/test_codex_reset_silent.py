@@ -137,12 +137,16 @@ async def test_silent_confirmation_without_preview_is_sent_once_and_retryable(tm
 
 async def test_pending_reference_survives_restart_before_public_archive(tmp_path):
     broadcaster = FakeBroadcaster()
+    stable_reference = replace(
+        _reference(),
+        summary="本机参考账号连续两次只读观察到同一共享 Codex七日额度窗口起点。",
+    )
     async with httpx.AsyncClient() as client:
         monitor = ResetMonitor(
             settings=_settings(tmp_path),
             client=client,
             broadcaster=broadcaster,
-            sources=[_source("reference_account", [_reference()])],
+            sources=[_source("reference_account", [stable_reference])],
             clock=lambda: 1787713000,
             owner="early",
         )

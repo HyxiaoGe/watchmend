@@ -433,6 +433,36 @@ class ResetStore:
         ).fetchone()
         return row[0] if row else None
 
+    def find_prior_hint_target(
+        self, observed_at: int, *, tolerance_seconds: int = 151200
+    ) -> str | None:
+        rows = self._conn.execute(
+            "SELECT e.canonical_id, MAX(e.observed_at) AS hint_ts "
+            "FROM codex_reset_evidence e JOIN codex_reset_events v "
+            "ON v.canonical_id = e.canonical_id "
+            "WHERE e.signal_stage IN ('hint', 'announced') AND e.official = 1 "
+            "AND e.reset_type = 'direct' AND e.observed_at BETWEEN ? AND ? "
+            "AND v.stage IN ('hint', 'announced', 'delayed') "
+            "GROUP BY e.canonical_id ORDER BY hint_ts DESC",
+            (observed_at - tolerance_seconds, observed_at),
+        ).fetchall()
+        return rows[0][0] if len(rows) == 1 else None
+
+    def find_followup_confirmation_target(
+        self, observed_at: int, *, tolerance_seconds: int = 151200
+    ) -> str | None:
+        rows = self._conn.execute(
+            "SELECT e.canonical_id, MIN(e.observed_at) AS completed_ts "
+            "FROM codex_reset_evidence e JOIN codex_reset_events v "
+            "ON v.canonical_id = e.canonical_id "
+            "WHERE e.signal_stage = 'confirmed' AND e.explicit_completed = 1 "
+            "AND e.local_reference = 0 AND e.official = 1 AND e.reset_type = 'direct' "
+            "AND e.observed_at BETWEEN ? AND ? AND v.stage = 'confirmed' "
+            "GROUP BY e.canonical_id ORDER BY completed_ts",
+            (observed_at, observed_at + tolerance_seconds),
+        ).fetchall()
+        return rows[0][0] if len(rows) == 1 else None
+
     def get_event(self, canonical_id: str) -> ResetEvent | None:
         row = self._conn.execute(
             f"SELECT {_EVENT_COLUMNS} FROM codex_reset_events WHERE canonical_id = ?",
@@ -469,6 +499,7 @@ class ResetStore:
         rows = self._conn.execute(
             "SELECT DISTINCT canonical_id FROM codex_reset_evidence "
             "WHERE local_reference = 1 AND canonical_id LIKE 'local-reference:%' "
+            "AND summary LIKE '本机参考账号连续两次%' "
             "AND observed_at BETWEEN ? AND ?",
             (now_ts - max_age_seconds, now_ts),
         ).fetchall()

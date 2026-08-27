@@ -36,7 +36,8 @@ _FUTURE_RESET = re.compile(
 _RESTORED = re.compile(
     r"\b(?:weekly\s+)?(?:usage|quota|limits?)\s+(?:is\s+|are\s+)?"
     r"(?:back\s+to|restored\s+to)\s+100%"
-    r"|\breset\s+(?:has\s+been\s+|was\s+)?propagated\s+to\s+accounts\b",
+    r"|\breset\s+(?:has\s+been\s+|was\s+)?propagated\s+to\s+accounts\b"
+    r"|\bbrand\s+new\s+usage\s+for\s+all\s+(?:chatgpt\s+work\s+and\s+)?codex\s+users\b",
     re.IGNORECASE,
 )
 _DURATION = re.compile(r"(\d+)\s*(?:hours?|小时)", re.IGNORECASE)
@@ -127,7 +128,7 @@ def _timeline_evidence(
             event.get("preview") is False
             and reset_type is ResetType.DIRECT
             and _RESTORED.search(summary)
-            and not re.search(r"\b(?:will|would|should|not|never|tomorrow)\b", summary, re.I)
+            and not re.search(r"\b(?:will|would|should|not|tomorrow)\b", summary, re.I)
         )
     )
     state = str(event.get("announcement_state") or "").lower()
@@ -217,6 +218,8 @@ def parse_reset_feed(data: object) -> FetchedSource:
             verification.get("observed_at") or tweet.get("declared_at") or tweet.get("at")
         )
         contextual_id = str(tweet.get("contextual_reset_source_id") or "").strip()
+        tease = tweet.get("tease_classification")
+        tease = tease if isinstance(tease, dict) else {}
         if summary and item_id and observed_at is not None and is_official_url(url):
             intent_candidates.append(
                 ResetIntentCandidate(
@@ -227,6 +230,30 @@ def parse_reset_feed(data: object) -> FetchedSource:
                     url=url,
                     observed_at=observed_at,
                 )
+            )
+        if (
+            item_id not in by_item
+            and tease.get("status") == "ok"
+            and tease.get("teasing") is True
+            and str(tease.get("day") or "").lower() in {"today", "tomorrow", "soon", "later"}
+            and summary
+            and item_id
+            and observed_at is not None
+            and is_official_url(url)
+            and re.search(r"\breset(?:s|ted|ting)?\b|重置", summary, re.I)
+        ):
+            by_item[item_id] = ResetEvidence(
+                source_name="reset_feed",
+                source_family="codexreset",
+                source_item_id=item_id,
+                canonical_hint=canonical_from(url, item_id),
+                signal_stage=ResetStage.HINT,
+                title="Official Codex reset tease",
+                summary=summary,
+                url=url,
+                observed_at=observed_at,
+                reset_type=ResetType.DIRECT,
+                official=True,
             )
         if (
             item_id not in by_item

@@ -1,0 +1,53 @@
+{
+  "_fixture_note": "2026-08-28 只读抓取 codex-reset.com/api/feed 的相关字段子集。",
+  "version": 1,
+  "fetched_at": "2026-08-27T20:23:35.000Z",
+  "tweets": [
+    {
+      "id": "2092862554632826968",
+      "url": "https://x.com/thsottiaux/status/2092862554632826968",
+      "text": "A good thing about having aged is that I feel that it’s been 20 years since I’ve pressed the reset button. Intrigued to see if I can find it tomorrow and dust it up",
+      "at": "2026-08-27T06:31:31.000Z",
+      "declared_at": "2026-08-27T06:31:31.000Z",
+      "kind": "other",
+      "tease_classification": {
+        "version": "tease-v1",
+        "status": "ok",
+        "teasing": true,
+        "day": "tomorrow"
+      }
+    },
+    {
+      "id": "2093014447833116908",
+      "url": "https://x.com/thsottiaux/status/2093014447833116908",
+      "text": "Never slept better and feeling reseted. Brand new me and brand new usage for all ChatGPT Work and Codex users. Regaining my youth one button press at a time. Happy Thursday",
+      "at": "2026-08-27T16:35:05.000Z",
+      "declared_at": "2026-08-27T16:35:05.000Z",
+      "kind": "candidate",
+      "explicit_reset_claim": true,
+      "reset_verification_status": "pending"
+    }
+  ],
+  "events": [
+    {
+      "id": "2093014447833116908",
+      "date": "2026-08-27",
+      "type": "reset",
+      "group": "reset",
+      "summary": "Never slept better and feeling reseted. Brand new me and brand new usage for all ChatGPT Work and Codex users. Regaining my youth one button press at a time. Happy Thursday",
+      "url": "https://x.com/thsottiaux/status/2093014447833116908",
+      "announced_at": "2026-08-27T16:35:05.000Z",
+      "effective_at": null,
+      "official_window": null,
+      "preview": false,
+      "scope": "global",
+      "confidence": "medium",
+      "source": "live",
+      "source_label": "Live radar feed",
+      "reset_kind": null,
+      "announcement_state": "announced",
+      "observation_result": "unknown",
+      "reset_verification_status": "pending"
+    }
+  ]
+}

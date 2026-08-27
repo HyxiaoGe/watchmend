@@ -103,12 +103,14 @@ async def test_source_uses_official_read_only_protocol_and_minimal_environment(
     codex_home = tmp_path / "readonly-codex-home"
     codex_home.mkdir()
     (codex_home / "auth.json").write_text("{}", encoding="utf-8")
-    fake_process = _FakeProcess(_result(reset_start=1000))
+    fake_processes = []
     captured = {}
 
     async def fake_create_subprocess_exec(*args, **kwargs):
         captured["args"] = args
         captured["kwargs"] = kwargs
+        fake_process = _FakeProcess(_result(reset_start=1000))
+        fake_processes.append(fake_process)
         return fake_process
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
@@ -123,8 +125,10 @@ async def test_source_uses_official_read_only_protocol_and_minimal_environment(
         clock=lambda: 1200,
     )
 
+    first = await source.fetch(None)
     fetched = await source.fetch(None)
 
+    assert first.evidence == []
     assert fetched.name == "reference_account"
     assert fetched.content_ts == 1200
     assert fetched.evidence[0].observed_at == 1000
@@ -136,8 +140,10 @@ async def test_source_uses_official_read_only_protocol_and_minimal_environment(
     )
     assert captured["kwargs"]["stderr"] is asyncio.subprocess.DEVNULL
     assert "UNRELATED_PRIVATE_VALUE" not in captured["kwargs"]["env"]
-    assert [message.get("method") for message in fake_process.stdin.messages] == [
-        "initialize",
-        "initialized",
-        "account/rateLimits/read",
-    ]
+    assert len(fake_processes) == 2
+    for fake_process in fake_processes:
+        assert [message.get("method") for message in fake_process.stdin.messages] == [
+            "initialize",
+            "initialized",
+            "account/rateLimits/read",
+        ]

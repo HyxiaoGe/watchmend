@@ -47,6 +47,7 @@ def test_stage_upgrade_hint_announced_delayed_confirmed(tmp_path):
     assert advanced and event.stage is ResetStage.CONFIRMED
     store.close()
 
+
 def test_local_confirmation_preserves_official_announcement_url(tmp_path):
     store = ResetStore(str(tmp_path / "s.db"))
     announced = _evidence(ResetStage.ANNOUNCED, item="announcement")

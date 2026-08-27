@@ -22,6 +22,15 @@ def confirmation_basis(evidence: list[ResetEvidence]) -> str:
     official_completed = any(
         item.official and item.reset_type is ResetType.DIRECT for item in public
     )
+    authoritative_live_post = any(
+        item.official
+        and item.reset_type is ResetType.DIRECT
+        and item.source_name in {"reset_feed", "reset_timeline"}
+        and item.title == "Live radar feed"
+        for item in public
+    )
+    if authoritative_live_post:
+        return "官方明确到账原帖"
     if any(item.local_reference for item in confirmations) and (announced or official_completed):
         return "官方重置记录 + 本机共享 Codex 周额度窗口"
     for first in public:

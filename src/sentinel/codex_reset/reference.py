@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,7 @@ class ReferenceRateLimitSource:
         self._min_window_minutes = min_window_minutes
         self._max_reset_age_seconds = max_reset_age_seconds
         self._clock = clock
+        self._last_candidate: tuple[str, int] | None = None
 
     async def fetch(self, fetcher) -> FetchedSource:  # noqa: ARG002
         self._validate_home()
@@ -47,11 +49,19 @@ class ReferenceRateLimitSource:
             min_window_minutes=self._min_window_minutes,
             max_reset_age_seconds=self._max_reset_age_seconds,
         )
+        current = (evidence.source_item_id, evidence.observed_at) if evidence is not None else None
+        stable = evidence if current is not None and current == self._last_candidate else None
+        self._last_candidate = current
+        if stable is not None:
+            stable = replace(
+                stable,
+                summary="本机参考账号连续两次只读观察到同一共享 Codex 七日额度窗口起点。",
+            )
         return FetchedSource(
             name=self.name,
             family=self.family,
             content_ts=now_ts,
-            evidence=[evidence] if evidence is not None else [],
+            evidence=[stable] if stable is not None else [],
         )
 
     def _validate_home(self) -> None:

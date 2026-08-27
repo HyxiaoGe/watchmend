@@ -56,6 +56,27 @@ def test_banked_announcement_card_uses_official_approximate_time_wording():
     assert ("预计时间", "官方称当天内（以原帖表述为准）") in notification.fields
 
 
+def test_hint_only_completion_does_not_invent_an_expected_window():
+    event = replace(
+        _event(ResetStage.CONFIRMED),
+        announced_ts=None,
+        expected_start_ts=None,
+        expected_end_ts=None,
+        had_preannouncement=True,
+    )
+    card = build_codex_reset_card(event, ResetStage.CONFIRMED, now_str="now", utc_offset=8)
+    body = card["card"]["elements"][0]["text"]["content"]
+    assert "此前发送过疑似预告，但没有明确时间窗口" in body
+    assert "预计窗口" not in body
+    assert "预计截止" not in body
+
+    notification = codex_reset_notification(
+        event, ResetStage.CONFIRMED, now_ts=1300, now_str="now", utc_offset=8
+    )
+    assert ("预告情况", "此前发送过疑似预告，但没有明确时间窗口") in notification.fields
+    assert not any(key == "预计时间" for key, _ in notification.fields)
+
+
 def test_reset_notification_reuses_feishu_channel_renderer():
     event = _event(ResetStage.ANNOUNCED)
     notification = codex_reset_notification(

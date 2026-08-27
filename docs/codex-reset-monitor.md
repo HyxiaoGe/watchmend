@@ -11,7 +11,7 @@
 | `hint` | 官方相关帖子或明确雷达窗口；统计概率本身永不触发 | 疑似预告卡 |
 | `announced` | 官方明确预告，同时具备预计窗口、原始链接和 `direct`/`banked` 类型 | 明确预告卡 |
 | `delayed` | 明确预告超过预计截止和宽限期，仍未满足确认门槛 | 延迟卡 |
-| `confirmed` | 不同来源族且不同原始记录相互印证，或官方重置记录/正式预告 + 本机共享 Codex 周窗口 | 落地确认卡 |
+| `confirmed` | 官方账号明确到账原帖、不同来源族且不同原始记录相互印证，或官方重置记录/正式预告 + 本机共享 Codex 周窗口 | 落地确认卡 |
 
 `direct` 事件阶段只单调前进。`delayed` 不是终态，后续证据充分时仍升级 `confirmed`。
 首次启用不会补发超过 `SENTINEL_CODEX_RESET_NOTIFY_MAX_AGE_HOURS` 的旧事件。
@@ -26,13 +26,17 @@
 无需先有预告；单独的本机窗口不能创建全局重置事件。认证文件只以单文件只读方式挂载，
 代码不复制、不解析、不记录其内容；卡片和数据库也
 不保存额度百分比。第三方 feed 中名为 `reference` 的观察结果不被视为本机参考账号证据。
+探针必须连续两轮读到完全相同的共享窗口起点才会产出证据；每次读取都移动的推算窗口会被
+忽略，历史上已经保存但未达到该稳定性标记的窗口也不会再参与后续关联。
 
 ### 静默到账（无需预告）
 
 2026-08-25 的静默重置已固定为真实归档契约样本：即使 `announcement_state=announced`、
 没有 `official_window`，明确“weekly usage back to 100%”的非预览记录仍作为到账候选，
-而非补造预告。官方“reset propagated to accounts”也属于完成措辞；未来式、否定式与
-5 小时限额政策调整不能据此确认为到账。
+而非补造预告。官方“reset propagated to accounts”及“brand new usage for all ... users”
+也属于完成措辞；未来式、否定式与 5 小时限额政策调整不能据此确认为到账。若结构化 feed
+将这类原帖标为非预览的 live reset，且 URL 确属官方账号，则该明确到账原帖可在下一轮直接
+确认，无需等待较慢的 HTML 归档。
 
 不同网站引用同一 X status ID 只算一份原始公开证据，feed/timeline 也不能凑数。此时需
 本机共享 `codex` 周窗口相互印证；模型专属窗口不参与全局确认，因为未使用的空窗口可能
@@ -57,10 +61,13 @@
 5. `https://codexreset.org/`，仅在结构化来源不足或出现近期确认时做 HTML 降级/交叉验证，
    且默认最多每小时一次。
 
-解析器基于 2026-08-13 与 2026-08-21 抓取的真实脱敏样本做契约测试，其中包括官方
-`credits + banked reset + during the day` 公告。不同来源引用同一官方帖子时按 X
-status ID 归一；确认帖与预告帖 ID 不同时，优先使用上游 contextual ID，其次按预告窗口和
-相近确认时间合并。`codex-reset.com` 的 feed 与 timeline 视为同一来源族，不能互相凑足
+解析器基于 2026-08-13、2026-08-21 与 2026-08-28 抓取的真实脱敏样本做契约测试，其中包括
+官方 `credits + banked reset + during the day` 公告，以及结构化 `tease_classification`
+预告和后续不同帖子 ID 的到账原帖。雷达明确给出 `teasing=true`、相对日期和官方 reset 原帖
+时，确定性证据优先于可选模型的旧缓存判断。不同来源引用同一官方帖子时按 X status ID
+归一；确认帖与预告帖 ID 不同时，优先使用上游 contextual ID，其次在 42 小时内仅有一个候选
+时合并。若服务先看到账、后补到旧预告，只关联证据，不倒序补发疑似预告。`codex-reset.com`
+的 feed 与 timeline 视为同一来源族，不能互相凑足
 “两个独立来源”的确认门槛；`codexradar` 与 `codexreset.org` 分属另外的来源族，
 但即便来源族不同，转载同一原帖也不重复计为独立公开证据。
 

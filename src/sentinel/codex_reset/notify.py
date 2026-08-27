@@ -52,9 +52,8 @@ def build_codex_reset_card(
     ]
     if event.reset_type is ResetType.BANKED and stage is ResetStage.ANNOUNCED:
         fields.append("**预计时间**：官方称当天内（以原帖表述为准）")
-    elif (
-        stage in {ResetStage.ANNOUNCED, ResetStage.DELAYED, ResetStage.CONFIRMED}
-        and not event.silent
+    elif stage in {ResetStage.ANNOUNCED, ResetStage.DELAYED} or (
+        stage is ResetStage.CONFIRMED and event.announced_ts is not None
     ):
         fields.append(f"**预计窗口**：{_format_time(event.expected_start_ts, utc_offset)}")
         fields.append(f"**预计截止**：{_format_time(event.expected_end_ts, utc_offset)}")
@@ -69,6 +68,8 @@ def build_codex_reset_card(
             )
             fields.append("时间来自公开记录与本机窗口，不代表每个账号的精确到账时刻。")
         else:
+            if event.had_preannouncement and event.announced_ts is None:
+                fields.append("**预告情况**：此前发送过疑似预告，但没有明确时间窗口")
             fields.append(f"**确认时间**：{_format_time(event.confirmed_ts, utc_offset)}")
         if event.confirmation_basis:
             fields.append(f"**核验方式**：{event.confirmation_basis}")
@@ -160,6 +161,9 @@ def codex_reset_notification(
                 ("核验方式", event.confirmation_basis),
             ]
         )
+    elif stage is ResetStage.CONFIRMED and event.had_preannouncement and event.announced_ts is None:
+        fields = [(key, value) for key, value in fields if key != "预计时间"]
+        fields.append(("预告情况", "此前发送过疑似预告，但没有明确时间窗口"))
     return Notification(
         kind=Kind.CODEX_RESET,
         severity=_STAGE_SEVERITY[stage],

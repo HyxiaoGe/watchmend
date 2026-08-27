@@ -260,6 +260,13 @@ class ResetMonitor:
 
     def _canonical_target(self, evidence: ResetEvidence) -> str | None:
         if evidence.signal_stage is not ResetStage.CONFIRMED:
+            previous = self._store.evidence_target(evidence)
+            if previous:
+                return previous
+            if evidence.signal_stage is ResetStage.HINT:
+                followup = self._store.find_followup_confirmation_target(evidence.observed_at)
+                if followup:
+                    return followup
             return evidence.canonical_hint
         if evidence.local_reference:
             previous = self._store.evidence_target(evidence)
@@ -277,6 +284,9 @@ class ResetMonitor:
             return evidence.canonical_hint
         if self._store.get_event(evidence.canonical_hint) is not None:
             return evidence.canonical_hint
+        prior_hint = self._store.find_prior_hint_target(evidence.observed_at)
+        if prior_hint is not None:
+            return prior_hint
         evidence_target = self._store.find_confirmation_evidence_target(evidence.observed_at)
         if evidence_target is not None:
             return evidence_target
