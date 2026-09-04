@@ -6,6 +6,7 @@ from pathlib import Path
 
 from sentinel.codex_reset.confirmation import confirmation_basis
 from sentinel.codex_reset.models import (
+    BankedResetBalance,
     ResetEvent,
     ResetEvidence,
     ResetStage,
@@ -20,6 +21,15 @@ class DueDelivery:
     stage: ResetStage
     attempts: int
     event: ResetEvent
+
+
+@dataclass(frozen=True)
+class BankedResetIncrease:
+    source_name: str
+    delta: int
+    observed_at: int
+    previous_count: int
+    available_count: int
 
 
 _EVENT_COLUMNS = (
@@ -94,7 +104,94 @@ class ResetStore:
             "next_attempt_ts INTEGER NOT NULL DEFAULT 0, last_error TEXT, "
             "updated_ts INTEGER NOT NULL)"
         )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_reset_banked_balances ("
+            "source_name TEXT PRIMARY KEY, stable_count INTEGER NOT NULL, "
+            "candidate_count INTEGER, candidate_observations INTEGER NOT NULL DEFAULT 0, "
+            "candidate_first_ts INTEGER, initialized_ts INTEGER NOT NULL, "
+            "last_observed_ts INTEGER NOT NULL)"
+        )
         self._conn.commit()
+
+    def observe_banked_balance(
+        self, balance: BankedResetBalance, *, confirmations: int = 2
+    ) -> BankedResetIncrease | None:
+        """连续读数稳定后更新基线；仅对正增量生成一次到账事实。"""
+        if confirmations < 1:
+            raise ValueError("confirmations must be positive")
+        row = self._conn.execute(
+            "SELECT stable_count, candidate_count, candidate_observations, candidate_first_ts "
+            "FROM codex_reset_banked_balances WHERE source_name = ?",
+            (balance.source_name,),
+        ).fetchone()
+        if row is None:
+            self._conn.execute(
+                "INSERT INTO codex_reset_banked_balances "
+                "(source_name, stable_count, initialized_ts, last_observed_ts) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    balance.source_name,
+                    balance.available_count,
+                    balance.observed_at,
+                    balance.observed_at,
+                ),
+            )
+            self._conn.commit()
+            return None
+
+        stable_count, candidate_count, observations, candidate_first_ts = row
+        if balance.available_count == stable_count:
+            self._conn.execute(
+                "UPDATE codex_reset_banked_balances SET candidate_count = NULL, "
+                "candidate_observations = 0, candidate_first_ts = NULL, last_observed_ts = ? "
+                "WHERE source_name = ?",
+                (balance.observed_at, balance.source_name),
+            )
+            self._conn.commit()
+            return None
+
+        if candidate_count != balance.available_count:
+            self._conn.execute(
+                "UPDATE codex_reset_banked_balances SET candidate_count = ?, "
+                "candidate_observations = 1, candidate_first_ts = ?, last_observed_ts = ? "
+                "WHERE source_name = ?",
+                (
+                    balance.available_count,
+                    balance.observed_at,
+                    balance.observed_at,
+                    balance.source_name,
+                ),
+            )
+            self._conn.commit()
+            return None
+
+        observations += 1
+        if observations < confirmations:
+            self._conn.execute(
+                "UPDATE codex_reset_banked_balances SET candidate_observations = ?, "
+                "last_observed_ts = ? WHERE source_name = ?",
+                (observations, balance.observed_at, balance.source_name),
+            )
+            self._conn.commit()
+            return None
+
+        self._conn.execute(
+            "UPDATE codex_reset_banked_balances SET stable_count = ?, candidate_count = NULL, "
+            "candidate_observations = 0, candidate_first_ts = NULL, last_observed_ts = ? "
+            "WHERE source_name = ?",
+            (balance.available_count, balance.observed_at, balance.source_name),
+        )
+        self._conn.commit()
+        delta = balance.available_count - stable_count
+        if delta <= 0:
+            return None
+        return BankedResetIncrease(
+            source_name=balance.source_name,
+            delta=delta,
+            observed_at=candidate_first_ts or balance.observed_at,
+            previous_count=stable_count,
+            available_count=balance.available_count,
+        )
 
     def acquire_lease(self, name: str, owner: str, *, now_ts: int, ttl_seconds: int) -> bool:
         self._conn.execute("BEGIN IMMEDIATE")
@@ -463,6 +560,33 @@ class ResetStore:
         ).fetchall()
         return rows[0][0] if len(rows) == 1 else None
 
+    def find_banked_confirmation_target(
+        self, observed_at: int, *, tolerance_seconds: int = 604800
+    ) -> str | None:
+        row = self._conn.execute(
+            "SELECT e.canonical_id, MAX(e.observed_at) AS announcement_ts "
+            "FROM codex_reset_evidence e JOIN codex_reset_events v "
+            "ON v.canonical_id = e.canonical_id "
+            "WHERE e.signal_stage IN ('hint', 'announced') AND e.official = 1 "
+            "AND e.reset_type = 'banked' AND e.observed_at BETWEEN ? AND ? "
+            "AND v.stage IN ('hint', 'announced') "
+            "GROUP BY e.canonical_id ORDER BY announcement_ts DESC LIMIT 1",
+            (observed_at - tolerance_seconds, observed_at),
+        ).fetchone()
+        return row[0] if row else None
+
+    def latest_banked_announcement_url(
+        self, observed_at: int, *, tolerance_seconds: int = 604800
+    ) -> str:
+        row = self._conn.execute(
+            "SELECT url FROM codex_reset_evidence WHERE official = 1 "
+            "AND signal_stage IN ('hint', 'announced') AND reset_type = 'banked' "
+            "AND url != '' AND observed_at BETWEEN ? AND ? "
+            "ORDER BY observed_at DESC LIMIT 1",
+            (observed_at - tolerance_seconds, observed_at),
+        ).fetchone()
+        return row[0] if row else ""
+
     def get_event(self, canonical_id: str) -> ResetEvent | None:
         row = self._conn.execute(
             f"SELECT {_EVENT_COLUMNS} FROM codex_reset_events WHERE canonical_id = ?",
@@ -721,6 +845,19 @@ class ResetStore:
                     "pending_failures": translation_row[2] or 0,
                 },
             },
+            "banked_balance": self._banked_balance_health(),
+        }
+
+    def _banked_balance_health(self) -> dict:
+        row = self._conn.execute(
+            "SELECT initialized_ts, last_observed_ts, candidate_count IS NOT NULL "
+            "FROM codex_reset_banked_balances WHERE source_name = 'reference_account'"
+        ).fetchone()
+        return {
+            "initialized": row is not None,
+            "initialized_ts": row[0] if row else None,
+            "last_observed_ts": row[1] if row else None,
+            "change_pending_confirmation": bool(row[2]) if row else False,
         }
 
     @staticmethod

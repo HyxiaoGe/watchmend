@@ -32,6 +32,14 @@ _STAGE_SEVERITY = {
 }
 
 
+def _notification_title(event: ResetEvent, stage: ResetStage) -> str:
+    if event.reset_type is ResetType.BANKED and stage is ResetStage.CONFIRMED:
+        return "Codex Banked reset 已到账"
+    if event.silent:
+        return "Codex 静默重置已确认"
+    return _STAGE_TITLE[stage]
+
+
 def _format_time(timestamp: int | None, utc_offset: int) -> str:
     if timestamp is None:
         return "未提供"
@@ -52,6 +60,8 @@ def build_codex_reset_card(
     ]
     if event.reset_type is ResetType.BANKED and stage is ResetStage.ANNOUNCED:
         fields.append("**预计时间**：官方称当天内（以原帖表述为准）")
+    elif event.reset_type is ResetType.BANKED and stage is ResetStage.CONFIRMED:
+        fields.append("**到账范围**：本机参考账号")
     elif stage in {ResetStage.ANNOUNCED, ResetStage.DELAYED} or (
         stage is ResetStage.CONFIRMED and event.announced_ts is not None
     ):
@@ -125,7 +135,7 @@ def build_codex_reset_card(
             "header": {
                 "title": {
                     "tag": "plain_text",
-                    "content": "Codex 静默重置已确认" if event.silent else _STAGE_TITLE[stage],
+                    "content": _notification_title(event, stage),
                 },
                 "template": _STAGE_TEMPLATE[stage],
             },
@@ -153,6 +163,9 @@ def codex_reset_notification(
         ("预计时间", expected_label),
         ("公开来源族", str(len(event.source_families))),
     ]
+    if event.reset_type is ResetType.BANKED and stage is ResetStage.CONFIRMED:
+        fields = [(key, value) for key, value in fields if key != "预计时间"]
+        fields.append(("到账范围", "本机参考账号"))
     if event.silent:
         fields = [(key, value) for key, value in fields if key != "预计时间"]
         fields.extend(
@@ -167,7 +180,7 @@ def codex_reset_notification(
     return Notification(
         kind=Kind.CODEX_RESET,
         severity=_STAGE_SEVERITY[stage],
-        title="Codex 静默重置已确认" if event.silent else _STAGE_TITLE[stage],
+        title=_notification_title(event, stage),
         detail=event.summary,
         fields=fields,
         subject=event.canonical_id,

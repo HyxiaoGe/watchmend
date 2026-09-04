@@ -26,6 +26,13 @@ class ResetType(StrEnum):
 
 
 @dataclass(frozen=True)
+class BankedResetBalance:
+    source_name: str
+    available_count: int
+    observed_at: int
+
+
+@dataclass(frozen=True)
 class ResetIntentCandidate:
     source_name: str
     source_family: str
@@ -61,6 +68,7 @@ class FetchedSource:
     content_ts: int | None
     evidence: list[ResetEvidence] = field(default_factory=list)
     intent_candidates: list[ResetIntentCandidate] = field(default_factory=list)
+    banked_balances: list[BankedResetBalance] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -89,6 +97,7 @@ class ResetEvent:
     def silent(self) -> bool:
         return (
             self.stage is ResetStage.CONFIRMED
+            and self.reset_type is ResetType.DIRECT
             and self.announced_ts is None
             and not self.had_preannouncement
         )

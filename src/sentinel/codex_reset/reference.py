@@ -8,7 +8,12 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from sentinel.codex_reset.models import FetchedSource, ResetEvidence, ResetStage
+from sentinel.codex_reset.models import (
+    BankedResetBalance,
+    FetchedSource,
+    ResetEvidence,
+    ResetStage,
+)
 
 
 class ReferenceProbeError(RuntimeError):
@@ -62,6 +67,9 @@ class ReferenceRateLimitSource:
             family=self.family,
             content_ts=now_ts,
             evidence=[stable] if stable is not None else [],
+            banked_balances=[balance]
+            if (balance := banked_balance_from_rate_limits(result, now_ts=now_ts))
+            else [],
         )
 
     def _validate_home(self) -> None:
@@ -202,6 +210,25 @@ def evidence_from_rate_limits(
         observed_at=reset_start_ts,
         explicit_completed=True,
         local_reference=True,
+    )
+
+
+def banked_balance_from_rate_limits(
+    result: dict[str, Any], *, now_ts: int
+) -> BankedResetBalance | None:
+    """读取官方 earned-reset 权威数量；缺失与零严格区分。"""
+    reset_credits = result.get("rateLimitResetCredits")
+    if not isinstance(reset_credits, dict):
+        return None
+    available_count = reset_credits.get("availableCount")
+    if isinstance(available_count, bool) or not isinstance(available_count, int):
+        return None
+    if available_count < 0:
+        return None
+    return BankedResetBalance(
+        source_name="reference_account",
+        available_count=available_count,
+        observed_at=now_ts,
     )
 
 

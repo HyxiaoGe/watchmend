@@ -16,10 +16,18 @@
 `direct` 事件阶段只单调前进。`delayed` 不是终态，后续证据充分时仍升级 `confirmed`。
 首次启用不会补发超过 `SENTINEL_CODEX_RESET_NOTIFY_MAX_AGE_HOURS` 的旧事件。
 
-`banked` 是公告型事件：官方相关账号明确宣布 banked reset，且给出“当天内”等未来发放时间时，
-直接发送 `announced`。这类事件不要求额度窗口重启或本机账号观察到入账，也不会进入
-`delayed`/`confirmed`。卡片保留官方原帖措辞和链接，不把模糊的“当天内”伪装成某个时区的
-精确截止时间。普通 credits、庆祝帖或统计概率仍不会触发。
+`banked` 预告仍按公告型事件处理：官方相关账号明确宣布 banked reset，且给出“当天内”等
+未来发放时间时直接发送 `announced`；模型识别到的可靠但模糊表述先进入 `hint`。卡片保留官方
+原帖措辞和链接，不把模糊时间伪装成某个时区的精确截止时间。普通 credits、庆祝帖或统计概率
+仍不会触发。
+
+启用本机参考账号后，探针从官方 `account/rateLimits/read` 读取
+`rateLimitResetCredits.availableCount`。第一次读取只建立 SQLite 基线，不补发已有余额；数量变化
+需要连续两轮一致才更新稳定基线。正增量把最近七天内的待确认 Banked reset 预告升级为
+`confirmed`，卡片只声称“本机参考账号已到账”。若没有待确认预告，则创建独立的账户级到账
+事件；同一活动后续每天再次增加时也创建独立事件，保证每笔增量都有去重回执。负增量可能来自
+使用或过期，只更新基线、不通知。总量与候选量不进入日志或健康接口，也不调用
+`account/rateLimitResetCredit/consume`。
 
 可选的 `local_reference` 探针通过 Codex 官方 app-server 的 `account/rateLimits/read` 只读读取
 额度窗口元数据。它可确认已有正式预告，也可与六小时内唯一的官方 direct 到账记录关联，
@@ -126,7 +134,9 @@ SENTINEL_CODEX_RESET_REFERENCE_CODEX_HOME=/run/codex-reference
 仓库。探针使用最小环境启动 CLI，丢弃 stderr，协议错误只记录异常类型。只读挂载意味着凭证
 过期后探针不会绕过权限去刷新文件；此时公开来源仍正常工作，健康信息会标记该来源失败。
 
-官方 app-server 请求顺序为 `initialize`、`initialized`、`account/rateLimits/read`。探针仅选择
+官方 app-server 请求顺序为 `initialize`、`initialized`、`account/rateLimits/read`。同一响应
+同时用于共享额度窗口和 Banked reset 权威数量；`rateLimitResetCredits` 缺失或为 `null` 时视为
+未知，绝不当作零。探针仅选择
 不少于 `SENTINEL_CODEX_RESET_REFERENCE_MIN_WINDOW_MINUTES` 的窗口，并按
 `resetsAt - windowDurationMins × 60` 推导共享 `codex` 窗口起点；起点必须足够新且落入
 已有预告窗口，或与唯一的官方到账记录在六小时容差内，才可确认。
@@ -147,8 +157,9 @@ WatchMend，无需创建第二个服务。
 ## 健康检查与排障
 
 启用后 `/health` 增加 `codex_reset` 对象，包含 Job 最近成功时间、每个来源内容时间、连续失败
-次数和新鲜来源族数量。单一来源短暂失败会保留最近成功内容，不会令 WatchMend 顶层健康状态
-失败；没有新鲜来源时 reset 子状态变为 `stale`，只有一个新鲜来源族时为 `degraded`。
+次数、新鲜来源族数量，以及不含余额值的 `banked_balance` 基线/候选确认状态。单一来源短暂失败
+会保留最近成功内容，不会令 WatchMend 顶层健康状态失败；没有新鲜来源时 reset 子状态变为
+`stale`，只有一个新鲜来源族时为 `degraded`。
 
 排障时先检查：
 

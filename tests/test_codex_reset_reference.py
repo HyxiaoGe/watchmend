@@ -4,7 +4,7 @@ import json
 from sentinel.codex_reset.reference import ReferenceRateLimitSource, evidence_from_rate_limits
 
 
-def _result(*, reset_start: int, duration: int = 10080):
+def _result(*, reset_start: int, duration: int = 10080, banked_count: int = 2):
     return {
         "rateLimitsByLimitId": {
             "codex": {
@@ -15,7 +15,8 @@ def _result(*, reset_start: int, duration: int = 10080):
                     "resetsAt": reset_start + duration * 60,
                 },
             }
-        }
+        },
+        "rateLimitResetCredits": {"availableCount": banked_count, "credits": None},
     }
 
 
@@ -132,6 +133,8 @@ async def test_source_uses_official_read_only_protocol_and_minimal_environment(
     assert fetched.name == "reference_account"
     assert fetched.content_ts == 1200
     assert fetched.evidence[0].observed_at == 1000
+    assert len(fetched.banked_balances) == 1
+    assert fetched.banked_balances[0].available_count == 2
     assert captured["args"] == (
         "/usr/local/bin/codex-reference",
         "app-server",

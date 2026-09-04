@@ -77,6 +77,7 @@ class ResetMonitor:
         fallback = next((source for source in self._sources if source.name == "reset_html"), None)
         fetched = await self._fetch_sources(primary, now_ts=now_ts)
         evidence = [item for result in fetched for item in result.evidence]
+        evidence.extend(self._banked_balance_evidence(fetched))
         evidence.extend(await self._semantic_evidence(fetched, evidence, now_ts=now_ts))
         recent_confirmation = any(
             item.signal_stage is ResetStage.CONFIRMED
@@ -142,6 +143,39 @@ class ResetMonitor:
                 self._store.queue_delivery(event.canonical_id, ResetStage.DELAYED, now_ts=now_ts)
 
         await self._dispatch_due(now_ts)
+
+    def _banked_balance_evidence(self, fetched: list) -> list[ResetEvidence]:
+        evidence = []
+        for result in fetched:
+            for balance in result.banked_balances:
+                increase = self._store.observe_banked_balance(balance)
+                if increase is None:
+                    continue
+                transition = (
+                    f"{increase.source_name}:{increase.observed_at}:"
+                    f"{increase.previous_count}:{increase.available_count}"
+                )
+                source_item_id = hashlib.sha256(transition.encode()).hexdigest()[:24]
+                evidence.append(
+                    ResetEvidence(
+                        source_name="reference_account_banked",
+                        source_family="local_reference",
+                        source_item_id=source_item_id,
+                        canonical_hint=f"local-banked:{source_item_id}",
+                        signal_stage=ResetStage.CONFIRMED,
+                        title="Codex Banked reset 本机参考确认",
+                        summary=(
+                            "本机参考账号连续两次只读观察到可用 Banked reset "
+                            f"数量增加 {increase.delta} 次。"
+                        ),
+                        url=self._store.latest_banked_announcement_url(increase.observed_at),
+                        observed_at=increase.observed_at,
+                        reset_type=ResetType.BANKED,
+                        explicit_completed=True,
+                        local_reference=True,
+                    )
+                )
+        return evidence
 
     async def _fetch_sources(self, sources, *, now_ts: int) -> list:
         results = await asyncio.gather(
@@ -272,6 +306,11 @@ class ResetMonitor:
             previous = self._store.evidence_target(evidence)
             if previous and self._store.get_event(previous) is not None:
                 return previous
+            if evidence.reset_type is ResetType.BANKED:
+                return (
+                    self._store.find_banked_confirmation_target(evidence.observed_at)
+                    or evidence.canonical_hint
+                )
             return (
                 self._store.find_silent_confirmation_target(evidence.observed_at)
                 or self._store.find_confirmation_target(evidence.observed_at)
@@ -317,7 +356,14 @@ class ResetMonitor:
             and item.reset_type is not None
             and item.url
         ]
-        # Banked reset 是可靠公告型事件：只播报预告，不等待或推断额度落地。
+        if any(
+            item.signal_stage is ResetStage.CONFIRMED
+            and item.local_reference
+            and item.reset_type is ResetType.BANKED
+            for item in evidence
+        ):
+            return ResetStage.CONFIRMED
+        # 公开来源不能单独把 Banked reset 升级为到账；需官方账户数量增量。
         if any(item.reset_type is ResetType.BANKED for item in announcements):
             return ResetStage.ANNOUNCED
 

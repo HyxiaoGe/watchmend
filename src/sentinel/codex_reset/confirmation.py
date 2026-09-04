@@ -12,6 +12,8 @@ def confirmation_basis(evidence: list[ResetEvidence]) -> str:
         if item.signal_stage is ResetStage.CONFIRMED and item.explicit_completed
     ]
     public = [item for item in confirmations if not item.local_reference and item.url]
+    if any(item.local_reference and item.reset_type is ResetType.BANKED for item in confirmations):
+        return "本机参考账号 Banked reset 可用数量增加"
     announced = any(
         item.signal_stage is ResetStage.ANNOUNCED
         and item.official
