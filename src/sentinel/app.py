@@ -189,7 +189,9 @@ def _broadcaster_for(
 ) -> Broadcaster:
     if settings.sentinel_notification_mode == "shadow":
         return Broadcaster([ShadowChannel()])
-    feishu = [FeishuChannel(FeishuClient(client, webhook, secret=secret))] if webhook else []
+    feishu = (
+        [FeishuChannel(FeishuClient(client, webhook, secret=secret), settings)] if webhook else []
+    )
     return Broadcaster(feishu + _new_channels(settings, client))
 
 

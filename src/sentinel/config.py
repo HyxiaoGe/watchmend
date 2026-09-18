@@ -12,6 +12,9 @@ class Settings(BaseSettings):
 
     feishu_vendor_webhook: str = ""  # CHANGED: 不再必填;至少配一个通知渠道即可(build_jobs 校验)
     feishu_vendor_sign_secret: str | None = None
+    # Feishu 路由模式：legacy=不改变(默认)；prefixed=添加 P0/验收/流水账 标题前缀；
+    # routed(保留)=未来多 webhook 路由(当前视为 prefixed 别名)
+    feishu_routing_mode: Literal["legacy", "prefixed", "routed"] = "legacy"
     sentinel_providers: str = "anthropic,openai,github,cloudflare,google_cloud"
     sentinel_poll_interval: int = 60
     sentinel_incident_verbosity: str = "phase"

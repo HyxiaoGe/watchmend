@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from sentinel.codex_reset.notify import build_codex_reset_card
 from sentinel.feishu.cards import (
     build_card,
@@ -20,6 +22,10 @@ from sentinel.feishu.cards import (
 )
 from sentinel.feishu.client import FeishuClient
 from sentinel.notify.message import Kind, Notification
+from sentinel.notify.routing import apply_title_prefix, classify_notification
+
+if TYPE_CHECKING:
+    from sentinel.config import Settings
 
 
 def render_card(n: Notification) -> dict:
@@ -81,11 +87,44 @@ def render_card(n: Notification) -> dict:
     raise ValueError(f"unknown notification kind: {n.kind}")
 
 
+def _apply_card_prefix(card: dict, title_prefix: str) -> dict:
+    """在飞书卡片的标题中应用前缀（如果存在 header.title）。
+
+    Args:
+        card: 原始卡片字典
+        title_prefix: 要添加的标题前缀
+
+    Returns:
+        修改后的卡片字典（副本）
+    """
+    if not title_prefix or "card" not in card:
+        return card
+    # 深拷贝避免修改原始卡片
+    import copy
+
+    new_card = copy.deepcopy(card)
+    header = new_card.get("card", {}).get("header")
+    if header and "title" in header and "content" in header["title"]:
+        original = header["title"]["content"]
+        header["title"]["content"] = f"{title_prefix} {original}"
+    return new_card
+
+
 class FeishuChannel:
     name = "feishu"
 
-    def __init__(self, client: FeishuClient) -> None:
+    def __init__(self, client: FeishuClient, settings: Settings) -> None:
         self._client = client
+        self._settings = settings
 
     async def send(self, n: Notification) -> None:
-        await self._client.send(render_card(n))
+        card = render_card(n)
+        # 在 prefixed 或 routed 模式下应用标题前缀
+        routing_mode = self._settings.feishu_routing_mode
+        if routing_mode in ("prefixed", "routed"):
+            priority = classify_notification(n)
+            # 获取前缀并应用到卡片
+            title_prefix = apply_title_prefix("", priority).strip()
+            if title_prefix:
+                card = _apply_card_prefix(card, title_prefix)
+        await self._client.send(card)

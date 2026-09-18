@@ -10,6 +10,27 @@ Versioning policy and release process: see [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+### Added
+- Feishu notification routing mode (`FEISHU_ROUTING_MODE`): optional priority classification
+  and title prefix feature.
+  - `legacy` (default): preserves existing behavior with no changes
+  - `prefixed`: automatically adds priority prefixes to card titles ([P0]/[验收]/[流水])
+  - `routed` (reserved): currently equivalent to `prefixed`, reserved for future multi-webhook routing
+- New `sentinel.notify.routing` module implementing automatic priority classification for all
+  notification types:
+  - P0 (immediate): continuous health failures / green→red transitions, quota alerts, upstream major
+    incidents, deploy/CI failures blocking releases
+  - P1 (acceptance required): Codex long-task completion / blocked awaiting human, confirmation cards,
+    notifications requiring verification
+  - P2 (informational): scheduled digests, all-green hygiene, upstream minor/recovery,
+    successful merge/deploy, informational notifications
+
+### Note
+- Default mode is `legacy`, existing deployments are unaffected and require no configuration changes
+- Enable by setting `FEISHU_ROUTING_MODE=prefixed` in `.env` or environment variables
+- Roll back by setting `FEISHU_ROUTING_MODE=legacy` or removing the configuration
+- Current phase only adds title prefixes without changing Feishu webhook destinations
+
 ## [0.17.0] - 2026-08-09
 
 ### Added
