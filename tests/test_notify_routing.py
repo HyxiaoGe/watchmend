@@ -1,7 +1,5 @@
 """测试飞书通知路由：优先级分类和标题前缀"""
 
-import pytest
-
 from sentinel.notify.message import Kind, Notification, Severity
 from sentinel.notify.routing import (
     Priority,
