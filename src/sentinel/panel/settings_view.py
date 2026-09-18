@@ -110,6 +110,7 @@ _GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         "channels",
         (
             "sentinel_notification_mode",
+            "feishu_routing_mode",
             "feishu_vendor_webhook",
             "feishu_vendor_sign_secret",
             "feishu_patrol_webhook",
@@ -440,6 +441,16 @@ _FIELD_META: dict[str, dict[str, tuple[str, str]]] = {
     "sentinel_notification_mode": {
         "zh": ("通知运行模式", "live=真实投递；shadow=只记日志不外发"),
         "en": ("Notification mode", "live = deliver; shadow = log only"),
+    },
+    "feishu_routing_mode": {
+        "zh": (
+            "飞书路由模式",
+            "legacy=不改变行为(默认)；prefixed=标题添加 P0/验收/流水账 前缀；routed=预留多路由",
+        ),
+        "en": (
+            "Feishu routing mode",
+            "legacy = unchanged (default); prefixed = add P0/验收/流水 prefix; routed = reserved",
+        ),
     },
     "feishu_vendor_webhook": {
         "zh": ("飞书·业务群 Webhook", "状态页/心跳推送的飞书机器人地址"),

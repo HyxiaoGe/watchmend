@@ -10,6 +10,22 @@ English changelog: [CHANGELOG.md](CHANGELOG.md)。
 
 ## [Unreleased]
 
+### 新增
+- 飞书通知路由模式（`FEISHU_ROUTING_MODE`）：可选的优先级分类和标题前缀功能。
+  - `legacy`（默认）：保持现有行为，不做任何改变
+  - `prefixed`：根据通知优先级自动添加标题前缀（[P0]/[验收]/[流水]）
+  - `routed`（保留）：当前等同于 `prefixed`，为未来多 webhook 路由预留
+- 新增 `sentinel.notify.routing` 模块，实现对所有通知类型的自动优先级分类：
+  - P0（立刻看）：连续健康失败/绿→红、配额告警、上游 major、部署/CI 失败阻塞发布
+  - P1（要验收）：Codex 长任务完成/阻塞待人工、确认卡、需要验收的通知
+  - P2（流水账）：定时摘要、全绿卫生、上游 minor/恢复、成功合并/部署、信息性通知
+
+### 注意
+- 默认模式为 `legacy`，现有部署不受影响，升级后无需任何配置变更
+- 启用方法：在 `.env` 或环境变量中设置 `FEISHU_ROUTING_MODE=prefixed`
+- 回退方法：设置 `FEISHU_ROUTING_MODE=legacy` 或移除该配置项
+- 当前阶段仅添加标题前缀，不改变飞书 webhook 目标地址
+
 ## [0.17.0] - 2026-08-09
 
 ### 新增

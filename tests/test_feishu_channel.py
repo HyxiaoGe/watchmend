@@ -144,6 +144,9 @@ def test_codex_turn_renders_byte_identical():
 
 @pytest.mark.asyncio
 async def test_channel_posts_rendered_card_via_feishu_client():
+    """测试 legacy 模式不添加前缀"""
+    from sentinel.config import Settings
+
     captured = {}
 
     def _cap(request):
@@ -155,10 +158,140 @@ async def test_channel_posts_rendered_card_via_feishu_client():
     with respx.mock:
         respx.post("https://open.feishu.cn/hook/T").mock(side_effect=_cap)
         async with httpx.AsyncClient() as client:
+            settings = Settings(feishu_routing_mode="legacy")
             fc = FeishuClient(client, "https://open.feishu.cn/hook/T", min_interval=0)
-            ch = FeishuChannel(fc)
+            ch = FeishuChannel(fc, settings)
             assert ch.name == "feishu"
             f = Finding(rule="disk_usage", subject="/", severity="critical", detail="d")
             await ch.send(alert_notification(f, now_ts=1, now_str="now"))
     assert captured["msg_type"] == "interactive"
-    assert "磁盘水位" in captured["card"]["header"]["title"]["content"]
+    title = captured["card"]["header"]["title"]["content"]
+    assert "磁盘水位" in title
+    # legacy 模式不添加前缀
+    assert not title.startswith("[P0]")
+
+
+@pytest.mark.asyncio
+async def test_channel_applies_prefix_in_prefixed_mode():
+    """测试 prefixed 模式添加前缀"""
+    from sentinel.config import Settings
+
+    captured = {}
+
+    def _cap(request):
+        import json
+
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json={"code": 0})
+
+    with respx.mock:
+        respx.post("https://open.feishu.cn/hook/T").mock(side_effect=_cap)
+        async with httpx.AsyncClient() as client:
+            settings = Settings(feishu_routing_mode="prefixed")
+            fc = FeishuClient(client, "https://open.feishu.cn/hook/T", min_interval=0)
+            ch = FeishuChannel(fc, settings)
+
+            # Critical 告警 → P0 前缀
+            f = Finding(rule="disk_usage", subject="/", severity="critical", detail="d")
+            await ch.send(alert_notification(f, now_ts=1, now_str="now"))
+
+    assert captured["msg_type"] == "interactive"
+    title = captured["card"]["header"]["title"]["content"]
+    assert title.startswith("[P0]")
+    assert "磁盘水位" in title
+
+
+@pytest.mark.asyncio
+async def test_channel_applies_correct_prefix_for_p1():
+    """测试 P1 验收前缀"""
+    from sentinel.config import Settings
+
+    captured = {}
+
+    def _cap(request):
+        import json
+
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json={"code": 0})
+
+    with respx.mock:
+        respx.post("https://open.feishu.cn/hook/T").mock(side_effect=_cap)
+        async with httpx.AsyncClient() as client:
+            settings = Settings(feishu_routing_mode="prefixed")
+            fc = FeishuClient(client, "https://open.feishu.cn/hook/T", min_interval=0)
+            ch = FeishuChannel(fc, settings)
+
+            # Codex 长任务完成 → P1 验收前缀
+            n = codex_turn_notification(
+                project="test",
+                cwd="/test",
+                task_summary="task",
+                result_summary="done",
+                thread_id="t123",
+                turn_id="u456",
+                now_ts=1,
+                now_str="now",
+                category="long_turn_complete",
+            )
+            await ch.send(n)
+
+    title = captured["card"]["header"]["title"]["content"]
+    assert title.startswith("[验收]")
+    assert "Codex" in title
+
+
+@pytest.mark.asyncio
+async def test_channel_applies_correct_prefix_for_p2():
+    """测试 P2 流水账前缀"""
+    from sentinel.config import Settings
+
+    captured = {}
+
+    def _cap(request):
+        import json
+
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json={"code": 0})
+
+    with respx.mock:
+        respx.post("https://open.feishu.cn/hook/T").mock(side_effect=_cap)
+        async with httpx.AsyncClient() as client:
+            settings = Settings(feishu_routing_mode="prefixed")
+            fc = FeishuClient(client, "https://open.feishu.cn/hook/T", min_interval=0)
+            ch = FeishuChannel(fc, settings)
+
+            # 恢复通知 → P2 流水账前缀
+            ev = _event()
+            n = recovery_notification(ev, now_ts=5000, now_str="now")
+            await ch.send(n)
+
+    title = captured["card"]["header"]["title"]["content"]
+    assert title.startswith("[流水]")
+    assert "已恢复" in title
+
+
+@pytest.mark.asyncio
+async def test_routed_mode_behaves_like_prefixed():
+    """测试 routed 模式当前等同于 prefixed"""
+    from sentinel.config import Settings
+
+    captured = {}
+
+    def _cap(request):
+        import json
+
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json={"code": 0})
+
+    with respx.mock:
+        respx.post("https://open.feishu.cn/hook/T").mock(side_effect=_cap)
+        async with httpx.AsyncClient() as client:
+            settings = Settings(feishu_routing_mode="routed")
+            fc = FeishuClient(client, "https://open.feishu.cn/hook/T", min_interval=0)
+            ch = FeishuChannel(fc, settings)
+
+            f = Finding(rule="disk_usage", subject="/", severity="critical", detail="d")
+            await ch.send(alert_notification(f, now_ts=1, now_str="now"))
+
+    title = captured["card"]["header"]["title"]["content"]
+    assert title.startswith("[P0]")
