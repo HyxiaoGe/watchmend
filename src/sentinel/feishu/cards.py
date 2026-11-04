@@ -310,7 +310,6 @@ def build_recovery_card(event: EventRecord, *, now_ts: int, now_str: str) -> dic
 # 日报头色阈值:任一服务可用率 <95%(或无样本)→ 红;有失败或 p95 超基线 1.5 倍 → 橙
 _REPORT_RED_UPTIME = 95.0
 _REPORT_DEGRADE_RATIO = 1.5
-_REPORT_IMPROVE_RATIO = 0.7  # p95 较基线改善超 30% 才显示 ↓
 
 
 def _report_color(stats: list[ServiceDayStats], open_events: list[EventRecord]) -> str:
@@ -331,32 +330,20 @@ def _report_color(stats: list[ServiceDayStats], open_events: list[EventRecord]) 
     return _GREEN
 
 
-def _trend(s: ServiceDayStats) -> str:
-    if s.p95_ms is None or s.baseline_p95_ms is None:
-        return ""
-    if s.p95_ms > s.baseline_p95_ms * _REPORT_DEGRADE_RATIO:
-        return f"↑(基线 {s.baseline_p95_ms:.0f}ms)"
-    if s.p95_ms < s.baseline_p95_ms * _REPORT_IMPROVE_RATIO:
-        return f"↓(基线 {s.baseline_p95_ms:.0f}ms)"
-    return "→"
-
-
-def _stat_line(s: ServiceDayStats) -> str:
+def _report_issue(s: ServiceDayStats) -> str | None:
+    name = _clip(" ".join(s.service.split()), 48)
     if s.total == 0:
-        return f"🔴 {s.service} 无样本"
-    if s.ok_count == s.total:
-        icon = "🟢"
-    elif s.uptime_pct >= _REPORT_RED_UPTIME:
-        icon = "🟠"
-    else:
-        icon = "🔴"
-    line = f"{icon} {s.service} {s.uptime_pct:.1f}%"
-    if s.p95_ms is not None:
-        line += f" · p95 {s.p95_ms:.0f}ms"
-        trend = _trend(s)
-        if trend:
-            line += f" {trend}"
-    return line
+        return f"🔴 {name} · 无样本"
+    if s.ok_count < s.total:
+        icon = "🔴" if s.uptime_pct < _REPORT_RED_UPTIME else "🟠"
+        return f"{icon} {name} · 24h 可用率 {s.uptime_pct:.1f}%"
+    if (
+        s.p95_ms is not None
+        and s.baseline_p95_ms is not None
+        and s.p95_ms > s.baseline_p95_ms * _REPORT_DEGRADE_RATIO
+    ):
+        return f"🟠 {name} · 24h 响应变慢"
+    return None
 
 
 _REPORT_TITLES = {
@@ -365,15 +352,6 @@ _REPORT_TITLES = {
     _RED: ("🔴", "存在异常"),
     _GREY: ("⚪", "暂无数据"),
 }
-
-
-def _event_block(open_events: list[EventRecord], resolved_24h: int) -> str:
-    if open_events:
-        lines = "\n".join(f"🔥 {RULE_NAMES.get(e.rule, e.rule)} · {e.subject}" for e in open_events)
-        return f"**未决事件 {len(open_events)} 起**\n{lines}"
-    if resolved_24h:
-        return f"✅ 无未决事件(24h 内恢复 {resolved_24h} 起)"
-    return "✅ 无未决事件"
 
 
 def build_daily_report_card(
@@ -385,43 +363,45 @@ def build_daily_report_card(
     resolved_24h: int = 0,
     digest_items: list[DigestItem] | None = None,
 ) -> dict:
-    """内部体检日报:近 24h 各服务可用率 + p95 延迟 + 七日基线趋势 + 未决事件汇总。
-
-    排序:可用率低在前;同档内 p95 高(慢)在前,便于盯性能退化。
-    """
+    """日报展示双列概况和最多三条重点，完整统计及告警判定保持原样。"""
     open_events = open_events or []
     color = _report_color(stats, open_events)
     icon, suffix = _REPORT_TITLES[color]
     ordered = sorted(stats, key=lambda s: (s.uptime_pct, -(s.p95_ms or 0)))
-    body = "\n".join(_stat_line(s) for s in ordered) if ordered else "(暂无探针数据)"
+    issues = [(s, line) for s in ordered if (line := _report_issue(s))]
+    pending = sorted(open_events, key=lambda e: (e.severity != "critical", -e.ts, e.id))
+
+    attention = []
+    for event in pending:
+        marker = "🔴" if event.severity == "critical" else "🟠"
+        label = _clip(" ".join(RULE_NAMES.get(event.rule, event.rule).split()), 48)
+        subject = _clip(" ".join(event.subject.split()), 48)
+        attention.append(f"{marker} {label} · {subject}")
+    # 当前服务事件已点名时，不再重复列同一服务的历史波动。
+    covered = {e.subject for e in pending if e.rule in {"service_down", "latency_degraded"}}
+    attention.extend(line for service, line in issues if service.service not in covered)
+
+    if attention:
+        headings = []
+        if pending:
+            headings.append(f"未决事件 {len(pending)} 起")
+        if issues:
+            headings.append(f"24h 波动 {len(issues)} 项")
+        body = "**" + " · ".join(headings) + "**\n" + "\n".join(attention[:3])
+        if len(attention) > 3:
+            body += f"\n另有 {len(attention) - 3} 项关注"
+        if not stats:
+            body = "暂无探针数据\n" + body
+    else:
+        body = "近24小时未发现异常" if stats else "暂无探针数据"
 
     full = sum(1 for s in stats if s.total > 0 and s.ok_count == s.total)
-    total_probes = sum(s.total for s in stats)
-    failed = sum(s.total - s.ok_count for s in stats)
-    summary = f"{full}/{len(stats)} 服务全勤　·　总探针 {total_probes} 次　·　失败 {failed} 次"
-    footer = f"🤖 WatchMend · 内部体检日报 · {now_str}"
-
-    elements: list[dict] = [
-        {"tag": "div", "text": {"tag": "lark_md", "content": body}},
-        {"tag": "hr"},
-        {"tag": "div", "text": {"tag": "lark_md", "content": summary}},
-        {
-            "tag": "div",
-            "text": {"tag": "lark_md", "content": _event_block(open_events, resolved_24h)},
-        },
-    ]
-    digest_items = digest_items or []
+    notes = []
+    if resolved_24h:
+        notes.append(f"24h 内恢复 {resolved_24h} 起")
     if digest_items:
-        elements.extend(
-            [
-                {"tag": "hr"},
-                {
-                    "tag": "div",
-                    "text": {"tag": "lark_md", "content": _digest_body(digest_items)},
-                },
-            ]
-        )
-    elements.append({"tag": "note", "elements": [{"tag": "plain_text", "content": footer}]})
+        notes.append(f"巡检记录 {len(digest_items)} 类")
+    notes.append(f"WatchMend · {now_str}")
 
     return {
         "msg_type": "interactive",
@@ -434,7 +414,30 @@ def build_daily_report_card(
                 },
                 "template": color,
             },
-            "elements": elements,
+            "elements": [
+                {
+                    "tag": "div",
+                    "fields": [
+                        {
+                            "is_short": True,
+                            "text": {"tag": "lark_md", "content": f"**监控服务**\n{len(stats)} 项"},
+                        },
+                        {
+                            "is_short": True,
+                            "text": {
+                                "tag": "lark_md",
+                                "content": f"**24h 全勤**\n{full}/{len(stats)}",
+                            },
+                        },
+                    ],
+                },
+                {"tag": "hr"},
+                {"tag": "div", "text": {"tag": "lark_md", "content": body}},
+                {
+                    "tag": "note",
+                    "elements": [{"tag": "plain_text", "content": " · ".join(notes)}],
+                },
+            ],
         },
     }
 
