@@ -8,6 +8,7 @@ data 携带现有 feishu builder 所需的原始入参(domain 对象 + now_str/n
 
 from __future__ import annotations
 
+from sentinel.digest_summary import summarize_digest
 from sentinel.events import EventType, TransitionEvent
 from sentinel.findings import RULE_NAMES, DigestItem, EventRecord, Finding
 from sentinel.models import Indicator, ServiceDayStats, Snapshot
@@ -212,20 +213,12 @@ def digest_notification(
     now_ts: int,
     now_str: str,
 ) -> Notification:
-    lines = []
-    for item in items[:6]:
-        state = "（已恢复）" if item.state == "resolved" else ""
-        lines.append(
-            f"{RULE_NAMES.get(item.rule, item.rule)} · {item.subject}{state}"
-            f" · 观察 {item.occurrences} 轮"
-        )
-    if len(items) > 6:
-        lines.append(f"其余 {len(items) - 6} 类已合并")
+    summary = summarize_digest(items)
     return Notification(
         kind=Kind.DIGEST,
         severity=Severity.INFO,
         title=f"巡检摘要 · {window_label}",
-        detail="\n".join(lines),
+        detail=summary.text,
         ts=now_ts,
         data={
             "items": items,

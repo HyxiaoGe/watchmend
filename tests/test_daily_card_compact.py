@@ -80,7 +80,7 @@ def test_large_digest_is_a_single_summary_and_recoveries_are_preserved():
     ]
     card = _card([_stats("healthy")], digest_items=items, resolved_24h=4)
     text = json.dumps(card, ensure_ascii=False)
-    assert "巡检记录 20 类" in text and "digest-" not in text
+    assert "巡检记录 20 条" in text and "digest-" not in text
     assert "24h 内恢复 4 起" in text
 
 

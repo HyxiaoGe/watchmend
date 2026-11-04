@@ -1,6 +1,7 @@
 # src/sentinel/feishu/cards.py
 from __future__ import annotations
 
+from sentinel.digest_summary import summarize_digest
 from sentinel.events import EventType, TransitionEvent
 from sentinel.findings import RULE_NAMES, DigestItem, EventRecord, Finding
 from sentinel.models import Indicator, ServiceDayStats, Snapshot
@@ -400,7 +401,7 @@ def build_daily_report_card(
     if resolved_24h:
         notes.append(f"24h 内恢复 {resolved_24h} 起")
     if digest_items:
-        notes.append(f"巡检记录 {len(digest_items)} 类")
+        notes.append(f"巡检记录 {len(digest_items)} 条")
     notes.append(f"WatchMend · {now_str}")
 
     return {
@@ -443,16 +444,9 @@ def build_daily_report_card(
 
 
 def _digest_body(items: list[DigestItem]) -> str:
-    lines = [f"**分时巡检摘要**\n共聚合 {len(items)} 类非紧急事件"]
-    for item in items[:6]:
-        state = "（已恢复）" if item.state == "resolved" else ""
-        lines.append(
-            f"• {RULE_NAMES.get(item.rule, item.rule)} · {item.subject}{state}"
-            f" · 观察 {item.occurrences} 轮"
-        )
-    if len(items) > 6:
-        lines.append(f"其余 {len(items) - 6} 类已合并")
-    return "\n".join(lines)
+    summary = summarize_digest(items)
+    body = f"\n{summary.body}" if summary.body else ""
+    return f"**{summary.heading}**{body}"
 
 
 def build_digest_card(
@@ -469,7 +463,7 @@ def build_digest_card(
             "header": {
                 "title": {
                     "tag": "plain_text",
-                    "content": f"📋 巡检摘要 · {window_label} · 聚合 {len(items)} 类事件",
+                    "content": f"📋 巡检摘要 · {window_label}",
                 },
                 "template": _GREY,
             },

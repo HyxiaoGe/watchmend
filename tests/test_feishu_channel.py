@@ -109,7 +109,7 @@ def test_report_renders_byte_identical_and_keeps_open_events():
     assert card == build_daily_report_card(
         stats, date_str="2026-06-13", now_str="now", open_events=opens, resolved_24h=2
     )
-    contents = [e["text"]["content"] for e in card["card"]["elements"] if e.get("tag") == "div"]
+    contents = [e["text"]["content"] for e in card["card"]["elements"] if "text" in e]
     assert any("未决事件 1 起" in c for c in contents)
     assert any("内存压力 · swap" in c for c in contents)
 
