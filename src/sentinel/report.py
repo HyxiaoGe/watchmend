@@ -50,7 +50,13 @@ def aggregate_window(samples: list[ProbeSample], services: list[str]) -> list[Se
 def build_daily_stats(
     store: Store, services: list[str], *, now_ts: int, date_str: str
 ) -> list[ServiceDayStats]:
-    samples = store.get_probe_samples_since(now_ts - WINDOW_SECONDS)
+    # 日报以当前清单为准；退役服务的历史样本保留，但不再进入当前日报。
+    active_services = set(services)
+    samples = [
+        sample
+        for sample in store.get_probe_samples_since(now_ts - WINDOW_SECONDS)
+        if sample.service in active_services
+    ]
     stats = aggregate_window(samples, services)
     for st in stats:
         p95s = store.get_recent_daily_p95s(st.service, before_date=date_str)
