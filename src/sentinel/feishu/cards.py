@@ -5,6 +5,7 @@ from sentinel.digest_summary import summarize_digest
 from sentinel.events import EventType, TransitionEvent
 from sentinel.findings import RULE_NAMES, DigestItem, EventRecord, Finding
 from sentinel.models import Indicator, ServiceDayStats, Snapshot
+from sentinel.report_state import assess_current_report
 from sentinel.status_editor import StatusAnalysis
 
 # 严重度→飞书 header 色名(只用色名,绝不用 hex)
@@ -308,27 +309,13 @@ def build_recovery_card(event: EventRecord, *, now_ts: int, now_str: str) -> dic
 
 # ---- 内部体检日报 ----
 
-# 日报头色阈值:任一服务可用率 <95%(或无样本)→ 红;有失败或 p95 超基线 1.5 倍 → 橙
-_REPORT_RED_UPTIME = 95.0
 _REPORT_DEGRADE_RATIO = 1.5
 
 
 def _report_color(stats: list[ServiceDayStats], open_events: list[EventRecord]) -> str:
-    if not stats:
-        return _GREY
-    if any(e.severity == "critical" for e in open_events):
-        return _RED
-    if any(s.uptime_pct < _REPORT_RED_UPTIME for s in stats):
-        return _RED
-    degraded = any(
-        s.p95_ms is not None
-        and s.baseline_p95_ms is not None
-        and s.p95_ms > s.baseline_p95_ms * _REPORT_DEGRADE_RATIO
-        for s in stats
-    )
-    if degraded or open_events or any(s.ok_count < s.total for s in stats):
-        return _ORANGE
-    return _GREEN
+    return {"critical": _RED, "warning": _ORANGE, "info": _GREEN, "unknown": _GREY}[
+        assess_current_report(stats, open_events).level
+    ]
 
 
 def _report_issue(s: ServiceDayStats) -> str | None:
@@ -336,8 +323,7 @@ def _report_issue(s: ServiceDayStats) -> str | None:
     if s.total == 0:
         return f"🔴 {name} · 无样本"
     if s.ok_count < s.total:
-        icon = "🔴" if s.uptime_pct < _REPORT_RED_UPTIME else "🟠"
-        return f"{icon} {name} · 24h 可用率 {s.uptime_pct:.1f}%"
+        return f"🟠 {name} · 24h 可用率 {s.uptime_pct:.1f}%"
     if (
         s.p95_ms is not None
         and s.baseline_p95_ms is not None
@@ -347,12 +333,7 @@ def _report_issue(s: ServiceDayStats) -> str | None:
     return None
 
 
-_REPORT_TITLES = {
-    _GREEN: ("🟢", "全部正常"),
-    _ORANGE: ("🟠", "存在波动"),
-    _RED: ("🔴", "存在异常"),
-    _GREY: ("⚪", "暂无数据"),
-}
+_REPORT_ICONS = {_GREEN: "🟢", _ORANGE: "🟠", _RED: "🔴", _GREY: "⚪"}
 
 
 def build_daily_report_card(
@@ -364,33 +345,43 @@ def build_daily_report_card(
     resolved_24h: int = 0,
     digest_items: list[DigestItem] | None = None,
 ) -> dict:
-    """日报展示双列概况和最多三条重点，完整统计及告警判定保持原样。"""
+    """日报分开展示当前未决事件和历史波动，最多三条重点。"""
     open_events = open_events or []
     color = _report_color(stats, open_events)
-    icon, suffix = _REPORT_TITLES[color]
+    icon = _REPORT_ICONS[color]
+    suffix = assess_current_report(stats, open_events).label
     ordered = sorted(stats, key=lambda s: (s.uptime_pct, -(s.p95_ms or 0)))
     issues = [(s, line) for s in ordered if (line := _report_issue(s))]
     pending = sorted(open_events, key=lambda e: (e.severity != "critical", -e.ts, e.id))
 
-    attention = []
+    current = []
     for event in pending:
         marker = "🔴" if event.severity == "critical" else "🟠"
         label = _clip(" ".join(RULE_NAMES.get(event.rule, event.rule).split()), 48)
         subject = _clip(" ".join(event.subject.split()), 48)
-        attention.append(f"{marker} {label} · {subject}")
-    # 当前服务事件已点名时，不再重复列同一服务的历史波动。
+        current.append(f"{marker} {label} · {subject}")
+    # 当前服务事件已点名时，不重复列同一服务的历史波动。
     covered = {e.subject for e in pending if e.rule in {"service_down", "latency_degraded"}}
-    attention.extend(line for service, line in issues if service.service not in covered)
-
-    if attention:
-        headings = []
-        if pending:
-            headings.append(f"未决事件 {len(pending)} 起")
-        if issues:
-            headings.append(f"24h 波动 {len(issues)} 项")
-        body = "**" + " · ".join(headings) + "**\n" + "\n".join(attention[:3])
-        if len(attention) > 3:
-            body += f"\n另有 {len(attention) - 3} 项关注"
+    missing = [line for service, line in issues if service.total == 0]
+    history = [(service, line) for service, line in issues if service.total > 0]
+    historical_lines = [line for service, line in history if service.service not in covered]
+    sections = [
+        (f"当前未决事件 {len(pending)} 起", current),
+        (f"采样缺失 {len(missing)} 项", missing),
+        (f"近24h有{len(history)}项历史波动", historical_lines),
+    ]
+    parts = []
+    remaining = 3
+    for heading, lines in sections:
+        if lines and remaining:
+            shown = lines[:remaining]
+            parts.append(f"**{heading}**\n" + "\n".join(shown))
+            remaining -= len(shown)
+    if parts:
+        body = "\n\n".join(parts)
+        overflow = len(current) + len(missing) + len(historical_lines) - 3
+        if overflow > 0:
+            body += f"\n另有 {overflow} 项关注"
         if not stats:
             body = "暂无探针数据\n" + body
     else:

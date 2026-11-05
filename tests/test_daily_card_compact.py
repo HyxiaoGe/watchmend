@@ -52,7 +52,7 @@ def test_live_service_event_is_not_repeated_as_a_historical_service_row():
     card = _card([_stats("search", ok=60)], [_event(1, "search", "critical", "service_down")])
     text = _details(card)
     assert text.count("search") == 1
-    assert "24h 波动 1 项" in text
+    assert "当前未决事件 1 起" in text
 
 
 def test_no_sample_and_empty_report_are_explicit():
@@ -67,7 +67,7 @@ def test_no_sample_and_empty_report_are_explicit():
 def test_latency_degradation_is_shown_but_improvement_is_not_a_detail_row():
     degraded = _card([_stats("slow", p95=200, baseline=100)])
     assert "响应变慢" in _details(degraded)
-    assert degraded["card"]["header"]["template"] == "orange"
+    assert degraded["card"]["header"]["template"] == "green"
     improved = _card([_stats("faster", p95=20, baseline=100)])
     assert "faster" not in _details(improved)
     assert improved["card"]["header"]["template"] == "green"

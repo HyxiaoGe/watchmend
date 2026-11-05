@@ -258,7 +258,7 @@ def test_daily_report_all_green():
     )
     assert card["msg_type"] == "interactive"
     assert card["card"]["header"]["template"] == "green"
-    assert "全部正常" in card["card"]["header"]["title"]["content"]
+    assert "当前无未决异常" in card["card"]["header"]["title"]["content"]
     body = _daily_text(card)
     assert "auth" not in body and "fusion" not in body
     assert "p95" not in body
@@ -266,30 +266,30 @@ def test_daily_report_all_green():
     assert "2/2" in body
 
 
-def test_daily_report_orange_on_partial_failures():
+def test_daily_report_partial_failures_are_history():
     card = build_daily_report_card(
         [_stats(), _stats(service="loki", ok_count=287)],
         date_str="d",
         now_str="t",
     )
-    assert card["card"]["header"]["template"] == "orange"
+    assert card["card"]["header"]["template"] == "green"
     body = _daily_text(card)
     assert "🟠 loki · 24h 可用率 99.7%" in body
     # 正常服务不再逐项展示。
     assert "auth" not in body
 
 
-def test_daily_report_red_below_95_pct():
+def test_daily_report_low_uptime_is_history():
     card = build_daily_report_card(
         [_stats(service="search", ok_count=200)], date_str="d", now_str="t"
     )
-    assert card["card"]["header"]["template"] == "red"
-    assert "🔴 search · 24h 可用率 69.4%" in _daily_text(card)
+    assert card["card"]["header"]["template"] == "green"
+    assert "🟠 search · 24h 可用率 69.4%" in _daily_text(card)
 
 
-def test_daily_report_orange_on_p95_degraded_vs_baseline():
+def test_daily_report_p95_degradation_is_history():
     card = build_daily_report_card([_stats(p95=200.0, baseline=100.0)], date_str="d", now_str="t")
-    assert card["card"]["header"]["template"] == "orange"
+    assert card["card"]["header"]["template"] == "green"
     assert "响应变慢" in _daily_text(card)
 
 
@@ -407,8 +407,8 @@ def test_recovery_card_duration_boundaries():
         assert expected in body, f"delta={delta}"
 
 
-def test_report_card_empty_stats_stays_grey_even_with_critical_event():
+def test_report_card_empty_stats_cannot_hide_critical_event():
     card = build_daily_report_card([], date_str="d", now_str="n", open_events=[_event()])
-    assert card["card"]["header"]["template"] == "grey"
+    assert card["card"]["header"]["template"] == "red"
     contents = _daily_contents(card)
     assert any("未决事件 1 起" in c for c in contents)
