@@ -289,3 +289,42 @@ async def test_daily_report_carries_and_consumes_digest(tmp_path):
     assert sent is True
     assert bc.sent[0].data["digest_items"][0].subject == "auth"
     assert store.get_pending_digest_items() == []
+
+
+def test_daily_stats_excludes_retired_services_without_removing_history(tmp_path):
+    store = Store(str(tmp_path / "retired.db"))
+    now = datetime(2026, 11, 5, 9, 0, tzinfo=TZ)
+    now_ts = int(now.timestamp())
+    store.add_probe_samples(
+        [
+            _sample(now_ts - 60, service="auth"),
+            _sample(now_ts - 30, service="auth", ok=False),
+            _sample(now_ts - 60, service="audio", ok=False),
+        ]
+    )
+    store.upsert_probe_daily("audio", "2026-11-04", total=10, ok_count=0, p50=None, p95=None)
+
+    stats = build_daily_stats(store, ["auth", "new-service"], now_ts=now_ts, date_str="2026-11-05")
+
+    by_name = {s.service: s for s in stats}
+    assert set(by_name) == {"auth", "new-service"}
+    assert by_name["auth"].total == 2
+    assert by_name["auth"].ok_count == 1
+    assert by_name["new-service"].total == 0
+    # 撤销展示不删除历史，也不掩盖仍在监控服务的失败。
+    assert len(store.get_probe_samples_since(now_ts - 86400)) == 3
+    assert store._conn.execute(
+        "SELECT total FROM probe_daily WHERE service = 'audio'"
+    ).fetchone() == (10,)
+    store.close()
+
+
+def test_daily_stats_empty_config_does_not_restore_retired_services(tmp_path):
+    store = Store(str(tmp_path / "empty.db"))
+    now = datetime(2026, 11, 5, 9, 0, tzinfo=TZ)
+    now_ts = int(now.timestamp())
+    store.add_probe_samples([_sample(now_ts - 60, service="audio", ok=False)])
+
+    assert build_daily_stats(store, [], now_ts=now_ts, date_str="2026-11-05") == []
+    assert len(store.get_probe_samples_since(0)) == 1
+    store.close()

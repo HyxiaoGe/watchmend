@@ -128,7 +128,7 @@ def test_report_severity_and_fields():
     crit = report_notification(
         [_stats("auth", 100, 80, p95=20.0)], date_str="2026-06-13", now_str="x", now_ts=10
     )
-    assert crit.severity is Severity.CRITICAL  # 可用率 80% < 95
+    assert crit.severity is Severity.INFO  # 历史可用率不代表当前未决异常
 
 
 def test_report_open_critical_event_forces_critical():

@@ -232,6 +232,24 @@ def _stats(service="auth", total=288, ok_count=288, p50=10.0, p95=20.0, baseline
     )
 
 
+def _daily_contents(card):
+    def walk(value):
+        if isinstance(value, dict):
+            if isinstance(value.get("content"), str):
+                yield value["content"]
+            for child in value.values():
+                yield from walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from walk(child)
+
+    return list(walk(card))
+
+
+def _daily_text(card):
+    return "\n".join(_daily_contents(card))
+
+
 def test_daily_report_all_green():
     card = build_daily_report_card(
         [_stats(), _stats(service="fusion", baseline=19.0)],
@@ -240,40 +258,39 @@ def test_daily_report_all_green():
     )
     assert card["msg_type"] == "interactive"
     assert card["card"]["header"]["template"] == "green"
-    assert "全部正常" in card["card"]["header"]["title"]["content"]
-    body = card["card"]["elements"][0]["text"]["content"]
-    assert "🟢 auth 100.0%" in body
-    assert "p95 20ms" in body
-    assert "→" in body  # fusion 有基线且无退化 → 平稳箭头
-    summary = card["card"]["elements"][2]["text"]["content"]
-    assert "2/2 服务全勤" in summary
+    assert "当前无未决异常" in card["card"]["header"]["title"]["content"]
+    body = _daily_text(card)
+    assert "auth" not in body and "fusion" not in body
+    assert "p95" not in body
+    assert "近24小时未发现异常" in body
+    assert "2/2" in body
 
 
-def test_daily_report_orange_on_partial_failures():
+def test_daily_report_partial_failures_are_history():
     card = build_daily_report_card(
         [_stats(), _stats(service="loki", ok_count=287)],
         date_str="d",
         now_str="t",
     )
-    assert card["card"]["header"]["template"] == "orange"
-    body = card["card"]["elements"][0]["text"]["content"]
-    assert "🟠 loki 99.7%" in body
-    # 异常服务排前
-    assert body.index("loki") < body.index("auth")
+    assert card["card"]["header"]["template"] == "green"
+    body = _daily_text(card)
+    assert "🟠 loki · 24h 可用率 99.7%" in body
+    # 正常服务不再逐项展示。
+    assert "auth" not in body
 
 
-def test_daily_report_red_below_95_pct():
+def test_daily_report_low_uptime_is_history():
     card = build_daily_report_card(
         [_stats(service="search", ok_count=200)], date_str="d", now_str="t"
     )
-    assert card["card"]["header"]["template"] == "red"
-    assert "🔴 search 69.4%" in card["card"]["elements"][0]["text"]["content"]
+    assert card["card"]["header"]["template"] == "green"
+    assert "🟠 search · 24h 可用率 69.4%" in _daily_text(card)
 
 
-def test_daily_report_orange_on_p95_degraded_vs_baseline():
+def test_daily_report_p95_degradation_is_history():
     card = build_daily_report_card([_stats(p95=200.0, baseline=100.0)], date_str="d", now_str="t")
-    assert card["card"]["header"]["template"] == "orange"
-    assert "↑" in card["card"]["elements"][0]["text"]["content"]
+    assert card["card"]["header"]["template"] == "green"
+    assert "响应变慢" in _daily_text(card)
 
 
 def test_daily_report_zero_sample_service_is_red():
@@ -283,19 +300,20 @@ def test_daily_report_zero_sample_service_is_red():
         now_str="t",
     )
     assert card["card"]["header"]["template"] == "red"
-    assert "无样本" in card["card"]["elements"][0]["text"]["content"]
+    assert "无样本" in _daily_text(card)
 
 
 def test_daily_report_empty_stats_grey():
     card = build_daily_report_card([], date_str="d", now_str="t")
     assert card["card"]["header"]["template"] == "grey"
-    assert "暂无探针数据" in card["card"]["elements"][0]["text"]["content"]
+    assert "暂无探针数据" in _daily_text(card)
 
 
-def test_daily_report_trend_down_on_improvement():
+def test_daily_report_improvement_stays_in_overview():
     card = build_daily_report_card([_stats(p95=50.0, baseline=100.0)], date_str="d", now_str="t")
     assert card["card"]["header"]["template"] == "green"
-    assert "↓(基线 100ms)" in card["card"]["elements"][0]["text"]["content"]
+    assert "auth" not in _daily_text(card)
+    assert "p95" not in _daily_text(card)
 
 
 def _finding(**kw):
@@ -358,7 +376,7 @@ def test_report_card_critical_open_event_goes_red():
         resolved_24h=0,
     )
     assert card["card"]["header"]["template"] == "red"
-    contents = [e["text"]["content"] for e in card["card"]["elements"] if e.get("tag") == "div"]
+    contents = _daily_contents(card)
     assert any("未决事件 1 起" in c for c in contents)
     assert any("服务异常 · auth" in c for c in contents)
 
@@ -378,7 +396,7 @@ def test_report_card_without_events_unchanged_green():
         [_stats(total=10, ok_count=10)], date_str="d", now_str="n", resolved_24h=2
     )
     assert card["card"]["header"]["template"] == "green"
-    contents = [e["text"]["content"] for e in card["card"]["elements"] if e.get("tag") == "div"]
+    contents = _daily_contents(card)
     assert any("24h 内恢复 2 起" in c for c in contents)
 
 
@@ -389,8 +407,8 @@ def test_recovery_card_duration_boundaries():
         assert expected in body, f"delta={delta}"
 
 
-def test_report_card_empty_stats_stays_grey_even_with_critical_event():
+def test_report_card_empty_stats_cannot_hide_critical_event():
     card = build_daily_report_card([], date_str="d", now_str="n", open_events=[_event()])
-    assert card["card"]["header"]["template"] == "grey"
-    contents = [e["text"]["content"] for e in card["card"]["elements"] if e.get("tag") == "div"]
+    assert card["card"]["header"]["template"] == "red"
+    contents = _daily_contents(card)
     assert any("未决事件 1 起" in c for c in contents)

@@ -8,17 +8,16 @@ data 携带现有 feishu builder 所需的原始入参(domain 对象 + now_str/n
 
 from __future__ import annotations
 
+from sentinel.digest_summary import summarize_digest
 from sentinel.events import EventType, TransitionEvent
 from sentinel.findings import RULE_NAMES, DigestItem, EventRecord, Finding
 from sentinel.models import Indicator, ServiceDayStats, Snapshot
 from sentinel.notify.message import Kind, Notification, Severity
+from sentinel.report_state import assess_current_report
 from sentinel.status_editor import StatusAnalysis
 
 _GREY_TYPES = {EventType.BASELINE, EventType.FETCH_FAILED}
 _RESOLVED_TYPES = {EventType.INCIDENT_RESOLVED, EventType.COMPONENT_RECOVERED}
-# 镜像 cards._REPORT_RED_UPTIME(95.0):可用率低于此判异常。文本渠道严重度口径,
-# 与飞书头色逻辑独立(飞书走 cards._report_color)。
-_REPORT_UPTIME_FLOOR = 95.0
 
 
 def alert_notification(finding: Finding, *, now_ts: int, now_str: str) -> Notification:
@@ -148,15 +147,8 @@ def heartbeat_notification(
 
 
 def _report_severity(stats: list[ServiceDayStats], open_events: list[EventRecord]) -> Severity:
-    if not stats:
-        return Severity.INFO
-    if any(e.severity == "critical" for e in open_events):
-        return Severity.CRITICAL
-    if any(s.uptime_pct < _REPORT_UPTIME_FLOOR for s in stats):
-        return Severity.CRITICAL
-    if open_events or any(s.ok_count < s.total for s in stats):
-        return Severity.WARNING
-    return Severity.INFO
+    level = assess_current_report(stats, open_events).level
+    return Severity.INFO if level == "unknown" else Severity(level)
 
 
 def report_notification(
@@ -180,13 +172,13 @@ def report_notification(
         if s.p95_ms is not None:
             line += f" · p95 {s.p95_ms:.0f}ms"
         lines.append(line)
-    detail = "\n".join(lines) if lines else "(暂无探针数据)"
+    detail = "近24h历史统计\n" + ("\n".join(lines) if lines else "(暂无探针数据)")
     total_probes = sum(s.total for s in stats)
     failed = sum(s.total - s.ok_count for s in stats)
     return Notification(
         kind=Kind.REPORT,
         severity=_report_severity(stats, open_events),
-        title=f"内部体检日报 {date_str}",
+        title=f"内部体检日报 {date_str} · {assess_current_report(stats, open_events).label}",
         detail=detail,
         fields=[
             ("总探针", f"{total_probes} 次"),
@@ -212,20 +204,12 @@ def digest_notification(
     now_ts: int,
     now_str: str,
 ) -> Notification:
-    lines = []
-    for item in items[:6]:
-        state = "（已恢复）" if item.state == "resolved" else ""
-        lines.append(
-            f"{RULE_NAMES.get(item.rule, item.rule)} · {item.subject}{state}"
-            f" · 观察 {item.occurrences} 轮"
-        )
-    if len(items) > 6:
-        lines.append(f"其余 {len(items) - 6} 类已合并")
+    summary = summarize_digest(items)
     return Notification(
         kind=Kind.DIGEST,
         severity=Severity.INFO,
         title=f"巡检摘要 · {window_label}",
-        detail="\n".join(lines),
+        detail=summary.text,
         ts=now_ts,
         data={
             "items": items,

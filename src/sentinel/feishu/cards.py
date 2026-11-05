@@ -1,9 +1,11 @@
 # src/sentinel/feishu/cards.py
 from __future__ import annotations
 
+from sentinel.digest_summary import summarize_digest
 from sentinel.events import EventType, TransitionEvent
 from sentinel.findings import RULE_NAMES, DigestItem, EventRecord, Finding
 from sentinel.models import Indicator, ServiceDayStats, Snapshot
+from sentinel.report_state import assess_current_report
 from sentinel.status_editor import StatusAnalysis
 
 # 严重度→飞书 header 色名(只用色名,绝不用 hex)
@@ -307,73 +309,31 @@ def build_recovery_card(event: EventRecord, *, now_ts: int, now_str: str) -> dic
 
 # ---- 内部体检日报 ----
 
-# 日报头色阈值:任一服务可用率 <95%(或无样本)→ 红;有失败或 p95 超基线 1.5 倍 → 橙
-_REPORT_RED_UPTIME = 95.0
 _REPORT_DEGRADE_RATIO = 1.5
-_REPORT_IMPROVE_RATIO = 0.7  # p95 较基线改善超 30% 才显示 ↓
 
 
 def _report_color(stats: list[ServiceDayStats], open_events: list[EventRecord]) -> str:
-    if not stats:
-        return _GREY
-    if any(e.severity == "critical" for e in open_events):
-        return _RED
-    if any(s.uptime_pct < _REPORT_RED_UPTIME for s in stats):
-        return _RED
-    degraded = any(
+    return {"critical": _RED, "warning": _ORANGE, "info": _GREEN, "unknown": _GREY}[
+        assess_current_report(stats, open_events).level
+    ]
+
+
+def _report_issue(s: ServiceDayStats) -> str | None:
+    name = _clip(" ".join(s.service.split()), 48)
+    if s.total == 0:
+        return f"🔴 {name} · 无样本"
+    if s.ok_count < s.total:
+        return f"🟠 {name} · 24h 可用率 {s.uptime_pct:.1f}%"
+    if (
         s.p95_ms is not None
         and s.baseline_p95_ms is not None
         and s.p95_ms > s.baseline_p95_ms * _REPORT_DEGRADE_RATIO
-        for s in stats
-    )
-    if degraded or open_events or any(s.ok_count < s.total for s in stats):
-        return _ORANGE
-    return _GREEN
+    ):
+        return f"🟠 {name} · 24h 响应变慢"
+    return None
 
 
-def _trend(s: ServiceDayStats) -> str:
-    if s.p95_ms is None or s.baseline_p95_ms is None:
-        return ""
-    if s.p95_ms > s.baseline_p95_ms * _REPORT_DEGRADE_RATIO:
-        return f"↑(基线 {s.baseline_p95_ms:.0f}ms)"
-    if s.p95_ms < s.baseline_p95_ms * _REPORT_IMPROVE_RATIO:
-        return f"↓(基线 {s.baseline_p95_ms:.0f}ms)"
-    return "→"
-
-
-def _stat_line(s: ServiceDayStats) -> str:
-    if s.total == 0:
-        return f"🔴 {s.service} 无样本"
-    if s.ok_count == s.total:
-        icon = "🟢"
-    elif s.uptime_pct >= _REPORT_RED_UPTIME:
-        icon = "🟠"
-    else:
-        icon = "🔴"
-    line = f"{icon} {s.service} {s.uptime_pct:.1f}%"
-    if s.p95_ms is not None:
-        line += f" · p95 {s.p95_ms:.0f}ms"
-        trend = _trend(s)
-        if trend:
-            line += f" {trend}"
-    return line
-
-
-_REPORT_TITLES = {
-    _GREEN: ("🟢", "全部正常"),
-    _ORANGE: ("🟠", "存在波动"),
-    _RED: ("🔴", "存在异常"),
-    _GREY: ("⚪", "暂无数据"),
-}
-
-
-def _event_block(open_events: list[EventRecord], resolved_24h: int) -> str:
-    if open_events:
-        lines = "\n".join(f"🔥 {RULE_NAMES.get(e.rule, e.rule)} · {e.subject}" for e in open_events)
-        return f"**未决事件 {len(open_events)} 起**\n{lines}"
-    if resolved_24h:
-        return f"✅ 无未决事件(24h 内恢复 {resolved_24h} 起)"
-    return "✅ 无未决事件"
+_REPORT_ICONS = {_GREEN: "🟢", _ORANGE: "🟠", _RED: "🔴", _GREY: "⚪"}
 
 
 def build_daily_report_card(
@@ -385,43 +345,55 @@ def build_daily_report_card(
     resolved_24h: int = 0,
     digest_items: list[DigestItem] | None = None,
 ) -> dict:
-    """内部体检日报:近 24h 各服务可用率 + p95 延迟 + 七日基线趋势 + 未决事件汇总。
-
-    排序:可用率低在前;同档内 p95 高(慢)在前,便于盯性能退化。
-    """
+    """日报分开展示当前未决事件和历史波动，最多三条重点。"""
     open_events = open_events or []
     color = _report_color(stats, open_events)
-    icon, suffix = _REPORT_TITLES[color]
+    icon = _REPORT_ICONS[color]
+    suffix = assess_current_report(stats, open_events).label
     ordered = sorted(stats, key=lambda s: (s.uptime_pct, -(s.p95_ms or 0)))
-    body = "\n".join(_stat_line(s) for s in ordered) if ordered else "(暂无探针数据)"
+    issues = [(s, line) for s in ordered if (line := _report_issue(s))]
+    pending = sorted(open_events, key=lambda e: (e.severity != "critical", -e.ts, e.id))
+
+    current = []
+    for event in pending:
+        marker = "🔴" if event.severity == "critical" else "🟠"
+        label = _clip(" ".join(RULE_NAMES.get(event.rule, event.rule).split()), 48)
+        subject = _clip(" ".join(event.subject.split()), 48)
+        current.append(f"{marker} {label} · {subject}")
+    # 当前服务事件已点名时，不重复列同一服务的历史波动。
+    covered = {e.subject for e in pending if e.rule in {"service_down", "latency_degraded"}}
+    missing = [line for service, line in issues if service.total == 0]
+    history = [(service, line) for service, line in issues if service.total > 0]
+    historical_lines = [line for service, line in history if service.service not in covered]
+    sections = [
+        (f"当前未决事件 {len(pending)} 起", current),
+        (f"采样缺失 {len(missing)} 项", missing),
+        (f"近24h有{len(history)}项历史波动", historical_lines),
+    ]
+    parts = []
+    remaining = 3
+    for heading, lines in sections:
+        if lines and remaining:
+            shown = lines[:remaining]
+            parts.append(f"**{heading}**\n" + "\n".join(shown))
+            remaining -= len(shown)
+    if parts:
+        body = "\n\n".join(parts)
+        overflow = len(current) + len(missing) + len(historical_lines) - 3
+        if overflow > 0:
+            body += f"\n另有 {overflow} 项关注"
+        if not stats:
+            body = "暂无探针数据\n" + body
+    else:
+        body = "近24小时未发现异常" if stats else "暂无探针数据"
 
     full = sum(1 for s in stats if s.total > 0 and s.ok_count == s.total)
-    total_probes = sum(s.total for s in stats)
-    failed = sum(s.total - s.ok_count for s in stats)
-    summary = f"{full}/{len(stats)} 服务全勤　·　总探针 {total_probes} 次　·　失败 {failed} 次"
-    footer = f"🤖 WatchMend · 内部体检日报 · {now_str}"
-
-    elements: list[dict] = [
-        {"tag": "div", "text": {"tag": "lark_md", "content": body}},
-        {"tag": "hr"},
-        {"tag": "div", "text": {"tag": "lark_md", "content": summary}},
-        {
-            "tag": "div",
-            "text": {"tag": "lark_md", "content": _event_block(open_events, resolved_24h)},
-        },
-    ]
-    digest_items = digest_items or []
+    notes = []
+    if resolved_24h:
+        notes.append(f"24h 内恢复 {resolved_24h} 起")
     if digest_items:
-        elements.extend(
-            [
-                {"tag": "hr"},
-                {
-                    "tag": "div",
-                    "text": {"tag": "lark_md", "content": _digest_body(digest_items)},
-                },
-            ]
-        )
-    elements.append({"tag": "note", "elements": [{"tag": "plain_text", "content": footer}]})
+        notes.append(f"巡检记录 {len(digest_items)} 条")
+    notes.append(f"WatchMend · {now_str}")
 
     return {
         "msg_type": "interactive",
@@ -434,22 +406,38 @@ def build_daily_report_card(
                 },
                 "template": color,
             },
-            "elements": elements,
+            "elements": [
+                {
+                    "tag": "div",
+                    "fields": [
+                        {
+                            "is_short": True,
+                            "text": {"tag": "lark_md", "content": f"**监控服务**\n{len(stats)} 项"},
+                        },
+                        {
+                            "is_short": True,
+                            "text": {
+                                "tag": "lark_md",
+                                "content": f"**24h 全勤**\n{full}/{len(stats)}",
+                            },
+                        },
+                    ],
+                },
+                {"tag": "hr"},
+                {"tag": "div", "text": {"tag": "lark_md", "content": body}},
+                {
+                    "tag": "note",
+                    "elements": [{"tag": "plain_text", "content": " · ".join(notes)}],
+                },
+            ],
         },
     }
 
 
 def _digest_body(items: list[DigestItem]) -> str:
-    lines = [f"**分时巡检摘要**\n共聚合 {len(items)} 类非紧急事件"]
-    for item in items[:6]:
-        state = "（已恢复）" if item.state == "resolved" else ""
-        lines.append(
-            f"• {RULE_NAMES.get(item.rule, item.rule)} · {item.subject}{state}"
-            f" · 观察 {item.occurrences} 轮"
-        )
-    if len(items) > 6:
-        lines.append(f"其余 {len(items) - 6} 类已合并")
-    return "\n".join(lines)
+    summary = summarize_digest(items)
+    body = f"\n{summary.body}" if summary.body else ""
+    return f"**{summary.heading}**{body}"
 
 
 def build_digest_card(
@@ -466,7 +454,7 @@ def build_digest_card(
             "header": {
                 "title": {
                     "tag": "plain_text",
-                    "content": f"📋 巡检摘要 · {window_label} · 聚合 {len(items)} 类事件",
+                    "content": f"📋 巡检摘要 · {window_label}",
                 },
                 "template": _GREY,
             },
